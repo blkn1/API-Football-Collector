@@ -224,6 +224,19 @@ async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, 
         label=f"/leagues(country={country_api})",
     )
 
+async def _fetch_leagues_by_country_all(*, client: APIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
+    """
+    Full catalog for a country (no 'current' filter).
+    This is used only as a fallback for leagues/cups that aren't flagged as current.
+    """
+    return await _safe_get(
+        client=client,
+        limiter=limiter,
+        endpoint="/leagues",
+        params={"country": country_api},
+        label=f"/leagues(country_all={country_api})",
+    )
+
 async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str) -> dict[str, Any]:
     """
     IMPORTANT: API-Football does not allow combining 'search' with 'country' or 'current'.
@@ -440,7 +453,7 @@ async def amain() -> int:
         resolved = resolved1 + [r for r in resolved2 if r["id"] not in {x["id"] for x in resolved1}]
         unresolved = unresolved2
 
-        # Phase 3: final fallback - per-target /leagues?search=... (kept small; only for remaining unresolved)
+        # Phase 3: fallback - per-target /leagues?search=... (kept small; only for remaining unresolved)
         if unresolved:
             final_resolved: list[dict[str, Any]] = []
             final_unresolved: list[str] = []
@@ -470,6 +483,34 @@ async def amain() -> int:
             if final_resolved:
                 resolved = resolved + [r for r in final_resolved if r["id"] not in {x["id"] for x in resolved}]
             unresolved = final_unresolved
+
+        # Phase 4: strongest fallback - per-country full catalog (no current filter).
+        # This is more expensive in payload size but still low request count because we cache per country.
+        if unresolved:
+            remaining_targets: list[Target] = []
+            for u in unresolved:
+                raw_line = u.split("->", 1)[0].strip()
+                t = next((x for x in targets if x.raw_line == raw_line), None)
+                if t:
+                    remaining_targets.append(t)
+
+            full_country_cache: dict[str, list[dict[str, Any]]] = {}
+            for t in remaining_targets:
+                if not t.country_api:
+                    continue
+                if t.country_api in full_country_cache:
+                    continue
+                env_fc = await _fetch_leagues_by_country_all(client=client, limiter=limiter, country_api=t.country_api)
+                full_country_cache[t.country_api] = _extract_candidates(env_fc)
+
+            full_candidates: list[dict[str, Any]] = candidates[:]
+            for _c, lst in full_country_cache.items():
+                full_candidates.extend(lst)
+
+            r4, u4 = _resolve(remaining_targets, full_candidates)
+            if r4:
+                resolved = resolved + [r for r in r4 if r["id"] not in {x["id"] for x in resolved}]
+            unresolved = u4
     finally:
         await client.aclose()
 
