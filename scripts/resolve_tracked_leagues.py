@@ -98,6 +98,42 @@ def _norm(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", " ", s)
     return " ".join(s.split())
 
+def _expand_queries(q: str) -> list[str]:
+    """
+    Generate alternative query strings to improve matching between TR labels and API names.
+    """
+    base = q.strip()
+    # Drop parentheses notes
+    q2 = re.sub(r"\([^)]*\)", "", base).strip()
+    alts = {base, q2}
+
+    # Common TR -> EN keyword swaps (best-effort)
+    for x in list(alts):
+        # lig -> league
+        alts.add(re.sub(r"\blig\b", "league", x, flags=re.IGNORECASE))
+        # kupa/kupası -> cup
+        alts.add(re.sub(r"\bkupasi\b|\bkupası\b|\bkupa\b", "cup", x, flags=re.IGNORECASE))
+        # süper -> super
+        alts.add(re.sub(r"\bsuper\b|\bsuper\b|\bsuper\b", "super", x, flags=re.IGNORECASE))
+
+    # Specific league naming patterns (country-specific but helps scoring)
+    alts.add(base.replace("Premier Lig", "Premier League"))
+    alts.add(base.replace("Süper Lig", "Super League"))
+    alts.add(base.replace("Pro Lig", "Pro League"))
+    alts.add(base.replace("1. Lig", "League One"))
+    alts.add(base.replace("2. Lig", "League Two"))
+    alts.add(base.replace("Premier Lig", "Primeira Liga"))  # Portugal common naming
+    alts.add(base.replace("La Liga 2", "LaLiga2"))
+    alts.add(base.replace("La Liga 2", "Segunda Division"))
+
+    # Normalize unicode and cleanup
+    out: list[str] = []
+    for a in alts:
+        a = a.strip()
+        if a:
+            out.append(a)
+    return list(dict.fromkeys(out))
+
 
 @dataclass(frozen=True)
 class Target:
@@ -183,6 +219,27 @@ async def _fetch_leagues_catalog(*, client: APIClient, limiter: RateLimiter) -> 
         raise SystemExit(f"api_errors:/leagues:{env.get('errors')}")
     return env
 
+async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
+    limiter.acquire_token()
+    res = await client.get("/leagues", params={"current": "true", "country": country_api})
+    limiter.update_from_headers(res.headers)
+    env = res.data or {}
+    if env.get("errors"):
+        raise SystemExit(f"api_errors:/leagues(country={country_api}):{env.get('errors')}")
+    return env
+
+async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str, country_api: str | None) -> dict[str, Any]:
+    params: dict[str, Any] = {"current": "true", "search": search}
+    if country_api:
+        params["country"] = country_api
+    limiter.acquire_token()
+    res = await client.get("/leagues", params=params)
+    limiter.update_from_headers(res.headers)
+    env = res.data or {}
+    if env.get("errors"):
+        raise SystemExit(f"api_errors:/leagues(search={search}):{env.get('errors')}")
+    return env
+
 
 def _extract_candidates(env: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
@@ -226,15 +283,15 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
         best = None
         best_score = -1
         for c in cands:
-            # Also try a simplified query without parentheses for better matching
-            q = t.league_query
-            q2 = re.sub(r"\([^)]*\)", "", q).strip()
-            sc = max(_score(c["name"], q), _score(c["name"], q2) if q2 else 0)
+            # Try multiple query variants
+            sc = 0
+            for q in _expand_queries(t.league_query):
+                sc = max(sc, _score(c["name"], q))
             if sc > best_score:
                 best_score = sc
                 best = c
 
-        if not best or best_score < 60:
+        if not best or best_score < 55:
             unresolved.append(f"{t.raw_line} -> low_confidence(best_score={best_score})")
             continue
 
@@ -314,14 +371,72 @@ async def amain() -> int:
     targets = _parse_targets(Path(args.targets))
 
     client = APIClient()
-    limiter = RateLimiter(max_tokens=20, refill_rate=20.0)  # this script does 1 request; keep it generous
+    limiter = RateLimiter(max_tokens=60, refill_rate=60.0)  # bounded but comfortable for a few dozen calls
     try:
+        # Phase 1: global current leagues catalog
         env = await _fetch_leagues_catalog(client=client, limiter=limiter)
+        candidates = _extract_candidates(env)
+        resolved1, unresolved1 = _resolve(targets, candidates)
+
+        # Phase 2: for unresolved, fetch per-country current catalogs (reduces ambiguity)
+        unresolved_targets: list[Target] = []
+        for u in unresolved1:
+            # u is like "<raw_line> -> ..."
+            raw_line = u.split("->", 1)[0].strip()
+            for t in targets:
+                if t.raw_line == raw_line:
+                    unresolved_targets.append(t)
+                    break
+
+        extra_candidates: list[dict[str, Any]] = []
+        country_cache: dict[str, list[dict[str, Any]]] = {}
+        for t in unresolved_targets:
+            if not t.country_api:
+                continue
+            if t.country_api in country_cache:
+                continue
+            env_c = await _fetch_leagues_by_country(client=client, limiter=limiter, country_api=t.country_api)
+            country_cache[t.country_api] = _extract_candidates(env_c)
+        for _c, lst in country_cache.items():
+            extra_candidates.extend(lst)
+
+        resolved2, unresolved2 = _resolve(unresolved_targets, candidates + extra_candidates)
+
+        resolved = resolved1 + [r for r in resolved2 if r["id"] not in {x["id"] for x in resolved1}]
+        unresolved = unresolved2
+
+        # Phase 3: final fallback - per-target /leagues?search=... (kept small; only for remaining unresolved)
+        if unresolved:
+            final_resolved: list[dict[str, Any]] = []
+            final_unresolved: list[str] = []
+            for u in unresolved:
+                raw_line = u.split("->", 1)[0].strip()
+                t = next((x for x in unresolved_targets if x.raw_line == raw_line), None)
+                if not t:
+                    final_unresolved.append(u)
+                    continue
+                # pick a short search token (best-effort)
+                search = re.sub(r"\([^)]*\)", "", t.league_query).strip()
+                if len(search) > 40:
+                    search = " ".join(search.split()[:4])
+                env_s = await _fetch_leagues_search(
+                    client=client,
+                    limiter=limiter,
+                    search=search,
+                    country_api=t.country_api,
+                )
+                cand_s = _extract_candidates(env_s)
+                r3, u3 = _resolve([t], cand_s)
+                if r3:
+                    final_resolved.extend(r3)
+                else:
+                    final_unresolved.append(f"{t.raw_line} -> unresolved_after_search(search={search})")
+
+            if final_resolved:
+                resolved = resolved + [r for r in final_resolved if r["id"] not in {x["id"] for x in resolved}]
+            unresolved = final_unresolved
     finally:
         await client.aclose()
-
-    candidates = _extract_candidates(env)
-    resolved, unresolved = _resolve(targets, candidates)
 
     payload = {"resolved": resolved, "unresolved": unresolved, "ts_utc": env.get("parameters")}
     _write_yaml(Path(args.out), payload)
