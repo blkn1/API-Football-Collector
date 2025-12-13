@@ -28,6 +28,10 @@ LEAGUE_NAME_ALIASES = {
     "FIFA Kıtalararası Kupa": "FIFA Intercontinental Cup",
 }
 
+# Manual overrides: map target raw_line -> league_id (+ optional season override).
+# This is the only safe way to resolve ambiguous / local-language competitions without guessing.
+DEFAULT_OVERRIDES_PATH = PROJECT_ROOT / "config" / "league_overrides.yaml"
+
 # Minimal TR->EN country mapping for API-Football 'country' field (can be extended).
 COUNTRY_TR_TO_API = {
     "Türkiye": "Turkey",
@@ -361,6 +365,94 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
 def _write_yaml(path: Path, data: Any) -> None:
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
 
+def _load_overrides(path: Path) -> dict[str, dict[str, Any]]:
+    if not path.exists():
+        return {}
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    raw = cfg.get("overrides") or []
+    out: dict[str, dict[str, Any]] = {}
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            source = item.get("source")
+            league_id = item.get("league_id")
+            if not source or league_id is None:
+                continue
+            out[str(source)] = {
+                "league_id": int(league_id),
+                "season": (int(item["season"]) if item.get("season") is not None else None),
+            }
+    return out
+
+def _apply_overrides(
+    *,
+    targets: list[Target],
+    candidates: list[dict[str, Any]],
+    overrides: dict[str, dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[Target]]:
+    """
+    Apply manual overrides by league_id.
+    Returns (resolved_rows, remaining_targets).
+    """
+    by_id = {int(c["id"]): c for c in candidates}
+    resolved: list[dict[str, Any]] = []
+    remaining: list[Target] = []
+    for t in targets:
+        ov = overrides.get(t.raw_line)
+        if not ov:
+            remaining.append(t)
+            continue
+        lid = int(ov["league_id"])
+        c = by_id.get(lid)
+        if not c:
+            # override refers to a league not in current catalogs; keep unresolved (will show in suggestions)
+            remaining.append(t)
+            continue
+        season = ov.get("season") or c.get("season")
+        if not season:
+            remaining.append(t)
+            continue
+        resolved.append(
+            {
+                "id": int(c["id"]),
+                "name": c["name"],
+                "country": c["country"],
+                "type": c["type"],
+                "season": int(season),
+                "source": t.raw_line,
+                "match_score": 999,
+                "override": True,
+            }
+        )
+    return resolved, remaining
+
+def _top_candidates_for_target(t: Target, candidates: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for c in candidates:
+        if t.country_api is not None and _norm(c.get("country") or "") != _norm(t.country_api):
+            continue
+        sc = 0
+        for q in _expand_queries(t.league_query):
+            sc = max(sc, _score(c["name"], q))
+        if sc <= 0:
+            continue
+        scored.append((sc, c))
+    scored.sort(key=lambda x: (-x[0], str(x[1].get("name") or "")))
+    out: list[dict[str, Any]] = []
+    for sc, c in scored[:limit]:
+        out.append(
+            {
+                "league_id": int(c["id"]),
+                "name": c["name"],
+                "country": c["country"],
+                "type": c["type"],
+                "season": c.get("season"),
+                "score": int(sc),
+            }
+        )
+    return out
+
 
 def _apply_to_configs(*, resolved: list[dict[str, Any]]) -> None:
     daily_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
@@ -411,9 +503,11 @@ async def amain() -> int:
     parser.add_argument("--targets", type=str, default=str(PROJECT_ROOT / "config" / "league_targets.txt"))
     parser.add_argument("--out", type=str, default=str(PROJECT_ROOT / "config" / "resolved_tracked_leagues.yaml"))
     parser.add_argument("--apply", action="store_true", help="Update config/jobs/daily.yaml + config/jobs/live.yaml with resolved IDs")
+    parser.add_argument("--overrides", type=str, default=str(DEFAULT_OVERRIDES_PATH), help="YAML file with manual league_id overrides for unresolved items")
     args = parser.parse_args()
 
     targets = _parse_targets(Path(args.targets))
+    overrides = _load_overrides(Path(args.overrides))
 
     client = APIClient()
     # IMPORTANT: RateLimiter.refill_rate is tokens/second. Use config soft limit per minute to avoid bursting.
@@ -424,7 +518,9 @@ async def amain() -> int:
         # Phase 1: global current leagues catalog
         env = await _fetch_leagues_catalog(client=client, limiter=limiter)
         candidates = _extract_candidates(env)
-        resolved1, unresolved1 = _resolve(targets, candidates)
+        # Apply any manual overrides first (safe and deterministic).
+        resolved_override, remaining_targets = _apply_overrides(targets=targets, candidates=candidates, overrides=overrides)
+        resolved1, unresolved1 = _resolve(remaining_targets, candidates)
 
         # Phase 2: for unresolved, fetch per-country current catalogs (reduces ambiguity)
         unresolved_targets: list[Target] = []
@@ -450,7 +546,7 @@ async def amain() -> int:
 
         resolved2, unresolved2 = _resolve(unresolved_targets, candidates + extra_candidates)
 
-        resolved = resolved1 + [r for r in resolved2 if r["id"] not in {x["id"] for x in resolved1}]
+        resolved = resolved_override + resolved1 + [r for r in resolved2 if r["id"] not in {x["id"] for x in (resolved_override + resolved1)}]
         unresolved = unresolved2
 
         # Phase 3: fallback - per-target /leagues?search=... (kept small; only for remaining unresolved)
@@ -519,6 +615,32 @@ async def amain() -> int:
 
     print(f"[OK] resolved={len(resolved)} unresolved={len(unresolved)} -> {args.out}")
     if unresolved:
+        # Write suggestions file to help the user choose safe overrides.
+        suggestions_path = PROJECT_ROOT / "config" / "unresolved_suggestions.yaml"
+        # Build candidate pool for suggestions: global current + per-country full catalogs for involved countries.
+        # We intentionally do not make additional API calls here; suggestions use what we already fetched.
+        unresolved_targets: list[Target] = []
+        for u in unresolved:
+            raw_line = u.split("->", 1)[0].strip()
+            t = next((x for x in targets if x.raw_line == raw_line), None)
+            if t:
+                unresolved_targets.append(t)
+        suggestions = []
+        for t in unresolved_targets:
+            # Use the best available pool: full candidates from previous phases are not persisted here,
+            # so we use global candidates and filter by country where possible.
+            suggestions.append(
+                {
+                    "source": t.raw_line,
+                    "country": t.country_api,
+                    "query": t.league_query,
+                    "top_candidates": _top_candidates_for_target(t, candidates, limit=10),
+                    "how_to_override": {"source": t.raw_line, "league_id": "<pick_from_top_candidates>", "season": "<optional>"},
+                }
+            )
+        _write_yaml(suggestions_path, {"generated_from": str(Path(args.targets)), "suggestions": suggestions})
+        print(f"[INFO] wrote suggestions -> {suggestions_path}")
+
         print("[WARN] unresolved items (please adjust config/league_targets.txt wording):")
         for u in unresolved[:50]:
             print(f"  - {u}")

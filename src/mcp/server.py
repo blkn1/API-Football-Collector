@@ -247,8 +247,8 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
         # Default season from config/jobs/daily.yaml when available (keeps config-driven behavior).
         if season is None:
             cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-            season_cfg = cfg.get("season")
+                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                season_cfg = cfg.get("season")
             if season_cfg is None:
                 return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
             season = int(season_cfg)
@@ -295,8 +295,8 @@ async def get_coverage_summary(season: int | None = None) -> dict:
     try:
         if season is None:
             cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-            season_cfg = cfg.get("season")
+                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+                season_cfg = cfg.get("season")
             if season_cfg is None:
                 return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
             season = int(season_cfg)

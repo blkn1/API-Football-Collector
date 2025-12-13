@@ -102,7 +102,7 @@ async def main() -> int:
         if args.tracked_leagues is None:
             raise ValueError("Missing --tracked-leagues (or omit both --season and --tracked-leagues to use config/jobs/static.yaml)")
         season = int(args.season)
-        tracked = {int(x.strip()) for x in args.tracked_leagues.split(",") if x.strip()}
+    tracked = {int(x.strip()) for x in args.tracked_leagues.split(",") if x.strip()}
 
     rl_cfg = load_rate_limiter_config()
     api_cfg = load_api_config()
