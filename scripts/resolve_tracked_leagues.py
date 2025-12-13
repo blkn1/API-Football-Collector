@@ -224,16 +224,18 @@ async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, 
         label=f"/leagues(country={country_api})",
     )
 
-async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str, country_api: str | None) -> dict[str, Any]:
-    params: dict[str, Any] = {"current": "true", "search": search}
-    if country_api:
-        params["country"] = country_api
+async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str) -> dict[str, Any]:
+    """
+    IMPORTANT: API-Football does not allow combining 'search' with 'country' or 'current'.
+    So we fetch with search only, then filter client-side.
+    """
+    params: dict[str, Any] = {"search": search}
     return await _safe_get(
         client=client,
         limiter=limiter,
         endpoint="/leagues",
         params=params,
-        label=f"/leagues(search={search},country={country_api})",
+        label=f"/leagues(search={search})",
     )
 
 async def _safe_get(
@@ -452,13 +454,13 @@ async def amain() -> int:
                 search = re.sub(r"\([^)]*\)", "", t.league_query).strip()
                 if len(search) > 40:
                     search = " ".join(search.split()[:4])
-                env_s = await _fetch_leagues_search(
-                    client=client,
-                    limiter=limiter,
-                    search=search,
-                    country_api=t.country_api,
-                )
-                cand_s = _extract_candidates(env_s)
+                env_s = await _fetch_leagues_search(client=client, limiter=limiter, search=search)
+                cand_s_all = _extract_candidates(env_s)
+                # Client-side filter: if country specified, keep only that country.
+                if t.country_api:
+                    cand_s = [c for c in cand_s_all if _norm(c.get("country") or "") == _norm(t.country_api)]
+                else:
+                    cand_s = cand_s_all
                 r3, u3 = _resolve([t], cand_s)
                 if r3:
                     final_resolved.extend(r3)
