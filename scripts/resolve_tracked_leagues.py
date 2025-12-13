@@ -411,11 +411,50 @@ def _load_overrides(path: Path) -> dict[str, dict[str, Any]]:
             }
     return out
 
-def _apply_overrides(
+async def _fetch_league_by_id(
+    *,
+    client: APIClient,
+    limiter: RateLimiter,
+    league_id: int,
+) -> dict[str, Any] | None:
+    """
+    Validate an override league_id by querying API directly:
+      GET /leagues?id=<league_id>
+    """
+    env = await _safe_get(
+        client=client,
+        limiter=limiter,
+        endpoint="/leagues",
+        params={"id": int(league_id)},
+        label=f"/leagues(id={league_id})",
+    )
+    items = env.get("response") or []
+    if not items:
+        return None
+    item = items[0] or {}
+    league = item.get("league") or {}
+    country = item.get("country") or {}
+    seasons = item.get("seasons") or []
+    try:
+        lid = int(league.get("id"))
+    except Exception:
+        return None
+    return {
+        "id": lid,
+        "name": str(league.get("name") or ""),
+        "type": str(league.get("type") or ""),
+        "country": str(country.get("name") or ""),
+        "season": _current_season_year(seasons),
+    }
+
+
+async def _apply_overrides(
     *,
     targets: list[Target],
     candidates: list[dict[str, Any]],
     overrides: dict[str, dict[str, Any]],
+    client: APIClient,
+    limiter: RateLimiter,
 ) -> tuple[list[dict[str, Any]], list[Target]]:
     """
     Apply manual overrides by league_id.
@@ -432,9 +471,11 @@ def _apply_overrides(
         lid = int(ov["league_id"])
         c = by_id.get(lid)
         if not c:
-            # override refers to a league not in current catalogs; keep unresolved (will show in suggestions)
-            remaining.append(t)
-            continue
+            fetched = await _fetch_league_by_id(client=client, limiter=limiter, league_id=lid)
+            if not fetched:
+                raise SystemExit(f"override_invalid_league_id: source='{t.raw_line}' league_id={lid}")
+            c = fetched
+            by_id[lid] = c
         # Validate country when the target has a country
         if t.country_api is not None and _norm(str(c.get("country") or "")) != _norm(t.country_api):
             raise SystemExit(
@@ -449,8 +490,7 @@ def _apply_overrides(
             )
         season = ov.get("season") or c.get("season")
         if not season:
-            remaining.append(t)
-            continue
+            raise SystemExit(f"override_missing_season: source='{t.raw_line}' league_id={lid}")
         resolved.append(
             {
                 "id": int(c["id"]),
@@ -597,8 +637,14 @@ async def amain() -> int:
         # Phase 1: global current leagues catalog
         env = await _fetch_leagues_catalog(client=client, limiter=limiter)
         candidates = _extract_candidates(env)
-        # Apply any manual overrides first (safe and deterministic).
-        resolved_override, remaining_targets = _apply_overrides(targets=targets, candidates=candidates, overrides=overrides)
+        # Apply any manual overrides first (safe and deterministic). Overrides are validated via API when needed.
+        resolved_override, remaining_targets = await _apply_overrides(
+            targets=targets,
+            candidates=candidates,
+            overrides=overrides,
+            client=client,
+            limiter=limiter,
+        )
         resolved1, unresolved1 = _resolve(remaining_targets, candidates)
 
         # Phase 2: for unresolved, fetch per-country current catalogs (reduces ambiguity)
