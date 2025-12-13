@@ -21,6 +21,11 @@ from collector.rate_limiter import RateLimiter  # noqa: E402
 
 _WOMEN_AMATEUR_PAT = re.compile(r"(women|kadın|kadin|femenina|amatör|amator|amateur)", re.IGNORECASE)
 
+# Aliases for tricky TR names -> expected API league names (best-effort).
+LEAGUE_NAME_ALIASES = {
+    "FIFA Kıtalararası Kupa": "FIFA Intercontinental Cup",
+}
+
 # Minimal TR->EN country mapping for API-Football 'country' field (can be extended).
 COUNTRY_TR_TO_API = {
     "Türkiye": "Turkey",
@@ -97,8 +102,8 @@ def _norm(s: str) -> str:
 @dataclass(frozen=True)
 class Target:
     raw_line: str
-    country_tr: str
-    country_api: str
+    country_tr: str | None
+    country_api: str | None
     league_query: str
 
 
@@ -113,6 +118,8 @@ def _parse_targets(path: Path) -> list[Target]:
     country_keys = sorted(COUNTRY_TR_TO_API.keys(), key=lambda x: len(x), reverse=True)
     out: list[Target] = []
     for ln in lines:
+        # Apply alias on the whole line (before parsing).
+        ln = LEAGUE_NAME_ALIASES.get(ln, ln)
         matched: str | None = None
         for ck in country_keys:
             if ln.startswith(ck + " "):
@@ -121,12 +128,15 @@ def _parse_targets(path: Path) -> list[Target]:
             if ln == ck:
                 matched = ck
                 break
-        if not matched:
-            raise SystemExit(f"cannot_parse_country:{ln}")
-        league_query = ln[len(matched) :].strip()
-        if not league_query:
-            raise SystemExit(f"missing_league_name:{ln}")
-        out.append(Target(raw_line=ln, country_tr=matched, country_api=COUNTRY_TR_TO_API[matched], league_query=league_query))
+        if matched:
+            league_query = ln[len(matched) :].strip()
+            if not league_query:
+                raise SystemExit(f"missing_league_name:{ln}")
+            out.append(Target(raw_line=ln, country_tr=matched, country_api=COUNTRY_TR_TO_API[matched], league_query=league_query))
+            continue
+
+        # No country prefix: treat as a global competition; search across all countries.
+        out.append(Target(raw_line=ln, country_tr=None, country_api=None, league_query=ln))
     return out
 
 
@@ -205,7 +215,10 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
         by_country.setdefault(_norm(c["country"]), []).append(c)
 
     for t in targets:
-        cands = by_country.get(_norm(t.country_api), [])
+        if t.country_api is None:
+            cands = candidates
+        else:
+            cands = by_country.get(_norm(t.country_api), [])
         if not cands:
             unresolved.append(f"{t.raw_line} -> no_candidates_for_country({t.country_api})")
             continue
@@ -213,7 +226,10 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
         best = None
         best_score = -1
         for c in cands:
-            sc = _score(c["name"], t.league_query)
+            # Also try a simplified query without parentheses for better matching
+            q = t.league_query
+            q2 = re.sub(r"\([^)]*\)", "", q).strip()
+            sc = max(_score(c["name"], q), _score(c["name"], q2) if q2 else 0)
             if sc > best_score:
                 best_score = sc
                 best = c
