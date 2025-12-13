@@ -1,0 +1,21 @@
+api:
+  base_url: "https://v3.football.api-sports.io"
+  api_key_env: "API_FOOTBALL_KEY"
+  timeout_seconds: 30
+  default_timezone: "UTC"
+
+rate_limits:
+  # API-Football Pro: 7,500/day (hard) and ~300/minute (hard firewall risk).
+  daily_limit: 7500
+  minute_limit: 300
+
+  # Soft throttling / operational controls
+  minute_soft_limit: 250
+  emergency_stop_threshold: 1000
+
+logging:
+  level: "INFO"
+  format: "json"
+  destination: "stdout"
+
+

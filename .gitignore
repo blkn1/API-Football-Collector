@@ -1,0 +1,55 @@
+# ======================
+# Python
+# ======================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+venv/
+
+# ======================
+# Environment / Secrets
+# ======================
+.env
+.env.*
+!.env.example
+
+# ======================
+# Logs
+# ======================
+logs/
+*.log
+
+# ======================
+# Database / Cache
+# ======================
+db/
+postgres-data/
+pgdata/
+redis-data/
+dump.rdb
+
+# ======================
+# Docker
+# ======================
+docker-compose.override.yml
+
+# ======================
+# IDE / OS
+# ======================
+.vscode/
+.idea/
+.DS_Store
+
+# ======================
+# Cursor / tooling
+# ======================
+.cursor/
+
+phase_1_2.md
+phase_3.md
+
+/docs
+

@@ -1,0 +1,11 @@
+rate_limiter:
+  # Token bucket limits are config-driven. No code-side hard-coding.
+  token_bucket_per_minute: 300
+  minute_soft_limit: 250
+  daily_limit: 7500
+  emergency_stop_threshold: 1000
+
+  # Redis keys namespace for state (quota, token bucket, etc.)
+  redis_key_prefix: "api_football"
+
+

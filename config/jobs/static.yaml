@@ -1,0 +1,71 @@
+jobs:
+  - job_id: "bootstrap_timezones"
+    type: "static_bootstrap"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/timezone"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "0 0 1 * *"  # Monthly at 01:00 UTC
+    target_layer: "raw+core"
+    coverage_target:
+      endpoint: "/timezone"
+      min_count: 1
+
+  - job_id: "bootstrap_countries"
+    type: "static_bootstrap"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/countries"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "0 0 1 * *"  # Monthly at 01:00 UTC
+    target_layer: "raw+core"
+    coverage_target:
+      endpoint: "/countries"
+      min_count: 100
+
+  - job_id: "bootstrap_leagues"
+    type: "static_bootstrap"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/leagues"
+    params:
+      season: 2024
+    interval:
+      type: "cron"
+      cron: "0 2 * * 0"  # Weekly on Sunday 02:00 UTC
+    target_layer: "raw+core"
+    dependencies:
+      - "bootstrap_countries"
+    coverage_target:
+      endpoint: "/leagues"
+      season: 2024
+      min_count: 5
+    filters:
+      tracked_leagues: [39, 140, 135, 61, 78]
+
+  - job_id: "bootstrap_teams"
+    type: "static_bootstrap"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/teams"
+    params:
+      season: 2024
+    interval:
+      type: "cron"
+      cron: "0 3 * * 0"  # Weekly on Sunday 03:00 UTC
+    target_layer: "raw+core"
+    dependencies:
+      - "bootstrap_leagues"
+    coverage_target:
+      endpoint: "/teams"
+      season: 2024
+      min_count: 2000
+    mode:
+      type: "per_league"
+      tracked_leagues: [39, 140, 135, 61, 78]
+
+

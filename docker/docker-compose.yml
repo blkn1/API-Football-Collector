@@ -1,0 +1,41 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    env_file:
+      - ../.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-load schemas on first init
+      - ../db/schemas:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-api_football}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - api_football_net
+
+  redis:
+    image: redis:7-alpine
+    env_file:
+      - ../.env
+    ports:
+      - "6379:6379"
+    networks:
+      - api_football_net
+
+volumes:
+  postgres_data:
+
+networks:
+  api_football_net:
+
+

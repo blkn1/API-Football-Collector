@@ -1,0 +1,37 @@
+expected_fixtures:
+  39: 380   # Premier League
+  140: 380  # La Liga
+  135: 380  # Serie A
+  61: 306   # Ligue 1
+  78: 306   # Bundesliga
+
+max_lag_minutes:
+  daily: 1440   # 24 hours
+  live: 5       # 5 minutes
+
+weights:
+  count_coverage: 0.5
+  freshness_coverage: 0.3
+  pipeline_coverage: 0.2
+
+coverage_targets:
+  # Safe defaults (no league/season assumptions)
+  - endpoint: "/timezone"
+    min_count: 1
+    max_lag_minutes: 43200  # 30 days
+    required_fields: []
+
+  - endpoint: "/countries"
+    min_count: 100
+    max_lag_minutes: 43200  # 30 days
+    required_fields: ["name", "code"]
+
+  # Placeholders for league/season scoped endpoints (fill in when enabling related jobs)
+  # - endpoint: "/fixtures"
+  #   league_id: 39
+  #   season: 2024
+  #   min_fixtures_count: 380
+  #   max_lag_minutes: 60
+  #   required_fields: ["status", "goals_home", "goals_away"]
+
+

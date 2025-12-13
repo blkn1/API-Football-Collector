@@ -1,0 +1,42 @@
+{
+  "get": "fixtures",
+  "parameters": { "id": "1234567" },
+  "errors": [],
+  "results": 1,
+  "paging": { "current": 1, "total": 1 },
+  "response": [
+    {
+      "fixture": {
+        "id": 1234567,
+        "referee": "Michael Oliver",
+        "timezone": "UTC",
+        "date": "2024-12-12T20:00:00+00:00",
+        "timestamp": 1734033600,
+        "venue": { "id": 556, "name": "Old Trafford", "city": "Manchester" },
+        "status": { "long": "Match Finished", "short": "FT", "elapsed": 90 }
+      },
+      "league": {
+        "id": 39,
+        "name": "Premier League",
+        "country": "England",
+        "logo": "https://media.api-sports.io/football/leagues/39.png",
+        "flag": "https://media.api-sports.io/flags/gb.svg",
+        "season": 2024,
+        "round": "Regular Season - 14"
+      },
+      "teams": {
+        "home": { "id": 33, "name": "Manchester United", "logo": "...", "winner": true },
+        "away": { "id": 34, "name": "Newcastle", "logo": "...", "winner": false }
+      },
+      "goals": { "home": 2, "away": 1 },
+      "score": {
+        "halftime": { "home": 1, "away": 0 },
+        "fulltime": { "home": 2, "away": 1 },
+        "extratime": { "home": null, "away": null },
+        "penalty": { "home": null, "away": null }
+      }
+    }
+  ]
+}
+
+

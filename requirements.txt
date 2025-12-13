@@ -1,0 +1,17 @@
+httpx
+asyncio; python_version < "3.4"
+psycopg2-binary
+sqlalchemy
+redis
+apscheduler
+pydantic
+pyyaml
+python-dotenv
+structlog
+pytest
+pytest-asyncio
+fakeredis
+
+mcp>=0.9.0
+
+

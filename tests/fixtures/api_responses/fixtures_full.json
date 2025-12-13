@@ -1,0 +1,72 @@
+{
+  "get": "fixtures",
+  "parameters": { "id": "1234567" },
+  "errors": [],
+  "results": 1,
+  "paging": { "current": 1, "total": 1 },
+  "response": [
+    {
+      "fixture": {
+        "id": 1234567,
+        "referee": "Michael Oliver",
+        "timezone": "UTC",
+        "date": "2024-12-12T20:00:00+00:00",
+        "timestamp": 1734033600,
+        "venue": { "id": 556, "name": "Old Trafford", "city": "Manchester" },
+        "status": { "long": "Second Half", "short": "2H", "elapsed": 70 }
+      },
+      "league": { "id": 39, "season": 2024, "round": "Regular Season - 14" },
+      "teams": { "home": { "id": 33 }, "away": { "id": 34 } },
+      "goals": { "home": 2, "away": 1 },
+      "score": { "halftime": { "home": 1, "away": 0 } },
+      "events": [
+        {
+          "time": { "elapsed": 23, "extra": null },
+          "team": { "id": 33, "name": "Manchester United" },
+          "player": { "id": 882, "name": "Bruno Fernandes" },
+          "assist": { "id": 2935, "name": "Marcus Rashford" },
+          "type": "Goal",
+          "detail": "Normal Goal",
+          "comments": null
+        }
+      ],
+      "lineups": [
+        {
+          "team": { "id": 33, "name": "Manchester United", "logo": "..." },
+          "formation": "4-2-3-1",
+          "startXI": [
+            { "player": { "id": 882, "name": "Bruno Fernandes", "number": 8, "pos": "M", "grid": "3:2" } }
+          ],
+          "substitutes": [
+            { "player": { "id": 18950, "name": "Mason Mount", "number": 7, "pos": "M", "grid": null } }
+          ],
+          "coach": { "id": 4, "name": "Erik ten Hag", "photo": "..." }
+        }
+      ],
+      "statistics": [
+        {
+          "team": { "id": 33, "name": "Manchester United", "logo": "..." },
+          "statistics": [
+            { "type": "Shots on Goal", "value": 8 },
+            { "type": "Ball Possession", "value": "58%" }
+          ]
+        }
+      ],
+      "players": [
+        {
+          "team": { "id": 33, "name": "Manchester United", "logo": "...", "update": "2024-12-12T22:00:00" },
+          "players": [
+            {
+              "player": { "id": 882, "name": "Bruno Fernandes", "photo": "..." },
+              "statistics": [
+                { "games": { "minutes": 70, "number": 8, "position": "M", "rating": "8.5" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+

@@ -1,0 +1,10 @@
+{
+  "get": "timezone",
+  "parameters": {},
+  "errors": [],
+  "results": 3,
+  "paging": { "current": 1, "total": 1 },
+  "response": ["UTC", "Europe/Istanbul", "Europe/London"]
+}
+
+

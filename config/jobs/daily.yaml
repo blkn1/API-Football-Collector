@@ -1,0 +1,61 @@
+jobs:
+  # Disabled by default to avoid assuming league/season/date targets.
+  # Enable and fill params according to your tracked leagues/seasons.
+  - job_id: "daily_standings"
+    type: "incremental_daily"
+    enabled: false
+    priority: "HIGH"
+    endpoint: "/standings"
+    params:
+      league: null
+      season: null
+    interval:
+      type: "cron"
+      cron: "0 1 * * *"  # Daily 01:00 UTC
+    target_layer: "raw+core"
+    dependencies:
+      - "bootstrap_leagues"
+      - "bootstrap_teams"
+    coverage_target:
+      endpoint: "/standings"
+      league_id: null
+      season: null
+      min_records: 1
+      max_lag_minutes: 1440
+
+  - job_id: "daily_fixtures_by_date"
+    type: "incremental_daily"
+    enabled: false
+    priority: "HIGH"
+    endpoint: "/fixtures"
+    params:
+      date: null
+    interval:
+      type: "cron"
+      cron: "0 * * * *"  # Hourly
+    target_layer: "raw+core+mart"
+    dependencies:
+      - "bootstrap_leagues"
+      - "bootstrap_teams"
+    coverage_target:
+      endpoint: "/fixtures"
+      date_range: "custom"
+      min_fixtures_count: 1
+      max_lag_minutes: 60
+
+
+# Phase 3: Daily sync script configuration
+# IMPORTANT: This does not enable scheduler jobs; it is used by scripts/daily_sync.py.
+season: 2024
+tracked_leagues:
+  - id: 39
+    name: "Premier League"
+  - id: 140
+    name: "La Liga"
+  - id: 135
+    name: "Serie A"
+  - id: 61
+    name: "Ligue 1"
+  - id: 78
+    name: "Bundesliga"
+

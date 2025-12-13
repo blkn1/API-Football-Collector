@@ -1,0 +1,26 @@
+{
+  "get": "leagues",
+  "parameters": { "season": "2024" },
+  "errors": [],
+  "results": 3,
+  "paging": { "current": 1, "total": 1 },
+  "response": [
+    {
+      "league": { "id": 39, "name": "Premier League", "type": "League", "logo": "https://media.api-sports.io/football/leagues/39.png" },
+      "country": { "name": "England", "code": "GB", "flag": "https://media.api-sports.io/flags/gb.svg" },
+      "seasons": [{ "year": 2024, "start": "2024-08-16", "end": "2025-05-18", "current": true, "coverage": { "fixtures": { "events": true } } }]
+    },
+    {
+      "league": { "id": 140, "name": "La Liga", "type": "League", "logo": "https://media.api-sports.io/football/leagues/140.png" },
+      "country": { "name": "Spain", "code": "ES", "flag": "https://media.api-sports.io/flags/es.svg" },
+      "seasons": [{ "year": 2024, "start": "2024-08-15", "end": "2025-05-25", "current": true, "coverage": { "fixtures": { "events": true } } }]
+    },
+    {
+      "league": { "id": 999, "name": "Other League", "type": "League", "logo": null },
+      "country": { "name": "Nowhere", "code": "NW", "flag": null },
+      "seasons": [{ "year": 2024, "current": false }]
+    }
+  ]
+}
+
+

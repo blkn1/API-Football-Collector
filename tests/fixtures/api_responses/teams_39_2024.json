@@ -1,0 +1,19 @@
+{
+  "get": "teams",
+  "parameters": { "league": "39", "season": "2024" },
+  "errors": [],
+  "results": 2,
+  "paging": { "current": 1, "total": 1 },
+  "response": [
+    {
+      "team": { "id": 33, "name": "Manchester United", "code": "MUN", "country": "England", "founded": 1878, "national": false, "logo": "https://media.api-sports.io/football/teams/33.png" },
+      "venue": { "id": 556, "name": "Old Trafford", "address": "Sir Matt Busby Way", "city": "Manchester", "country": "England", "capacity": 76212, "surface": "grass", "image": "https://media.api-sports.io/football/venues/556.png" }
+    },
+    {
+      "team": { "id": 34, "name": "Newcastle", "code": "NEW", "country": "England", "founded": 1892, "national": false, "logo": "https://media.api-sports.io/football/teams/34.png" },
+      "venue": { "id": 560, "name": "St. James' Park", "address": null, "city": "Newcastle", "country": "England", "capacity": 52354, "surface": "grass", "image": "https://media.api-sports.io/football/venues/560.png" }
+    }
+  ]
+}
+
+

@@ -1,0 +1,41 @@
+{
+  "get": "fixtures",
+  "parameters": { "live": "all" },
+  "errors": [],
+  "results": 2,
+  "paging": { "current": 1, "total": 1 },
+  "response": [
+    {
+      "fixture": {
+        "id": 1234567,
+        "referee": "Ref A",
+        "timezone": "UTC",
+        "date": "2024-12-12T20:00:00+00:00",
+        "timestamp": 1734033600,
+        "venue": { "id": 556, "name": "Old Trafford", "city": "Manchester" },
+        "status": { "long": "First Half", "short": "1H", "elapsed": 10 }
+      },
+      "league": { "id": 39, "name": "Premier League", "season": 2024, "round": "Regular Season - 14" },
+      "teams": { "home": { "id": 33, "name": "Manchester United" }, "away": { "id": 34, "name": "Newcastle" } },
+      "goals": { "home": 0, "away": 0 },
+      "score": { "halftime": { "home": null, "away": null } }
+    },
+    {
+      "fixture": {
+        "id": 9999999,
+        "referee": "Ref X",
+        "timezone": "UTC",
+        "date": "2024-12-12T21:00:00+00:00",
+        "timestamp": 1734037200,
+        "venue": { "id": 1, "name": "Somewhere", "city": "Nowhere" },
+        "status": { "long": "First Half", "short": "1H", "elapsed": 5 }
+      },
+      "league": { "id": 999, "name": "Untracked League", "season": 2024, "round": "Round 1" },
+      "teams": { "home": { "id": 1, "name": "A" }, "away": { "id": 2, "name": "B" } },
+      "goals": { "home": 0, "away": 0 },
+      "score": { "halftime": { "home": null, "away": null } }
+    }
+  ]
+}
+
+

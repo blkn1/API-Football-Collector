@@ -1,0 +1,21 @@
+jobs:
+  # Disabled by default: /fixtures?live=all is efficient, but enabling it implies you want live polling.
+  - job_id: "live_fixtures_all"
+    type: "live_loop"
+    enabled: false
+    priority: "CRITICAL"
+    endpoint: "/fixtures"
+    params:
+      live: "all"
+    interval:
+      type: "interval"
+      seconds: 15
+    target_layer: "raw+core+mart"
+    filters:
+      tracked_leagues: []
+    coverage_target:
+      endpoint: "/fixtures"
+      live: true
+      max_lag_minutes: 1
+
+
