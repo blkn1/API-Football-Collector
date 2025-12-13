@@ -25,7 +25,12 @@ logs/
 # ======================
 # Database / Cache
 # ======================
-db/
+# Keep schema definitions in git
+!db/
+!db/schemas/
+!db/schemas/**
+
+# Ignore runtime data dirs/dumps
 postgres-data/
 pgdata/
 redis-data/
