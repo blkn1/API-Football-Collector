@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import psycopg2
+from urllib.parse import urlparse, urlunparse
 
 
 def _must_exist(path: str) -> None:
@@ -22,6 +23,19 @@ def _check_db() -> None:
         password = os.getenv("POSTGRES_PASSWORD", "postgres")
         db = os.getenv("POSTGRES_DB", "api_football")
         dsn = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+    # If DB doesn't exist (common in persistent volumes with different initial DB), connect to postgres and check.
+    target_db = urlparse(dsn).path.lstrip("/") or os.getenv("POSTGRES_DB", "api_football")
+    admin_dsn = urlunparse(urlparse(dsn)._replace(path="/postgres"))
+    admin = psycopg2.connect(admin_dsn, connect_timeout=3)
+    try:
+        admin.autocommit = True
+        with admin.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname=%s", (target_db,))
+            if cur.fetchone() is None:
+                raise SystemExit(f"missing_database:{target_db}")
+    finally:
+        admin.close()
 
     conn = psycopg2.connect(dsn, connect_timeout=3)
     try:

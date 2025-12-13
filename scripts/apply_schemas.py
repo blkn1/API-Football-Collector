@@ -5,6 +5,7 @@ from pathlib import Path
 
 import psycopg2
 from psycopg2 import errors as pg_errors
+from urllib.parse import urlparse, urlunparse
 
 
 def _dsn() -> str:
@@ -18,6 +19,45 @@ def _dsn() -> str:
     db = os.getenv("POSTGRES_DB", "api_football")
     return f"postgresql://{user}:{password}@{host}:{port}/{db}"
 
+def _target_db_name() -> str:
+    dsn = os.getenv("DATABASE_URL")
+    if dsn:
+        u = urlparse(dsn)
+        name = (u.path or "").lstrip("/")
+        if name:
+            return name
+    return os.getenv("POSTGRES_DB", "api_football")
+
+def _admin_dsn() -> str:
+    """
+    Connect to an admin database to create the target DB if missing.
+    Prefer 'postgres' db.
+    """
+    dsn = _dsn()
+    u = urlparse(dsn)
+    # Replace db name with /postgres
+    u2 = u._replace(path="/postgres")
+    return urlunparse(u2)
+
+def _ensure_database_exists() -> None:
+    """
+    Ensure target database exists. This is required in Coolify setups where the Postgres volume
+    was initialized earlier with a different default DB name.
+    """
+    target = _target_db_name()
+    admin = _admin_dsn()
+    conn = psycopg2.connect(admin, connect_timeout=5)
+    try:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname=%s", (target,))
+            if cur.fetchone():
+                return
+            # CREATE DATABASE cannot be run inside a transaction.
+            cur.execute(f'CREATE DATABASE "{target}"')
+            print(f"[OK] created database {target}")
+    finally:
+        conn.close()
 
 def _schemas_already_applied(cur) -> bool:
     """
@@ -48,6 +88,8 @@ def main() -> int:
     if not sql_files:
         raise SystemExit(f"no_sql_files_found:{schemas_dir}")
 
+    # Ensure DB exists before attempting to connect/apply schemas.
+    _ensure_database_exists()
     dsn = _dsn()
     conn = psycopg2.connect(dsn, connect_timeout=5)
     try:
