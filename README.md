@@ -57,7 +57,7 @@ Required environment:
 Enable live loop (optional):
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
+ENABLE_LIVE_LOOP=1 docker compose up -d --build
 ```
 
 ## Phase 1 Validation Checklist

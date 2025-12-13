@@ -29,6 +29,11 @@ services:
       - ../.env
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - api_football_net
 
@@ -57,7 +62,12 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_collector.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     command: ["python", "-m", "src.collector.scheduler"]
     volumes:
       - ../logs:/app/logs
