@@ -131,6 +131,14 @@ def _expand_queries(q: str) -> list[str]:
     alts.add(base.replace("Premier Lig", "Primeira Liga"))  # Portugal common naming
     alts.add(base.replace("La Liga 2", "LaLiga2"))
     alts.add(base.replace("La Liga 2", "Segunda Division"))
+    alts.add(base.replace("2. Lig", "Liga 2"))
+    alts.add(base.replace("2. Lig", "Segunda Liga"))
+    alts.add(base.replace("Kupası", "Cup"))
+    alts.add(base.replace("Kupasi", "Cup"))
+    alts.add(base.replace("Kupası", "Copa"))
+    alts.add(base.replace("Kupasi", "Copa"))
+    alts.add(base.replace("Superliga", "Super Liga"))
+    alts.add(base.replace("Premijer", "Premijer"))
 
     # Normalize unicode and cleanup
     out: list[str] = []
@@ -139,6 +147,15 @@ def _expand_queries(q: str) -> list[str]:
         if a:
             out.append(a)
     return list(dict.fromkeys(out))
+
+def _wanted_type(t: Target) -> str | None:
+    """
+    Infer desired competition type from the query.
+    """
+    qn = _norm(t.league_query)
+    if any(x in qn for x in ["cup", "kupa", "kupasi", "kupası", "copa", "kupasi"]):
+        return "cup"
+    return "league"
 
 
 @dataclass(frozen=True)
@@ -443,15 +460,19 @@ def _apply_overrides(
 
 def _top_candidates_for_target(t: Target, candidates: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
     scored: list[tuple[int, dict[str, Any]]] = []
+    seen_ids: set[int] = set()
     for c in candidates:
         if t.country_api is not None and _norm(c.get("country") or "") != _norm(t.country_api):
             continue
         sc = 0
         for q in _expand_queries(t.league_query):
             sc = max(sc, _score(c["name"], q))
-        if sc <= 0:
-            continue
-        scored.append((sc, c))
+        if sc > 0:
+            cid = int(c["id"])
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
+            scored.append((sc, c))
     scored.sort(key=lambda x: (-x[0], str(x[1].get("name") or "")))
     out: list[dict[str, Any]] = []
     for sc, c in scored[:limit]:
@@ -463,6 +484,43 @@ def _top_candidates_for_target(t: Target, candidates: list[dict[str, Any]], *, l
                 "type": c["type"],
                 "season": c.get("season"),
                 "score": int(sc),
+            }
+        )
+    return out
+
+def _fallback_candidates_by_type(t: Target, candidates: list[dict[str, Any]], *, limit: int = 10) -> list[dict[str, Any]]:
+    """
+    If string matching yields nothing (common for local names like DBU Pokalen),
+    list candidates by country and inferred type to let the user pick a safe override.
+    """
+    if t.country_api is None:
+        return []
+    wanted = _wanted_type(t)
+    rows: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for c in candidates:
+        if _norm(c.get("country") or "") != _norm(t.country_api):
+            continue
+        if wanted and str(c.get("type") or "").lower() != wanted:
+            continue
+        cid = int(c["id"])
+        if cid in seen:
+            continue
+        seen.add(cid)
+        rows.append(c)
+    # Prefer most recent season, then name
+    rows.sort(key=lambda x: (-(int(x.get("season") or 0)), str(x.get("name") or "")))
+    out: list[dict[str, Any]] = []
+    for c in rows[:limit]:
+        out.append(
+            {
+                "league_id": int(c["id"]),
+                "name": c["name"],
+                "country": c["country"],
+                "type": c["type"],
+                "season": c.get("season"),
+                "score": 1,
+                "note": "fallback_by_country_and_type",
             }
         )
     return out
@@ -573,8 +631,17 @@ async def amain() -> int:
                 if not t:
                     final_unresolved.append(u)
                     continue
-                # pick a short search token (best-effort)
-                search = re.sub(r"\([^)]*\)", "", t.league_query).strip()
+                # pick a short search token (best-effort), prefer translated variants (Cup/Liga 2/Super Liga etc.)
+                expanded = _expand_queries(t.league_query)
+                # try to find a useful "English-ish" token
+                search = None
+                for q in expanded:
+                    qn = _norm(q)
+                    if any(x in qn for x in ["cup", "copa", "liga", "league", "super", "premijer", "segunda", "division"]):
+                        search = q
+                        break
+                if not search:
+                    search = re.sub(r"\([^)]*\)", "", t.league_query).strip()
                 if len(search) > 40:
                     search = " ".join(search.split()[:4])
                 env_s = await _fetch_leagues_search(client=client, limiter=limiter, search=search)
@@ -651,12 +718,15 @@ async def amain() -> int:
         for t in unresolved_targets:
             # Use the best available pool: full candidates from previous phases are not persisted here,
             # so we use the aggregated suggestion_pool and filter by country where possible.
+            top = _top_candidates_for_target(t, suggestion_pool, limit=10)
+            if not top:
+                top = _fallback_candidates_by_type(t, suggestion_pool, limit=10)
             suggestions.append(
                 {
                     "source": t.raw_line,
                     "country": t.country_api,
                     "query": t.league_query,
-                    "top_candidates": _top_candidates_for_target(t, suggestion_pool, limit=10),
+                    "top_candidates": top,
                     "how_to_override": {"source": t.raw_line, "league_id": "<pick_from_top_candidates>", "season": "<optional>"},
                 }
             )
