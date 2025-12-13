@@ -12,6 +12,14 @@
 # Also accepted (mapping form, no season support):
 # overrides:
 #   "İskoçya Lig Kupası": 185
-overrides: []
+overrides:
+  - source: "Danimarka Kupası"
+    league_id: 121
+  - source: "Hong Kong 1. Lig"
+    league_id: 380
+  - source: "Suudi Arabistan 1. Lig"
+    league_id: 308
+  - source: "Birleşik Arap Emirlikleri 1. Lig"
+    league_id: 303
 
 
