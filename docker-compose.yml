@@ -1,0 +1,100 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    env_file:
+      - ./.env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Auto-load schemas on first init
+      - ./db/schemas:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-api_football}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - api_football_net
+
+  redis:
+    image: redis:7-alpine
+    env_file:
+      - ./.env
+    ports:
+      - "6379:6379"
+    networks:
+      - api_football_net
+
+  # Scheduler: runs enabled non-live jobs from config/jobs/*.yaml
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
+      COLLECTOR_LOG_FILE: /app/logs/collector.jsonl
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "-m", "src.collector.scheduler"]
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    networks:
+      - api_football_net
+
+  # Optional: live polling loop (enable by filling config/jobs/live.yaml tracked_leagues)
+  live_loop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
+      COLLECTOR_LOG_FILE: /app/logs/collector.jsonl
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["python", "scripts/live_loop.py", "--interval", "15"]
+    volumes:
+      - ./logs:/app/logs
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    networks:
+      - api_football_net
+
+volumes:
+  postgres_data:
+
+networks:
+  api_football_net:
+
+
