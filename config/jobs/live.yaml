@@ -12,7 +12,7 @@ jobs:
       seconds: 15
     target_layer: "raw+core+mart"
     filters:
-      tracked_leagues: []
+      tracked_leagues: [39, 140, 135, 61, 78]
     coverage_target:
       endpoint: "/fixtures"
       live: true
