@@ -52,7 +52,7 @@ services:
       API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
 
       # Logs
-      COLLECTOR_LOG_FILE: /app/logs/collector.jsonl
+      LOG_FILE: /app/logs/collector.jsonl
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,38 +61,6 @@ services:
     command: ["python", "-m", "src.collector.scheduler"]
     volumes:
       - ../logs:/app/logs
-      # Optional: allow config changes without rebuild
-      - ../config:/app/config:ro
-    restart: unless-stopped
-    networks:
-      - api_football_net
-
-  # Optional: live polling loop runs as its own service (enable by filling config/jobs/live.yaml tracked_leagues)
-  live_loop:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    env_file:
-      - ../.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-api_football}
-      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
-      COLLECTOR_LOG_FILE: /app/logs/collector.jsonl
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    command: ["python", "scripts/live_loop.py", "--interval", "15"]
-    volumes:
-      - ../logs:/app/logs
-      - ../config:/app/config:ro
     restart: unless-stopped
     networks:
       - api_football_net

@@ -38,15 +38,14 @@ Postgres will auto-load SQL schemas from `db/schemas/` on first init.
 
 ## Docker / Coolify Deploy
 
-This repo ships a `Dockerfile` and a Compose stack in `docker/docker-compose.yml`.
+This repo ships a `Dockerfile` and a Compose stack in `docker-compose.yml` (repo root).
 
 - **collector**: APScheduler-based service that runs enabled non-live jobs from `config/jobs/*.yaml`
-- **live_loop**: optional long-running `/fixtures?live=all` poller (15s) for live matches
+- **live_loop**: optional long-running `/fixtures?live=all` poller (15s) for live matches (separate compose file)
 
 Minimal steps:
 
 ```bash
-cd docker
 docker compose up -d --build
 ```
 
@@ -54,6 +53,12 @@ Required environment:
 - `API_FOOTBALL_KEY`
 - `DATABASE_URL` (recommended) or `POSTGRES_*`
 - `REDIS_URL` (needed for `live_loop`)
+
+Enable live loop (optional):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
+```
 
 ## Phase 1 Validation Checklist
 
