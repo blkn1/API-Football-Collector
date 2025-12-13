@@ -11,7 +11,7 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
 from collector.api_client import APIClient
-from collector.rate_limiter import RateLimiter
+from collector.rate_limiter import EmergencyStopError, RateLimiter
 from transforms.countries import transform_countries
 from transforms.leagues import transform_leagues
 from transforms.teams import transform_teams
@@ -19,9 +19,40 @@ from transforms.timezones import transform_timezones
 from transforms.venues import transform_venues_from_teams
 from utils.db import query_scalar, upsert_core, upsert_raw
 from utils.logging import setup_logging
+from utils.config import load_api_config, load_rate_limiter_config
 
+def _load_bootstrap_plan_from_static_config() -> tuple[int, set[int]]:
+    """
+    Config-driven defaults (no code-side hard-coding):
+    - season: from config/jobs/static.yaml -> bootstrap_leagues.params.season (or bootstrap_teams.params.season)
+    - tracked leagues: from config/jobs/static.yaml -> bootstrap_leagues.filters.tracked_leagues (or bootstrap_teams.mode.tracked_leagues)
+    """
+    cfg_path = PROJECT_ROOT / "config" / "jobs" / "static.yaml"
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    jobs = cfg.get("jobs") or []
 
-TRACKED_LEAGUES_DEFAULT = [39, 140, 135, 61, 78]
+    season: int | None = None
+    tracked: set[int] = set()
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        jid = j.get("job_id")
+        if jid not in ("bootstrap_leagues", "bootstrap_teams"):
+            continue
+        params = j.get("params") or {}
+        if season is None and params.get("season") is not None:
+            season = int(params.get("season"))
+        filters = j.get("filters") or {}
+        mode = j.get("mode") or {}
+        tl = filters.get("tracked_leagues") or mode.get("tracked_leagues")
+        if isinstance(tl, list) and tl:
+            tracked = {int(x) for x in tl}
+
+    if season is None:
+        raise ValueError(f"Missing season in {cfg_path} (bootstrap_leagues/teams params.season)")
+    if not tracked:
+        raise ValueError(f"Missing tracked leagues in {cfg_path} (bootstrap_leagues.filters.tracked_leagues or bootstrap_teams.mode.tracked_leagues)")
+    return int(season), tracked
 
 
 async def fetch_and_store(
@@ -54,20 +85,37 @@ def _h(s: str) -> str:
 async def main() -> int:
     setup_logging()
     parser = argparse.ArgumentParser(description="Phase 2 bootstrap (static data)")
-    parser.add_argument("--season", type=int, default=2024, help="Season year for /leagues and /teams")
+    parser.add_argument("--season", type=int, default=None, help="Season year for /leagues and /teams (if omitted, loads from config/jobs/static.yaml)")
     parser.add_argument(
         "--tracked-leagues",
         type=str,
-        default=",".join(map(str, TRACKED_LEAGUES_DEFAULT)),
-        help="Comma-separated league IDs to process into CORE",
+        default=None,
+        help="Comma-separated league IDs to process into CORE (if omitted, loads from config/jobs/static.yaml)",
     )
     args = parser.parse_args()
 
-    tracked = {int(x.strip()) for x in args.tracked_leagues.split(",") if x.strip()}
-    season = int(args.season)
+    if args.season is None and args.tracked_leagues is None:
+        season, tracked = _load_bootstrap_plan_from_static_config()
+    else:
+        if args.season is None:
+            raise ValueError("Missing --season (or omit both --season and --tracked-leagues to use config/jobs/static.yaml)")
+        if args.tracked_leagues is None:
+            raise ValueError("Missing --tracked-leagues (or omit both --season and --tracked-leagues to use config/jobs/static.yaml)")
+        season = int(args.season)
+        tracked = {int(x.strip()) for x in args.tracked_leagues.split(",") if x.strip()}
 
-    limiter = RateLimiter(max_tokens=300, refill_rate=5.0)
-    client = APIClient()
+    rl_cfg = load_rate_limiter_config()
+    api_cfg = load_api_config()
+    limiter = RateLimiter(
+        max_tokens=rl_cfg.minute_soft_limit,
+        refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
+        emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+    )
+    client = APIClient(
+        base_url=api_cfg.base_url,
+        timeout_seconds=api_cfg.timeout_seconds,
+        api_key_env=api_cfg.api_key_env,
+    )
     total_api_requests = 0
     daily_remaining: int | None = None
 
@@ -197,6 +245,9 @@ async def main() -> int:
         print(f"  - Leagues: {l_count} records (tracked)")
         print(f"  - Teams: {total_teams} records")
         return 0
+    except EmergencyStopError as e:
+        print(_h(f"Emergency stop triggered: {e}"))
+        return 2
     finally:
         await client.aclose()
 

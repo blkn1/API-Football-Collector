@@ -18,17 +18,15 @@ sys.path.insert(0, str(SRC_DIR))
 
 from collector.api_client import APIClient, APIClientError, APIResult, RateLimitError, APIServerError  # noqa: E402
 from collector.delta_detector import DeltaDetector, create_redis_client_from_env  # noqa: E402
-from collector.rate_limiter import RateLimiter  # noqa: E402
+from collector.rate_limiter import EmergencyStopError, RateLimiter  # noqa: E402
 from transforms.fixtures import transform_fixtures  # noqa: E402
 from utils.db import get_transaction, upsert_core, upsert_raw  # noqa: E402
 from utils.logging import get_logger, setup_logging  # noqa: E402
 from utils.venues_backfill import backfill_missing_venues_for_fixtures  # noqa: E402
+from utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
 
 
 logger = get_logger(script="live_loop")
-
-
-TRACKED_LEAGUES_DEFAULT = [39, 61, 78, 135, 140]
 
 
 @dataclass(frozen=True)
@@ -268,10 +266,25 @@ async def run_iteration(
 
 
 async def run_live_loop(*, interval_seconds: int, once: bool, dry_run: bool) -> int:
-    tracked = _load_tracked_leagues_from_config() or set(TRACKED_LEAGUES_DEFAULT)
+    tracked = _load_tracked_leagues_from_config()
+    if not tracked:
+        raise ValueError(
+            "Missing tracked leagues for live loop. Set config/jobs/live.yaml -> jobs[].filters.tracked_leagues "
+            "for the /fixtures?live=all job, or pass --tracked-leagues."
+        )
 
-    limiter = RateLimiter(max_tokens=300, refill_rate=5.0)
-    client = APIClient()
+    rl_cfg = load_rate_limiter_config()
+    api_cfg = load_api_config()
+    limiter = RateLimiter(
+        max_tokens=rl_cfg.minute_soft_limit,
+        refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
+        emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+    )
+    client = APIClient(
+        base_url=api_cfg.base_url,
+        timeout_seconds=api_cfg.timeout_seconds,
+        api_key_env=api_cfg.api_key_env,
+    )
 
     # Redis is required, but failures should not block the loop (detector is fail-open).
     try:
@@ -333,6 +346,9 @@ async def run_live_loop(*, interval_seconds: int, once: bool, dry_run: bool) -> 
 
                 await asyncio.sleep(interval_seconds)
 
+            except EmergencyStopError as e:
+                logger.error("emergency_stop_daily_quota_low", err=str(e))
+                break
             except RateLimitError as e:
                 # Exponential backoff on 429 (but keep within reasonable bounds)
                 sleep_s = min(backoff_seconds, 60.0)
@@ -375,7 +391,7 @@ async def _amain() -> int:
         "--tracked-leagues",
         type=str,
         default=None,
-        help="Comma-separated league IDs to track (overrides config/jobs/live.yaml and defaults)",
+        help="Comma-separated league IDs to track (overrides config/jobs/live.yaml)",
     )
     args = parser.parse_args()
 
@@ -386,8 +402,18 @@ async def _amain() -> int:
         logger.info("tracked_leagues_override", tracked_league_ids=sorted(tracked))
         # small hack: reuse run_live_loop but with config override by temporarily monkey-patching default loader
         # simplest: run one loop with custom tracked list by calling run_iteration via an inline wrapper
-        limiter = RateLimiter(max_tokens=300, refill_rate=5.0)
-        client = APIClient()
+        rl_cfg = load_rate_limiter_config()
+        api_cfg = load_api_config()
+        limiter = RateLimiter(
+            max_tokens=rl_cfg.minute_soft_limit,
+            refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
+            emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+        )
+        client = APIClient(
+            base_url=api_cfg.base_url,
+            timeout_seconds=api_cfg.timeout_seconds,
+            api_key_env=api_cfg.api_key_env,
+        )
         try:
             redis_client = create_redis_client_from_env()
             try:
@@ -439,6 +465,9 @@ async def _amain() -> int:
                     if args.once:
                         break
                     await asyncio.sleep(interval)
+                except EmergencyStopError as e:
+                    logger.error("emergency_stop_daily_quota_low", err=str(e))
+                    break
                 except RateLimitError as e:
                     sleep_s = min(backoff_seconds, 60.0)
                     logger.warning("api_rate_limited_backoff", err=str(e), sleep_seconds=sleep_s)

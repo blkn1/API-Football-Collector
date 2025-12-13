@@ -15,13 +15,14 @@ SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
 from collector.api_client import APIClient, APIClientError, APIResult, RateLimitError  # noqa: E402
-from collector.rate_limiter import RateLimiter  # noqa: E402
+from collector.rate_limiter import EmergencyStopError, RateLimiter  # noqa: E402
 from transforms.fixtures import transform_fixtures  # noqa: E402
 from utils.db import get_transaction, query_scalar, upsert_core, upsert_mart_coverage, upsert_raw  # noqa: E402
 from utils.logging import get_logger, setup_logging  # noqa: E402
 from utils.standings import sync_standings  # noqa: E402
 from coverage.calculator import CoverageCalculator  # noqa: E402
 from utils.venues_backfill import backfill_missing_venues_for_fixtures  # noqa: E402
+from utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
 
 
 logger = get_logger(script="daily_sync")
@@ -153,8 +154,18 @@ async def sync_daily_fixtures(
             minute_remaining=None,
         )
 
-    limiter2 = limiter or RateLimiter(max_tokens=300, refill_rate=5.0)
-    client2 = client or APIClient()
+    rl_cfg = load_rate_limiter_config()
+    api_cfg = load_api_config()
+    limiter2 = limiter or RateLimiter(
+        max_tokens=rl_cfg.minute_soft_limit,
+        refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
+        emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+    )
+    client2 = client or APIClient(
+        base_url=api_cfg.base_url,
+        timeout_seconds=api_cfg.timeout_seconds,
+        api_key_env=api_cfg.api_key_env,
+    )
 
     api_requests = 0
     total_fixtures = 0
@@ -174,6 +185,9 @@ async def sync_daily_fixtures(
                 result: APIResult = await client2.get("/fixtures", params=params)
                 api_requests += 1
                 limiter2.update_from_headers(result.headers)
+            except EmergencyStopError as e:
+                logger.error("emergency_stop_daily_quota_low", league_id=league_id, err=str(e))
+                break
             except RateLimitError as e:
                 # Respect rate limits: wait a bit, then continue to next league.
                 logger.warning("api_rate_limited", league_id=league_id, err=str(e), sleep_seconds=5)

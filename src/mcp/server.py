@@ -241,18 +241,17 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
 
     Args:
         league_id: League ID (None = all)
-        season: Season year (if omitted, uses config/jobs/daily.yaml season when present, else 2024)
+        season: Season year (if omitted, uses config/jobs/daily.yaml season). If missing in config, request is rejected.
     """
     try:
         # Default season from config/jobs/daily.yaml when available (keeps config-driven behavior).
         if season is None:
             cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-            try:
-                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                season_cfg = cfg.get("season")
-                season = int(season_cfg) if season_cfg is not None else 2024
-            except Exception:
-                season = 2024
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            season_cfg = cfg.get("season")
+            if season_cfg is None:
+                return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
+            season = int(season_cfg)
 
         sql_text = queries.COVERAGE_STATUS
         if league_id is not None:
@@ -296,12 +295,11 @@ async def get_coverage_summary(season: int | None = None) -> dict:
     try:
         if season is None:
             cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-            try:
-                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                season_cfg = cfg.get("season")
-                season = int(season_cfg) if season_cfg is not None else 2024
-            except Exception:
-                season = 2024
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            season_cfg = cfg.get("season")
+            if season_cfg is None:
+                return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
+            season = int(season_cfg)
 
         row = await _db_fetchone_async(queries.COVERAGE_SUMMARY, (int(season),))
         if not row:

@@ -11,6 +11,13 @@ class QuotaSnapshot:
     minute_remaining: int | None
 
 
+class EmergencyStopError(RuntimeError):
+    """
+    Raised when API quota is dangerously low and the system must stop to avoid exhausting daily budget
+    (and potential firewall / operational issues).
+    """
+
+
 class RateLimiter:
     """
     Token Bucket rate limiter (in-memory, Phase 1).
@@ -25,6 +32,7 @@ class RateLimiter:
         *,
         max_tokens: int = 300,
         refill_rate: float = 5.0,
+        emergency_stop_threshold: int | None = None,
     ) -> None:
         if max_tokens <= 0:
             raise ValueError("max_tokens must be > 0")
@@ -40,6 +48,7 @@ class RateLimiter:
         # Quota tracking from response headers (best-effort)
         self._daily_remaining: int | None = None
         self._minute_remaining: int | None = None
+        self._emergency_stop_threshold: int | None = int(emergency_stop_threshold) if emergency_stop_threshold is not None else None
 
     @property
     def tokens(self) -> float:
@@ -62,6 +71,7 @@ class RateLimiter:
         """
         while True:
             with self._lock:
+                self._raise_if_emergency_stop_locked()
                 self._refill_locked()
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0
@@ -88,11 +98,22 @@ class RateLimiter:
         with self._lock:
             self._daily_remaining = daily
             self._minute_remaining = minute
+            self._raise_if_emergency_stop_locked()
 
             # If API reports a lower minute remaining than our local tokens, clamp.
             if minute is not None:
                 self._tokens = min(self._tokens, float(minute))
                 self._tokens = max(0.0, self._tokens)
+
+    def _raise_if_emergency_stop_locked(self) -> None:
+        thr = self._emergency_stop_threshold
+        if thr is None:
+            return
+        if self._daily_remaining is None:
+            return
+        if self._daily_remaining < thr:
+            # Hard stop. Callers should catch this and stop scheduling / polling.
+            raise EmergencyStopError(f"Emergency stop: daily_remaining={self._daily_remaining} < threshold={thr}")
 
     def _refill_locked(self) -> None:
         now = time.monotonic()
