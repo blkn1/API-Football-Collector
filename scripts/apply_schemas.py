@@ -24,7 +24,10 @@ def main() -> int:
     if not schemas_dir.exists():
         raise SystemExit(f"schemas_dir_missing:{schemas_dir}")
 
-    sql_files = sorted([p for p in schemas_dir.glob("*.sql")])
+    # Apply in a deterministic order and avoid psql meta-commands (\i) in 00_init.sql.
+    # raw.sql must run before mart.sql (mart depends on raw.api_responses).
+    ordered = ["raw.sql", "core.sql", "mart.sql"]
+    sql_files = [schemas_dir / name for name in ordered if (schemas_dir / name).exists()]
     if not sql_files:
         raise SystemExit(f"no_sql_files_found:{schemas_dir}")
 
