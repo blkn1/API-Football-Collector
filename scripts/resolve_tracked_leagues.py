@@ -440,6 +440,13 @@ def _apply_overrides(
             raise SystemExit(
                 f"override_country_mismatch: source='{t.raw_line}' expected_country='{t.country_api}' got='{c.get('country')}' league_id={lid}"
             )
+        # Validate type (cup vs league) to avoid obvious mis-wires
+        wanted = _wanted_type(t)
+        actual = str(c.get("type") or "").lower()
+        if wanted and actual and wanted != actual:
+            raise SystemExit(
+                f"override_type_mismatch: source='{t.raw_line}' expected_type='{wanted}' got='{actual}' league_id={lid}"
+            )
         season = ov.get("season") or c.get("season")
         if not season:
             remaining.append(t)
