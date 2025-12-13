@@ -36,7 +36,7 @@ services:
   collector:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     env_file:
       - ../.env
     environment:
@@ -71,7 +71,7 @@ services:
   live_loop:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     env_file:
       - ../.env
     environment:
