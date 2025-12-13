@@ -68,7 +68,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 12
-    command: ["python", "-m", "src.collector.scheduler"]
+    command: ["sh", "-lc", "python scripts/apply_schemas.py && python -m src.collector.scheduler"]
     volumes:
       - ../logs:/app/logs
     restart: unless-stopped

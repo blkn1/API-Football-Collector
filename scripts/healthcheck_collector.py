@@ -28,6 +28,10 @@ def _check_db() -> None:
         with conn.cursor() as cur:
             cur.execute("SELECT 1;")
             cur.fetchone()
+            # Ensure schemas are applied (core signal for collector)
+            cur.execute("SELECT to_regclass('raw.api_responses');")
+            if cur.fetchone()[0] is None:
+                raise SystemExit("missing_table:raw.api_responses")
     finally:
         conn.close()
 
