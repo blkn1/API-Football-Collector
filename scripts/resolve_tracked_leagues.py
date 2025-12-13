@@ -5,6 +5,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ sys.path.insert(0, str(SRC_DIR))
 
 from collector.api_client import APIClient  # noqa: E402
 from collector.rate_limiter import RateLimiter  # noqa: E402
+from utils.config import load_rate_limiter_config  # noqa: E402
 
 
 _WOMEN_AMATEUR_PAT = re.compile(r"(women|kadın|kadin|femenina|amatör|amator|amateur)", re.IGNORECASE)
@@ -211,34 +213,62 @@ def _current_season_year(seasons: list[dict[str, Any]]) -> int | None:
 
 
 async def _fetch_leagues_catalog(*, client: APIClient, limiter: RateLimiter) -> dict[str, Any]:
-    limiter.acquire_token()
-    res = await client.get("/leagues", params={"current": "true"})
-    limiter.update_from_headers(res.headers)
-    env = res.data or {}
-    if env.get("errors"):
-        raise SystemExit(f"api_errors:/leagues:{env.get('errors')}")
-    return env
+    return await _safe_get(client=client, limiter=limiter, endpoint="/leagues", params={"current": "true"}, label="/leagues")
 
 async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
-    limiter.acquire_token()
-    res = await client.get("/leagues", params={"current": "true", "country": country_api})
-    limiter.update_from_headers(res.headers)
-    env = res.data or {}
-    if env.get("errors"):
-        raise SystemExit(f"api_errors:/leagues(country={country_api}):{env.get('errors')}")
-    return env
+    return await _safe_get(
+        client=client,
+        limiter=limiter,
+        endpoint="/leagues",
+        params={"current": "true", "country": country_api},
+        label=f"/leagues(country={country_api})",
+    )
 
 async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str, country_api: str | None) -> dict[str, Any]:
     params: dict[str, Any] = {"current": "true", "search": search}
     if country_api:
         params["country"] = country_api
-    limiter.acquire_token()
-    res = await client.get("/leagues", params=params)
-    limiter.update_from_headers(res.headers)
-    env = res.data or {}
-    if env.get("errors"):
-        raise SystemExit(f"api_errors:/leagues(search={search}):{env.get('errors')}")
-    return env
+    return await _safe_get(
+        client=client,
+        limiter=limiter,
+        endpoint="/leagues",
+        params=params,
+        label=f"/leagues(search={search},country={country_api})",
+    )
+
+async def _safe_get(
+    *,
+    client: APIClient,
+    limiter: RateLimiter,
+    endpoint: str,
+    params: dict[str, Any],
+    label: str,
+    max_retries: int = 6,
+) -> dict[str, Any]:
+    """
+    Production-safe GET wrapper:
+    - uses local token bucket to avoid bursting
+    - updates quota from headers
+    - if API returns rateLimit error in envelope, backs off and retries
+    """
+    backoff = 2.0
+    for attempt in range(max_retries):
+        limiter.acquire_token()
+        res = await client.get(endpoint, params=params)
+        limiter.update_from_headers(res.headers)
+        env = res.data or {}
+        errors = env.get("errors") or {}
+        # API-Football may return 200 with errors.rateLimit
+        if isinstance(errors, dict) and errors.get("rateLimit"):
+            if attempt == max_retries - 1:
+                raise SystemExit(f"api_errors:{label}:{errors}")
+            time.sleep(min(backoff, 30.0))
+            backoff = min(backoff * 2.0, 30.0)
+            continue
+        if errors:
+            raise SystemExit(f"api_errors:{label}:{errors}")
+        return env
+    raise SystemExit(f"api_errors:{label}:max_retries_exceeded")
 
 
 def _extract_candidates(env: dict[str, Any]) -> list[dict[str, Any]]:
@@ -371,7 +401,10 @@ async def amain() -> int:
     targets = _parse_targets(Path(args.targets))
 
     client = APIClient()
-    limiter = RateLimiter(max_tokens=60, refill_rate=60.0)  # bounded but comfortable for a few dozen calls
+    # IMPORTANT: RateLimiter.refill_rate is tokens/second. Use config soft limit per minute to avoid bursting.
+    rl_cfg = load_rate_limiter_config()
+    max_tokens = int(rl_cfg.minute_soft_limit)
+    limiter = RateLimiter(max_tokens=max_tokens, refill_rate=float(max_tokens) / 60.0, emergency_stop_threshold=rl_cfg.emergency_stop_threshold)
     try:
         # Phase 1: global current leagues catalog
         env = await _fetch_leagues_catalog(client=client, limiter=limiter)
