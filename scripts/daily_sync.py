@@ -86,9 +86,9 @@ def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
     # Allow omitting top-level season if every tracked league item provides a season (more flexible for multi-competition tracking).
     if season is None:
         if not leagues or any(l.season is None for l in leagues):
-        raise ValueError(
+            raise ValueError(
                 f"Missing season in config: {config_path}. Either set top-level 'season: <year>' or add 'season' for each tracked_leagues item."
-        )
+            )
         # dummy season (won't be used because per-league season overrides)
         season = 0
 
