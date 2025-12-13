@@ -371,7 +371,16 @@ def _load_overrides(path: Path) -> dict[str, dict[str, Any]]:
     cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw = cfg.get("overrides") or []
     out: dict[str, dict[str, Any]] = {}
-    if isinstance(raw, list):
+    # Accept both:
+    # - list of dicts: [{source, league_id, season?}, ...]
+    # - mapping: { "source": 123, ... } (season not supported in mapping form)
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                out[str(k)] = {"league_id": int(v), "season": None}
+            except Exception:
+                continue
+    elif isinstance(raw, list):
         for item in raw:
             if not isinstance(item, dict):
                 continue
@@ -409,6 +418,11 @@ def _apply_overrides(
             # override refers to a league not in current catalogs; keep unresolved (will show in suggestions)
             remaining.append(t)
             continue
+        # Validate country when the target has a country
+        if t.country_api is not None and _norm(str(c.get("country") or "")) != _norm(t.country_api):
+            raise SystemExit(
+                f"override_country_mismatch: source='{t.raw_line}' expected_country='{t.country_api}' got='{c.get('country')}' league_id={lid}"
+            )
         season = ov.get("season") or c.get("season")
         if not season:
             remaining.append(t)
@@ -607,6 +621,14 @@ async def amain() -> int:
             if r4:
                 resolved = resolved + [r for r in r4 if r["id"] not in {x["id"] for x in resolved}]
             unresolved = u4
+
+        # Build the best available candidate pool for suggestions/overrides validation (no extra API calls):
+        suggestion_pool: list[dict[str, Any]] = candidates[:]
+        suggestion_pool.extend(extra_candidates)
+        try:
+            suggestion_pool.extend(full_candidates)  # may not exist if phase4 didn't run
+        except Exception:
+            pass
     finally:
         await client.aclose()
 
@@ -628,13 +650,13 @@ async def amain() -> int:
         suggestions = []
         for t in unresolved_targets:
             # Use the best available pool: full candidates from previous phases are not persisted here,
-            # so we use global candidates and filter by country where possible.
+            # so we use the aggregated suggestion_pool and filter by country where possible.
             suggestions.append(
                 {
                     "source": t.raw_line,
                     "country": t.country_api,
                     "query": t.league_query,
-                    "top_candidates": _top_candidates_for_target(t, candidates, limit=10),
+                    "top_candidates": _top_candidates_for_target(t, suggestion_pool, limit=10),
                     "how_to_override": {"source": t.raw_line, "league_id": "<pick_from_top_candidates>", "season": "<optional>"},
                 }
             )

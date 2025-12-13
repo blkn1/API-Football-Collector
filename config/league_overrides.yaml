@@ -3,11 +3,15 @@
 # Use this when `resolve_tracked_leagues.py` cannot confidently match a target to an API league.
 # Fill `league_id` by looking at `config/unresolved_suggestions.yaml` "top_candidates".
 #
-# Format:
+# Format (recommended: list form, supports season override):
 # overrides:
 #   - source: "İskoçya Lig Kupası"
-#     league_id: 123
-#     season: 2025   # optional, otherwise resolver uses candidate's detected season
+#     league_id: 185
+#     season: 2025   # optional
+#
+# Also accepted (mapping form, no season support):
+# overrides:
+#   "İskoçya Lig Kupası": 185
 overrides: []
 
 
