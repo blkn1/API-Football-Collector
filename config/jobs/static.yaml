@@ -29,11 +29,11 @@ jobs:
 
   - job_id: "bootstrap_leagues"
     type: "static_bootstrap"
-    enabled: true
+    enabled: false
     priority: "HIGH"
     endpoint: "/leagues"
     params:
-      season: 2024
+      season: null
     interval:
       type: "cron"
       cron: "0 2 * * 0"  # Weekly on Sunday 02:00 UTC
@@ -42,18 +42,18 @@ jobs:
       - "bootstrap_countries"
     coverage_target:
       endpoint: "/leagues"
-      season: 2024
+      season: null
       min_count: 5
     filters:
-      tracked_leagues: [39, 140, 135, 61, 78]
+      tracked_leagues: []
 
   - job_id: "bootstrap_teams"
     type: "static_bootstrap"
-    enabled: true
+    enabled: false
     priority: "HIGH"
     endpoint: "/teams"
     params:
-      season: 2024
+      season: null
     interval:
       type: "cron"
       cron: "0 3 * * 0"  # Weekly on Sunday 03:00 UTC
@@ -62,10 +62,10 @@ jobs:
       - "bootstrap_leagues"
     coverage_target:
       endpoint: "/teams"
-      season: 2024
+      season: null
       min_count: 2000
     mode:
       type: "per_league"
-      tracked_leagues: [39, 140, 135, 61, 78]
+      tracked_leagues: []
 
 

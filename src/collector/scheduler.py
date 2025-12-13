@@ -12,6 +12,7 @@ import yaml
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from zoneinfo import ZoneInfo
 
 from src.collector.api_client import APIClient
 from src.collector.rate_limiter import EmergencyStopError, RateLimiter
@@ -44,6 +45,19 @@ class Job:
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+def _scheduler_tz() -> ZoneInfo:
+    """
+    Scheduler timezone for cron evaluation.
+    - DB timestamps remain UTC (non-negotiable)
+    - This only affects when cron triggers fire
+    """
+    tz_name = os.getenv("SCHEDULER_TIMEZONE", "UTC")
+    try:
+        return ZoneInfo(tz_name)
+    except Exception:
+        logger.warning("invalid_scheduler_timezone_fallback_utc", tz_name=tz_name)
+        return ZoneInfo("UTC")
 
 
 def _project_root() -> Path:
@@ -80,19 +94,19 @@ def _job_files() -> list[Path]:
     return [p for p in files if p.exists()]
 
 
-def _to_trigger(interval_cfg: dict[str, Any]) -> CronTrigger | IntervalTrigger:
+def _to_trigger(interval_cfg: dict[str, Any], tz: ZoneInfo) -> CronTrigger | IntervalTrigger:
     t = str(interval_cfg.get("type") or "").strip().lower()
     if t == "cron":
         cron = interval_cfg.get("cron")
         if not cron:
             raise ValueError("Missing interval.cron")
         # Project uses 5-field cron (min hour day month weekday) in config.
-        return CronTrigger.from_crontab(str(cron), timezone=timezone.utc)
+        return CronTrigger.from_crontab(str(cron), timezone=tz)
     if t == "interval":
         seconds = interval_cfg.get("seconds")
         if seconds is None:
             raise ValueError("Missing interval.seconds")
-        return IntervalTrigger(seconds=int(seconds), timezone=timezone.utc)
+        return IntervalTrigger(seconds=int(seconds), timezone=tz)
     raise ValueError(f"Unsupported interval.type: {t}")
 
 
@@ -178,6 +192,7 @@ async def amain() -> int:
 
     api_cfg = load_api_config()
     rl_cfg = load_rate_limiter_config()
+    sched_tz = _scheduler_tz()
 
     limiter = RateLimiter(
         max_tokens=rl_cfg.minute_soft_limit,
@@ -199,7 +214,7 @@ async def amain() -> int:
     if not enabled:
         logger.warning("no_enabled_jobs", job_files=[str(x) for x in _job_files()])
 
-    scheduler = AsyncIOScheduler(timezone=timezone.utc)
+    scheduler = AsyncIOScheduler(timezone=sched_tz)
 
     # Add jobs
     for j in enabled:
@@ -207,7 +222,7 @@ async def amain() -> int:
             logger.warning("job_missing_interval_skipped", job_id=j.job_id)
             continue
         try:
-            trigger = _to_trigger(j.interval)
+            trigger = _to_trigger(j.interval, sched_tz)
         except Exception as e:
             logger.error("job_invalid_interval_skipped", job_id=j.job_id, err=str(e))
             continue

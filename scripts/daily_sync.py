@@ -33,6 +33,7 @@ logger = get_logger(script="daily_sync")
 class TrackedLeague:
     id: int
     name: str | None = None
+    season: int | None = None
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
         for x in tracked_leagues:
             if not isinstance(x, dict) or "id" not in x:
                 continue
-            leagues.append(TrackedLeague(id=int(x["id"]), name=x.get("name")))
+            leagues.append(TrackedLeague(id=int(x["id"]), name=x.get("name"), season=(int(x["season"]) if x.get("season") is not None else None)))
 
     # Backward-compatible fallback: try to infer from jobs config if present
     if not leagues:
@@ -82,10 +83,14 @@ def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
             if season is None and job_season is not None:
                 season = int(job_season)
 
+    # Allow omitting top-level season if every tracked league item provides a season (more flexible for multi-competition tracking).
     if season is None:
-        raise ValueError(
-            f"Missing season in config: {config_path}. Add top-level 'season: <year>' or set it under a fixtures job."
-        )
+        if not leagues or any(l.season is None for l in leagues):
+            raise ValueError(
+                f"Missing season in config: {config_path}. Either set top-level 'season: <year>' or add 'season' for each tracked_leagues item."
+            )
+        # dummy season (won't be used because per-league season overrides)
+        season = 0
 
     if not leagues:
         raise ValueError(
@@ -179,7 +184,8 @@ async def sync_daily_fixtures(
             league_name = l.name or f"League {league_id}"
             logger.info("league_sync_started", league_id=league_id, league_name=league_name, date=target_date_utc, season=season)
 
-            params = {"league": league_id, "season": season, "date": target_date_utc}
+            league_season = int(l.season) if l.season is not None else int(season)
+            params = {"league": league_id, "season": league_season, "date": target_date_utc}
 
             try:
                 limiter2.acquire_token()
@@ -219,7 +225,7 @@ async def sync_daily_fixtures(
             try:
                 await ensure_fixtures_dependencies(
                     league_id=league_id,
-                    season=season,
+                    season=league_season,
                     fixtures_envelope=envelope,
                     client=client2,
                     limiter=limiter2,
@@ -330,7 +336,8 @@ async def sync_daily_fixtures(
         try:
             calc = CoverageCalculator()
             for l in leagues:
-                cov = calc.calculate_fixtures_coverage(l.id, season)
+                cov_season = int(l.season) if l.season is not None else int(season)
+                cov = calc.calculate_fixtures_coverage(l.id, cov_season)
                 upsert_mart_coverage(coverage_data=cov)
                 logger.info("coverage_calculated", league_id=l.id, season=season, endpoint="/fixtures", overall=cov.get("overall_coverage"))
         except Exception as e:
