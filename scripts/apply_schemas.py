@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 import psycopg2
+from psycopg2 import errors as pg_errors
 
 
 def _dsn() -> str:
@@ -16,6 +17,22 @@ def _dsn() -> str:
     password = os.getenv("POSTGRES_PASSWORD", "postgres")
     db = os.getenv("POSTGRES_DB", "api_football")
     return f"postgresql://{user}:{password}@{host}:{port}/{db}"
+
+
+def _schemas_already_applied(cur) -> bool:
+    """
+    Idempotency guard.
+
+    Our schema files include CREATE TRIGGER statements without IF NOT EXISTS.
+    Re-applying them will raise DuplicateObject. In production, schemas should be applied once per DB.
+    """
+    cur.execute("SELECT to_regclass('raw.api_responses');")
+    raw_ok = cur.fetchone()[0] is not None
+    cur.execute("SELECT to_regclass('core.countries');")
+    core_ok = cur.fetchone()[0] is not None
+    cur.execute("SELECT to_regclass('mart.coverage_status');")
+    mart_ok = cur.fetchone()[0] is not None
+    return bool(raw_ok and core_ok and mart_ok)
 
 
 def main() -> int:
@@ -36,10 +53,18 @@ def main() -> int:
     try:
         conn.autocommit = True
         with conn.cursor() as cur:
+            if _schemas_already_applied(cur):
+                print("[OK] schemas already applied (skipping)")
+                return 0
             for p in sql_files:
                 sql_text = p.read_text(encoding="utf-8")
-                cur.execute(sql_text)
-                print(f"[OK] applied {p.name}")
+                try:
+                    cur.execute(sql_text)
+                    print(f"[OK] applied {p.name}")
+                except pg_errors.DuplicateObject:
+                    # Most common case: triggers already exist. Treat as already applied and exit cleanly.
+                    print(f"[OK] schema already present (duplicate objects while applying {p.name}); skipping")
+                    return 0
     finally:
         conn.close()
     return 0
