@@ -13,6 +13,7 @@ from collector.rate_limiter import RateLimiter
 from transforms.standings import transform_standings
 from utils.db import get_transaction, query_scalar, upsert_raw
 from utils.logging import get_logger
+from utils.dependencies import ensure_standings_dependencies
 
 
 logger = get_logger(component="standings_sync")
@@ -154,6 +155,19 @@ async def sync_standings(
                 continue
 
             envelope = result.data or {}
+
+            # Ensure league+teams exist before FK writes into core.standings.
+            try:
+                await ensure_standings_dependencies(
+                    league_id=league_id,
+                    season=season,
+                    standings_envelope=envelope,
+                    client=client2,
+                    limiter=limiter2,
+                )
+            except Exception as e:
+                logger.error("dependency_bootstrap_failed", league_id=league_id, err=str(e))
+                continue
 
             if not dry_run:
                 upsert_raw(

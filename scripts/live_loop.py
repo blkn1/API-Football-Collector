@@ -24,6 +24,7 @@ from utils.db import get_transaction, upsert_core, upsert_raw  # noqa: E402
 from utils.logging import get_logger, setup_logging  # noqa: E402
 from utils.venues_backfill import backfill_missing_venues_for_fixtures  # noqa: E402
 from utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
+from utils.dependencies import ensure_fixtures_dependencies  # noqa: E402
 
 
 logger = get_logger(script="live_loop")
@@ -198,6 +199,43 @@ async def run_iteration(
     # Write changed fixtures in a single transaction (reduce overhead)
     changed_envelope = {**envelope, "response": changed_items}
     fixtures_rows, details_rows = transform_fixtures(changed_envelope)
+
+    # Ensure dependencies exist (league + teams) before inserting fixtures (FK integrity).
+    try:
+        # Prefer season from API envelope (league.season). This avoids guessing.
+        seasons_by_league: dict[int, int] = {}
+        for it in changed_items:
+            try:
+                lid = int((it.get("league") or {}).get("id") or -1)
+                s = int((it.get("league") or {}).get("season") or 0)
+            except Exception:
+                continue
+            if lid > 0 and s > 0:
+                seasons_by_league[lid] = s
+
+        for lid in sorted({int((x.get("league") or {}).get("id") or -1) for x in changed_items}):
+            if lid <= 0:
+                continue
+            season = seasons_by_league.get(lid)
+            await ensure_fixtures_dependencies(
+                league_id=lid,
+                season=season,
+                fixtures_envelope=changed_envelope,
+                client=client,
+                limiter=limiter,
+            )
+    except Exception as e:
+        logger.error("dependency_bootstrap_failed", err=str(e))
+        # best-effort: skip DB write this iteration to avoid FK errors
+        q = limiter.quota
+        return IterationStats(
+            fixtures_live=fixtures_live,
+            fixtures_tracked=fixtures_tracked,
+            fixtures_changed=fixtures_changed,
+            fixtures_written=0,
+            api_daily_remaining=q.daily_remaining,
+            api_minute_remaining=q.minute_remaining,
+        )
 
     # Ensure referenced venues exist before inserting fixtures (prevents FK violations).
     venue_ids = [int(r["venue_id"]) for r in fixtures_rows if r.get("venue_id") is not None]

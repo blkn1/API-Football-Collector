@@ -23,6 +23,7 @@ from utils.standings import sync_standings  # noqa: E402
 from coverage.calculator import CoverageCalculator  # noqa: E402
 from utils.venues_backfill import backfill_missing_venues_for_fixtures  # noqa: E402
 from utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
+from utils.dependencies import ensure_fixtures_dependencies  # noqa: E402
 
 
 logger = get_logger(script="daily_sync")
@@ -213,6 +214,19 @@ async def sync_daily_fixtures(
                 body=envelope,
             )
             logger.info("raw_stored", league_id=league_id, fixtures=resp_count)
+
+            # Ensure CORE dependency order (leagues + teams must exist before fixtures insert; avoids FK violations).
+            try:
+                await ensure_fixtures_dependencies(
+                    league_id=league_id,
+                    season=season,
+                    fixtures_envelope=envelope,
+                    client=client2,
+                    limiter=limiter2,
+                )
+            except Exception as e:
+                logger.error("dependency_bootstrap_failed", league_id=league_id, err=str(e))
+                continue
 
             # Transform
             fixtures_rows, details_rows = transform_fixtures(envelope)
