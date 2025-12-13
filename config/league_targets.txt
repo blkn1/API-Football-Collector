@@ -1,0 +1,91 @@
+# Target leagues (TR names). Resolver will:
+# - remove Women/Kadınlar and Amateur/Amatör lines automatically
+# - map country (TR) -> API country (EN)
+# - match league name against /leagues?current=true catalog
+#
+# Format: free-form per line (country + league name)
+
+Türkiye Süper Lig
+Türkiye 1. Lig
+İngiltere Premier Lig
+İtalya Serie A
+İspanya La Liga
+Almanya Bundesliga
+Fransa Ligue 1
+Portekiz Premier Lig
+Hollanda Eredivisie
+Yunanistan Süper Lig
+Belçika Pro Lig
+İngiltere Championship
+Almanya 2. Bundesliga
+Fransa Ligue 2
+İspanya La Liga 2
+Avusturya Bundesliga
+Çekya 1. Lig
+İsviçre Süper Lig
+İskoçya Premiership
+İngiltere 1. Lig
+İngiltere 2. Lig
+Polonya Ekstraklasa
+İtalya Serie B
+İskoçya Lig Kupası
+Cezayir Kupası
+Meksika Primera Ligi (Açılış Playoff)
+Peru Primera Ligi (Büyük Final)
+Almanya 3. Lig
+Hırvatistan 1. HNL
+Nijerya Profesyonel Futbol Ligi
+Avustralya A-Ligi
+Macaristan NB I
+İskoçya 2. Lig
+İskoçya 1. Lig
+Avusturya 2. Lig
+İskoçya Championship
+Endonezya 1. Lig
+Azerbaycan Premier Lig
+Brezilya Kupası
+Danimarka Kupası
+Hong Kong Premier Lig
+Nikaragua Primera Ligi
+Kosta Rika Primera Lig (Açılış)
+İtalya Serie C
+El Salvador 1. Lig (Açılış – Eleme)
+Kuzey İrlanda Premiership
+Kuzey İrlanda Championship
+Portekiz 2. Lig
+Romanya 1. Lig
+Slovakya Superliga
+İsviçre Challenge Ligi
+Ukrayna Premier Lig
+Birleşik Arap Emirlikleri Pro Lig Kupası
+Galler Federasyon Kupası
+Hong Kong 1. Lig
+Tunus 2. Lig (Grup A)
+Gana Premier Lig
+Belçika 2. Lig (İlk Etap)
+FIFA Kıtalararası Kupa
+Malta Premier Lig (Top 6 – İlk Etap)
+Ekvador Serie A
+Kolombiya Kupası
+Katar QSL Cup
+Suudi Arabistan 1. Lig
+Sırbistan Superliga
+İran Pro Ligi
+Bosna Hersek Premijer Ligi
+Bolivya Profesyonel Lig
+Andorra Primera Division
+Kenya Premier Lig
+Tayland 1. Lig
+Galler Championship
+Birleşik Arap Emirlikleri 1. Lig
+Uganda Premier League
+İran Azadegan Ligi
+Portekiz 3. Lig
+İtalya Bahar Şampiyonası
+Hollanda Tweede Divisie
+Bulgaristan Kupası
+Portekiz U23 Championship (1. Phase)
+Lebanon Premier Lig
+İngiltere U21 Premier League Cup (Knockout)
+İngiltere U21 Premier League Cup (Group)
+
