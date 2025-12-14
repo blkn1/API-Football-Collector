@@ -230,8 +230,13 @@ def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
         except Exception:
             continue
 
-        script = obj.get("script") or obj.get("component") or obj.get("job_id") or "unknown"
-        script = str(script)
+        # Prefer job_id when available so scheduler events map to configured job_id's.
+        # This avoids grouping all scheduler events under component=collector_scheduler.
+        jid = obj.get("job_id")
+        if jid is not None and str(jid).strip():
+            script = str(jid)
+        else:
+            script = str(obj.get("script") or obj.get("component") or "unknown")
         if job_name and script != job_name:
             continue
 
@@ -274,6 +279,46 @@ def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
 
     return {"log_file": str(log_path), "jobs": jobs}
 
+
+def _load_league_overrides() -> list[dict[str, Any]]:
+    """
+    Read config/league_overrides.yaml and return normalized overrides list.
+    Supports both list and mapping forms.
+    """
+    path = Path(os.getenv("API_FOOTBALL_LEAGUE_OVERRIDES_CONFIG", str(PROJECT_ROOT / "config" / "league_overrides.yaml")))
+    try:
+        cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return []
+    raw = cfg.get("overrides") or []
+
+    out: list[dict[str, Any]] = []
+    if isinstance(raw, list):
+        for x in raw:
+            if not isinstance(x, dict):
+                continue
+            if "league_id" not in x or "source" not in x:
+                continue
+            try:
+                league_id = int(x["league_id"])
+            except Exception:
+                continue
+            season = x.get("season")
+            try:
+                season_i = int(season) if season is not None else None
+            except Exception:
+                season_i = None
+            out.append({"source": str(x.get("source") or ""), "league_id": league_id, "season": season_i})
+
+    elif isinstance(raw, dict):
+        for source, league_id in raw.items():
+            try:
+                out.append({"source": str(source), "league_id": int(league_id), "season": None})
+            except Exception:
+                continue
+
+    # Drop empty sources
+    return [x for x in out if x.get("source")]
 
 @app.tool()
 async def get_coverage_status(league_id: int | None = None, season: int | None = None) -> dict:
@@ -827,7 +872,32 @@ async def list_tracked_leagues() -> dict:
     """
     try:
         leagues = _tracked_leagues_from_daily_config()
-        return {"ok": True, "tracked_leagues": leagues, "ts_utc": _utc_now_iso()}
+        overrides = _load_league_overrides()
+
+        # Union view for convenience (unique by league_id)
+        union: dict[int, dict[str, Any]] = {}
+        for x in leagues:
+            try:
+                union[int(x["id"])] = {"league_id": int(x["id"]), "name": x.get("name"), "source": "daily_config", "season": None}
+            except Exception:
+                continue
+        for o in overrides:
+            lid = int(o["league_id"])
+            # keep existing name if present, but annotate override source
+            cur = union.get(lid) or {"league_id": lid, "name": None, "source": "overrides", "season": o.get("season")}
+            # If already present from daily_config, keep source list as a string for now.
+            if cur.get("source") != "daily_config":
+                cur["source"] = "overrides"
+            cur["season"] = cur.get("season") or o.get("season")
+            union[lid] = cur
+
+        return {
+            "ok": True,
+            "tracked_leagues": leagues,
+            "league_overrides": overrides,
+            "configured_leagues_union": sorted(union.values(), key=lambda d: int(d["league_id"])),
+            "ts_utc": _utc_now_iso(),
+        }
     except Exception as e:
         return _ok_error("list_tracked_leagues_failed", details=str(e))
 
