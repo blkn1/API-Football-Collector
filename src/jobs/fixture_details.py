@@ -180,7 +180,7 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
         except (RateLimitError, APIClientError) as e:
             logger.warning("fixture_detail_fetch_failed", fixture_id=fixture_id, endpoint=endpoint, err=str(e))
             # Do not spam retries per endpoint here; caller loop continues.
-            return
+            continue
 
         upsert_raw(
             endpoint=endpoint,
