@@ -41,7 +41,31 @@ from src.mcp import queries  # noqa: E402
 from src.utils.db import get_db_connection  # noqa: E402
 
 
-app = FastMCP("api-football-mcp")
+def _create_mcp_app() -> Any:
+    """
+    Create FastMCP app.
+
+    IMPORTANT (Coolify / reverse proxy):
+    Uvicorn must bind to 0.0.0.0 inside the container for external routing.
+    Some FastMCP versions configure host/port at instantiation time (not in run()).
+    """
+    host = str(os.getenv("FASTMCP_HOST", "127.0.0.1")).strip()
+    port = int(os.getenv("FASTMCP_PORT", "8000"))
+    log_level = str(os.getenv("FASTMCP_LOG_LEVEL", "INFO")).strip()
+
+    # Try the most specific signature first, then fall back.
+    try:
+        return FastMCP("api-football-mcp", host=host, port=port, log_level=log_level)
+    except TypeError:
+        pass
+    try:
+        return FastMCP("api-football-mcp", host=host, port=port)
+    except TypeError:
+        pass
+    return FastMCP("api-football-mcp")
+
+
+app = _create_mcp_app()
 
 
 def _utc_now_iso() -> str:
@@ -1048,18 +1072,7 @@ async def main() -> None:
     if transport not in ("stdio", "sse", "streamable-http"):
         transport = "stdio"
     mount_path = os.getenv("MCP_MOUNT_PATH") or None
-    # IMPORTANT (Coolify / reverse proxy):
-    # When exposing MCP over HTTP (sse/streamable-http), we must bind to 0.0.0.0
-    # so the reverse proxy can reach the container. Some FastMCP versions do not
-    # automatically read FASTMCP_HOST/FASTMCP_PORT, so we pass them explicitly.
-    host = str(os.getenv("FASTMCP_HOST", "127.0.0.1")).strip()
-    port = int(os.getenv("FASTMCP_PORT", "8000"))
-    try:
-        app.run(transport=transport, mount_path=mount_path, host=host, port=port)
-    except TypeError:
-        # Backward-compatible fallback: older FastMCP signatures might not accept host/port.
-        # In that case, env-based binding must be relied upon.
-        app.run(transport=transport, mount_path=mount_path)
+    app.run(transport=transport, mount_path=mount_path)
 
 
 if __name__ == "__main__":
@@ -1068,11 +1081,6 @@ if __name__ == "__main__":
     if transport not in ("stdio", "sse", "streamable-http"):
         transport = "stdio"
     mount_path = os.getenv("MCP_MOUNT_PATH") or None
-    host = str(os.getenv("FASTMCP_HOST", "127.0.0.1")).strip()
-    port = int(os.getenv("FASTMCP_PORT", "8000"))
-    try:
-        app.run(transport=transport, mount_path=mount_path, host=host, port=port)
-    except TypeError:
-        app.run(transport=transport, mount_path=mount_path)
+    app.run(transport=transport, mount_path=mount_path)
 
 
