@@ -155,4 +155,106 @@ DATABASE_STATS_QUERY = """
       (SELECT MAX(updated_at) FROM core.fixtures) AS core_fixtures_last_updated_at
 """
 
+# Injuries query (read-only)
+# Note: `filters` is inserted as a fixed safe fragment assembled from known clauses.
+INJURIES_QUERY = """
+    SELECT
+      i.league_id,
+      i.season,
+      i.team_id,
+      i.player_id,
+      i.player_name,
+      i.team_name,
+      i.type,
+      i.reason,
+      i.severity,
+      i.date,
+      i.updated_at
+    FROM core.injuries i
+    WHERE 1=1
+    {filters}
+    ORDER BY i.updated_at DESC NULLS LAST
+    LIMIT %s
+"""
+
+FIXTURE_DETAIL_STATUS_QUERY = """
+    SELECT
+      f.id AS fixture_id,
+      f.league_id,
+      f.season,
+      f.date AS fixture_date,
+      f.status_short,
+
+      EXISTS (SELECT 1 FROM core.fixture_players p WHERE p.fixture_id = f.id) AS has_players,
+      EXISTS (SELECT 1 FROM core.fixture_events e WHERE e.fixture_id = f.id) AS has_events,
+      EXISTS (SELECT 1 FROM core.fixture_statistics s WHERE s.fixture_id = f.id) AS has_statistics,
+      EXISTS (SELECT 1 FROM core.fixture_lineups l WHERE l.fixture_id = f.id) AS has_lineups,
+
+      (SELECT MAX(r.fetched_at) FROM raw.api_responses r WHERE r.endpoint='/fixtures/players' AND (r.requested_params->>'fixture')::bigint=f.id) AS last_players_fetch,
+      (SELECT MAX(r.fetched_at) FROM raw.api_responses r WHERE r.endpoint='/fixtures/events' AND (r.requested_params->>'fixture')::bigint=f.id) AS last_events_fetch,
+      (SELECT MAX(r.fetched_at) FROM raw.api_responses r WHERE r.endpoint='/fixtures/statistics' AND (r.requested_params->>'fixture')::bigint=f.id) AS last_statistics_fetch,
+      (SELECT MAX(r.fetched_at) FROM raw.api_responses r WHERE r.endpoint='/fixtures/lineups' AND (r.requested_params->>'fixture')::bigint=f.id) AS last_lineups_fetch
+    FROM core.fixtures f
+    WHERE f.id = %s
+"""
+
+FIXTURE_PLAYERS_QUERY = """
+    SELECT
+      fixture_id,
+      team_id,
+      player_id,
+      player_name,
+      statistics,
+      updated_at
+    FROM core.fixture_players
+    WHERE fixture_id = %s
+    {team_filter}
+    ORDER BY team_id NULLS LAST, player_name NULLS LAST
+    LIMIT %s
+"""
+
+FIXTURE_EVENTS_QUERY = """
+    SELECT
+      fixture_id,
+      time_elapsed,
+      time_extra,
+      team_id,
+      player_id,
+      assist_id,
+      type,
+      detail,
+      comments,
+      updated_at
+    FROM core.fixture_events
+    WHERE fixture_id = %s
+    ORDER BY time_elapsed NULLS LAST, time_extra NULLS LAST, updated_at ASC
+    LIMIT %s
+"""
+
+FIXTURE_STATISTICS_QUERY = """
+    SELECT
+      fixture_id,
+      team_id,
+      statistics,
+      updated_at
+    FROM core.fixture_statistics
+    WHERE fixture_id = %s
+    ORDER BY team_id NULLS LAST
+"""
+
+FIXTURE_LINEUPS_QUERY = """
+    SELECT
+      fixture_id,
+      team_id,
+      formation,
+      start_xi,
+      substitutes,
+      coach,
+      colors,
+      updated_at
+    FROM core.fixture_lineups
+    WHERE fixture_id = %s
+    ORDER BY team_id NULLS LAST
+"""
+
 

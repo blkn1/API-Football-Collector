@@ -159,6 +159,23 @@ def _tracked_leagues_from_daily_config() -> list[dict[str, Any]]:
     return leagues
 
 
+def _default_season_from_daily_config() -> int | None:
+    """
+    Default season comes from config/jobs/daily.yaml (or API_FOOTBALL_DAILY_CONFIG override).
+    This keeps MCP tools config-driven while avoiding assumptions.
+    """
+    cfg_path = Path(os.getenv("API_FOOTBALL_DAILY_CONFIG", str(PROJECT_ROOT / "config" / "jobs" / "daily.yaml")))
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    season_cfg = cfg.get("season")
+    try:
+        return int(season_cfg) if season_cfg is not None else None
+    except Exception:
+        return None
+
+
 def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
     """
     Parse structlog JSONL produced by scripts (best-effort).
@@ -246,11 +263,12 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
     try:
         # Default season from config/jobs/daily.yaml when available (keeps config-driven behavior).
         if season is None:
-            cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                season_cfg = cfg.get("season")
+            season_cfg = _default_season_from_daily_config()
             if season_cfg is None:
-                return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
+                return _ok_error(
+                    "season_required",
+                    details="Missing season in daily config. Pass season explicitly or set top-level 'season:' in config/jobs/daily.yaml",
+                )
             season = int(season_cfg)
 
         sql_text = queries.COVERAGE_STATUS
@@ -294,11 +312,12 @@ async def get_coverage_summary(season: int | None = None) -> dict:
     """
     try:
         if season is None:
-            cfg_path = PROJECT_ROOT / "config" / "jobs" / "daily.yaml"
-                cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-                season_cfg = cfg.get("season")
+            season_cfg = _default_season_from_daily_config()
             if season_cfg is None:
-                return _ok_error("season_required", details=f"Missing season in {cfg_path}. Pass season explicitly or set top-level 'season:'")
+                return _ok_error(
+                    "season_required",
+                    details="Missing season in daily config. Pass season explicitly or set top-level 'season:' in config/jobs/daily.yaml",
+                )
             season = int(season_cfg)
 
         row = await _db_fetchone_async(queries.COVERAGE_SUMMARY, (int(season),))
@@ -559,14 +578,222 @@ async def get_database_stats() -> dict:
                 "core_venues": int(row[3]),
                 "core_fixtures": int(row[4]),
                 "core_fixture_details": int(row[5]),
-                "core_standings": int(row[6]),
-                "raw_last_fetched_at_utc": _to_iso_or_none(row[7]),
-                "core_fixtures_last_updated_at_utc": _to_iso_or_none(row[8]),
+                "core_injuries": int(row[6]),
+                "core_fixture_players": int(row[7]),
+                "core_fixture_events": int(row[8]),
+                "core_fixture_statistics": int(row[9]),
+                "core_fixture_lineups": int(row[10]),
+                "core_standings": int(row[11]),
+                "raw_last_fetched_at_utc": _to_iso_or_none(row[12]),
+                "core_fixtures_last_updated_at_utc": _to_iso_or_none(row[13]),
             },
             "ts_utc": _utc_now_iso(),
         }
     except Exception as e:
         return _ok_error("get_database_stats_failed", details=str(e))
+
+
+@app.tool()
+async def query_injuries(
+    league_id: int | None = None,
+    season: int | None = None,
+    team_id: int | None = None,
+    player_id: int | None = None,
+    limit: int = 50,
+) -> list:
+    """
+    Query injuries (core.injuries) with optional filters.
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 200))
+        filters: list[str] = []
+        params: list[Any] = []
+
+        if league_id is not None:
+            filters.append("AND i.league_id = %s")
+            params.append(int(league_id))
+
+        if season is None:
+            season_cfg = _default_season_from_daily_config()
+            if season_cfg is not None and league_id is not None:
+                season = int(season_cfg)
+        if season is not None:
+            filters.append("AND i.season = %s")
+            params.append(int(season))
+
+        if team_id is not None:
+            filters.append("AND i.team_id = %s")
+            params.append(int(team_id))
+        if player_id is not None:
+            filters.append("AND i.player_id = %s")
+            params.append(int(player_id))
+
+        sql_text = queries.INJURIES_QUERY.format(filters="\n    ".join(filters))
+        params.append(safe_limit)
+        rows = await _db_fetchall_async(sql_text, tuple(params))
+
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "league_id": int(r[0]),
+                    "season": int(r[1]),
+                    "team_id": _to_int_or_none(r[2]),
+                    "player_id": _to_int_or_none(r[3]),
+                    "player_name": r[4],
+                    "team_name": r[5],
+                    "type": r[6],
+                    "reason": r[7],
+                    "severity": r[8],
+                    "date": (str(r[9]) if r[9] is not None else None),
+                    "updated_at_utc": _to_iso_or_none(r[10]),
+                }
+            )
+        return out
+    except Exception as e:
+        return [_ok_error("query_injuries_failed", details=str(e))]
+
+
+@app.tool()
+async def get_fixture_detail_status(fixture_id: int) -> dict:
+    """
+    For a fixture_id, report whether CORE has players/events/statistics/lineups,
+    and the last RAW fetch time for each corresponding endpoint.
+    """
+    try:
+        row = await _db_fetchone_async(queries.FIXTURE_DETAIL_STATUS_QUERY, (int(fixture_id),))
+        if not row:
+            return {"ok": True, "fixture": None, "ts_utc": _utc_now_iso()}
+
+        return {
+            "ok": True,
+            "fixture": {
+                "fixture_id": int(row[0]),
+                "league_id": int(row[1]),
+                "season": _to_int_or_none(row[2]),
+                "date_utc": _to_iso_or_none(row[3]),
+                "status_short": row[4],
+                "has_players": bool(row[5]),
+                "has_events": bool(row[6]),
+                "has_statistics": bool(row[7]),
+                "has_lineups": bool(row[8]),
+                "last_players_fetch_utc": _to_iso_or_none(row[9]),
+                "last_events_fetch_utc": _to_iso_or_none(row[10]),
+                "last_statistics_fetch_utc": _to_iso_or_none(row[11]),
+                "last_lineups_fetch_utc": _to_iso_or_none(row[12]),
+            },
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_fixture_detail_status_failed", details=str(e))
+
+
+@app.tool()
+async def query_fixture_players(fixture_id: int, team_id: int | None = None, limit: int = 300) -> list:
+    """
+    Query core.fixture_players for a fixture (optionally filter by team_id).
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 500))
+        if team_id is not None:
+            sql_text = queries.FIXTURE_PLAYERS_QUERY.format(team_filter="AND team_id = %s")
+            rows = await _db_fetchall_async(sql_text, (int(fixture_id), int(team_id), safe_limit))
+        else:
+            sql_text = queries.FIXTURE_PLAYERS_QUERY.format(team_filter="")
+            rows = await _db_fetchall_async(sql_text, (int(fixture_id), safe_limit))
+
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "fixture_id": int(r[0]),
+                    "team_id": _to_int_or_none(r[1]),
+                    "player_id": _to_int_or_none(r[2]),
+                    "player_name": r[3],
+                    "statistics": r[4],
+                    "updated_at_utc": _to_iso_or_none(r[5]),
+                }
+            )
+        return out
+    except Exception as e:
+        return [_ok_error("query_fixture_players_failed", details=str(e))]
+
+
+@app.tool()
+async def query_fixture_events(fixture_id: int, limit: int = 300) -> list:
+    """
+    Query core.fixture_events for a fixture.
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 1000))
+        rows = await _db_fetchall_async(queries.FIXTURE_EVENTS_QUERY, (int(fixture_id), safe_limit))
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "fixture_id": int(r[0]),
+                    "time_elapsed": _to_int_or_none(r[1]),
+                    "time_extra": _to_int_or_none(r[2]),
+                    "team_id": _to_int_or_none(r[3]),
+                    "player_id": _to_int_or_none(r[4]),
+                    "assist_id": _to_int_or_none(r[5]),
+                    "type": r[6],
+                    "detail": r[7],
+                    "comments": r[8],
+                    "updated_at_utc": _to_iso_or_none(r[9]),
+                }
+            )
+        return out
+    except Exception as e:
+        return [_ok_error("query_fixture_events_failed", details=str(e))]
+
+
+@app.tool()
+async def query_fixture_statistics(fixture_id: int) -> list:
+    """
+    Query core.fixture_statistics for a fixture (one row per team).
+    """
+    try:
+        rows = await _db_fetchall_async(queries.FIXTURE_STATISTICS_QUERY, (int(fixture_id),))
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "fixture_id": int(r[0]),
+                    "team_id": _to_int_or_none(r[1]),
+                    "statistics": r[2],
+                    "updated_at_utc": _to_iso_or_none(r[3]),
+                }
+            )
+        return out
+    except Exception as e:
+        return [_ok_error("query_fixture_statistics_failed", details=str(e))]
+
+
+@app.tool()
+async def query_fixture_lineups(fixture_id: int) -> list:
+    """
+    Query core.fixture_lineups for a fixture (one row per team).
+    """
+    try:
+        rows = await _db_fetchall_async(queries.FIXTURE_LINEUPS_QUERY, (int(fixture_id),))
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "fixture_id": int(r[0]),
+                    "team_id": _to_int_or_none(r[1]),
+                    "formation": r[2],
+                    "start_xi": r[3],
+                    "substitutes": r[4],
+                    "coach": r[5],
+                    "colors": r[6],
+                    "updated_at_utc": _to_iso_or_none(r[7]),
+                }
+            )
+        return out
+    except Exception as e:
+        return [_ok_error("query_fixture_lineups_failed", details=str(e))]
 
 
 @app.tool()
@@ -637,12 +864,19 @@ async def get_job_status(job_name: str | None = None) -> dict:
 
 
 async def main() -> None:
-    # stdio is the default transport for Claude Desktop MCP integration
-    app.run(transport="stdio")
+    transport = str(os.getenv("MCP_TRANSPORT", "stdio")).strip().lower()
+    if transport not in ("stdio", "sse", "streamable-http"):
+        transport = "stdio"
+    mount_path = os.getenv("MCP_MOUNT_PATH") or None
+    app.run(transport=transport, mount_path=mount_path)
 
 
 if __name__ == "__main__":
     # FastMCP.run() manages its own AnyIO event loop; do not wrap it in asyncio.run().
-    app.run(transport="stdio")
+    transport = str(os.getenv("MCP_TRANSPORT", "stdio")).strip().lower()
+    if transport not in ("stdio", "sse", "streamable-http"):
+        transport = "stdio"
+    mount_path = os.getenv("MCP_MOUNT_PATH") or None
+    app.run(transport=transport, mount_path=mount_path)
 
 

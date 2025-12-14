@@ -111,6 +111,40 @@ services:
     networks:
       - api_football_net
 
+  # MCP server (read-only query interface)
+  # For Claude Desktop: use stdio transport.
+  # For Coolify: expose SSE transport via FASTMCP_HOST/FASTMCP_PORT and MCP_TRANSPORT=sse.
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+      COLLECTOR_LOG_FILE: /app/logs/collector.jsonl
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      MCP_MOUNT_PATH: ${MCP_MOUNT_PATH:-}
+      FASTMCP_HOST: ${FASTMCP_HOST:-0.0.0.0}
+      FASTMCP_PORT: ${FASTMCP_PORT:-8000}
+      FASTMCP_LOG_LEVEL: ${FASTMCP_LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: ["sh", "-lc", "python -m src.mcp.server"]
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    networks:
+      - api_football_net
+
 volumes:
   postgres_data:
 
