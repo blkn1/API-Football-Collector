@@ -5,13 +5,14 @@ api:
   default_timezone: "UTC"
 
 rate_limits:
-  # API-Football Pro: 7,500/day (hard) and ~300/minute (hard firewall risk).
-  daily_limit: 7500
+  # API-Football Pro: 75,000/day (hard) and ~300/minute (hard firewall risk).
+  daily_limit: 75000
   minute_limit: 300
 
   # Soft throttling / operational controls
-  minute_soft_limit: 250
-  emergency_stop_threshold: 1000
+  minute_soft_limit: 280
+  # Stop when remaining daily quota drops below 10% (safety buffer).
+  emergency_stop_threshold: 7500
 
 logging:
   level: "INFO"

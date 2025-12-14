@@ -95,7 +95,7 @@ jobs:
     params: {}
     interval:
       type: "cron"
-      cron: "*/10 * * * *"  # bounded by BACKFILL_FIXTURES_MAX_TASKS_PER_RUN / BACKFILL_FIXTURES_MAX_PAGES_PER_TASK
+      cron: "* * * * *"  # every minute; bounded by BACKFILL_FIXTURES_MAX_TASKS_PER_RUN / BACKFILL_FIXTURES_MAX_PAGES_PER_TASK
     target_layer: "raw+core"
     coverage_target:
       endpoint: "/fixtures_backfill"
@@ -111,7 +111,7 @@ jobs:
     params: {}
     interval:
       type: "cron"
-      cron: "*/30 * * * *"  # bounded by BACKFILL_STANDINGS_MAX_TASKS_PER_RUN
+      cron: "*/10 * * * *"  # every 10 minutes; bounded by BACKFILL_STANDINGS_MAX_TASKS_PER_RUN
     target_layer: "raw+core"
     coverage_target:
       endpoint: "/standings_backfill"

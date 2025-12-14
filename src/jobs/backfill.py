@@ -189,8 +189,10 @@ async def run_fixtures_backfill_league_season(
     leagues = _load_tracked_leagues(config_path)
     seasons = _load_backfill_seasons(config_path)
 
-    max_tasks = int(os.getenv("BACKFILL_FIXTURES_MAX_TASKS_PER_RUN", "2"))
-    max_pages_per_task = int(os.getenv("BACKFILL_FIXTURES_MAX_PAGES_PER_TASK", "2"))
+    # Defaults tuned for 75k/day quota while staying below 300/min hard cap (shared rate limiter).
+    # Override via Coolify env if you want slower/faster.
+    max_tasks = int(os.getenv("BACKFILL_FIXTURES_MAX_TASKS_PER_RUN", "6"))
+    max_pages_per_task = int(os.getenv("BACKFILL_FIXTURES_MAX_PAGES_PER_TASK", "6"))
 
     league_ids = [l.id for l in leagues]
     _ensure_progress_rows(FIXTURES_JOB_ID, league_ids, seasons)
@@ -364,7 +366,8 @@ async def run_standings_backfill_league_season(
     leagues = _load_tracked_leagues(config_path)
     seasons = _load_backfill_seasons(config_path)
 
-    max_tasks = int(os.getenv("BACKFILL_STANDINGS_MAX_TASKS_PER_RUN", "3"))
+    # Standings is much cheaper than fixtures paging; keep it modest.
+    max_tasks = int(os.getenv("BACKFILL_STANDINGS_MAX_TASKS_PER_RUN", "2"))
 
     league_ids = [l.id for l in leagues]
     _ensure_progress_rows(STANDINGS_JOB_ID, league_ids, seasons)
