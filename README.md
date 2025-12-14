@@ -1,19 +1,24 @@
 # API-Football Data Collector
 
-Production-grade, config-driven data pipeline for **API-Football v3**.
+Production-grade, **config-driven**, **quota-safe** data pipeline for **API-Football v3** (RAW → CORE → MART) + MCP (read-only monitoring).
 
-## What This Repo Contains (Phase 1: Foundation)
+High-signal docs:
+- `production-v3.md` (Production v3.0 architecture + Coolify deploy)
+- `QUOTA_AND_COLLECTION.md` (quota math + job cadence + throughput knobs)
+- `env_info.md` (Coolify ENV reference: what/where/impact)
 
-- **Config layer**: `config/` (API, rate limiter, jobs, coverage)
-- **Data layers (PostgreSQL)**: `db/schemas/` (RAW → CORE → MART)
-- **Collector foundation**:
-  - `src/collector/api_client.py` (GET-only, `x-apisports-key` only, async httpx, status-code handling)
-  - `src/collector/rate_limiter.py` (in-memory token bucket, thread-safe)
-- **Docker**: `docker/docker-compose.yml` (postgres + redis, schema auto-load)
-- **Test script**: `scripts/test_api.py` (calls `/status` only)
-- **Tests**: `tests/unit/`
+## What This Repo Contains (Production v3.0)
 
-## Setup
+- **Config layer**: `config/` (API, rate limiter, jobs, coverage) — hard-code yok.
+- **Collector**: `src/collector/` + `src/jobs/` (APScheduler + rate limiter + retry/backoff patterns)
+- **Data layers (PostgreSQL)**: `db/schemas/` (RAW JSONB archive → CORE normalized UPSERT → MART coverage)
+- **Backfill**: `src/jobs/backfill.py` (resumeable `core.backfill_progress`)
+- **MCP**: `src/mcp/` (read-only tools: coverage, db stats, fixtures/standings/injuries/fixture_details queries)
+- **Docker / Coolify**: root `docker-compose.yml` (+ optional `docker-compose.live.yml`)
+- **Healthchecks**: `scripts/healthcheck_*.py`
+- **Tests**: `tests/unit/`, `tests/integration/`, `tests/mcp/`
+
+## Setup (local)
 
 ### 1) Environment
 
@@ -27,21 +32,21 @@ Production-grade, config-driven data pipeline for **API-Football v3**.
 python3 -m pip install -r requirements.txt
 ```
 
-### 3) Start Postgres + Redis (local)
+### 3) Start services (local)
 
 ```bash
-cd docker
-docker compose up -d
+docker compose up -d --build
 ```
 
-Postgres will auto-load SQL schemas from `db/schemas/` on first init.
+On startup, the collector runs `python scripts/apply_schemas.py` which applies `db/schemas/*.sql` idempotently (safe for persistent volumes).
 
 ## Docker / Coolify Deploy
 
-This repo ships a `Dockerfile` and a Compose stack in `docker-compose.yml` (repo root).
+This repo ships a root `Dockerfile` and a Compose stack in `docker-compose.yml` (repo root).
 
-- **collector**: APScheduler-based service that runs enabled non-live jobs from `config/jobs/*.yaml`
-- **live_loop**: optional long-running `/fixtures?live=all` poller (15s) for live matches (separate compose file)
+- **collector**: APScheduler service that runs enabled non-live jobs from `config/jobs/*.yaml`
+- **live_loop**: optional `/fixtures?live=all` poller (15s). Controlled by `ENABLE_LIVE_LOOP=1`. Default: off.
+- **mcp**: read-only query interface (Coolify: HTTP/SSE)
 
 Minimal steps:
 
@@ -52,7 +57,14 @@ docker compose up -d --build
 Required environment:
 - `API_FOOTBALL_KEY`
 - `DATABASE_URL` (recommended) or `POSTGRES_*`
-- `REDIS_URL` (needed for `live_loop`)
+- `SCHEDULER_TIMEZONE` (recommended)
+- `REDIS_URL` (only needed if `ENABLE_LIVE_LOOP=1`)
+
+MCP (Coolify / HTTP-SSE):
+- `MCP_TRANSPORT=sse`
+- `FASTMCP_HOST=0.0.0.0`
+- `FASTMCP_PORT=8000`
+- `MCP_HOST_PORT=8001` (host port conflict çözümü)
 
 Enable live loop (optional):
 
@@ -78,5 +90,10 @@ ENABLE_LIVE_LOOP=1 docker compose up -d --build
 ```bash
 pytest -q
 ```
+
+If you’re running in Coolify and want a safe smoke-test locally first:
+- `python scripts/test_api.py` (FREE `/status`)
+- `pytest -q tests/unit/test_rate_limiter.py`
+
 
 

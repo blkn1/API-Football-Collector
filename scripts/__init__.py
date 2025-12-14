@@ -1,6 +1,1 @@
-
-
-
-
-
-
+"""Scripts package."""

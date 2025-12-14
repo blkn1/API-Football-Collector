@@ -72,7 +72,7 @@ Coolify loglarına göre sistem doğru şekilde ayağa kalkmış:
 
 #### `src/utils/`
 - **`db.py`**: pool + `upsert_raw`, `upsert_core`, `upsert_mart_coverage`
-- **`dependencies.py`**: **leagues/teams dependency bootstrap** (FK kırılmasını engeller)
+- **`dependencies.py`**: **leagues/teams/venues dependency bootstrap** (FK kırılmasını engeller)
 - **`venues_backfill.py`**: `VENUES_BACKFILL_MAX_PER_RUN` ile bounded backfill
 - `config.py`, `logging.py`, `standings.py`
 
@@ -163,6 +163,17 @@ Backfill / operational ayrımı:
 - **CORE**: tüm tablolar **UPSERT** (`INSERT ... ON CONFLICT DO UPDATE`)
 - **UTC zorunlu**: DB TIMESTAMPTZ; scheduler cron timezone ayrı (`SCHEDULER_TIMEZONE`)
 
+### FK Integrity Notu (Fixtures → Venues)
+Üretimde gözlemlenen gerçek durum: `/fixtures` response’ları `fixture.venue.id` döndürebilir ama bu venue daha önce `core.venues`’e yazılmamış olabilir.
+
+Bu nedenle:
+- `ensure_fixtures_dependencies()` artık **fixtures envelope içinden venue** çıkarır ve `core.venues`’e UPSERT eder (ekstra API çağrısı yok).
+- `fixture.venue.id=0` (unknown) geldiğinde `core.fixtures.venue_id` **NULL** yazılır; böylece FK ihlali oluşmaz.
+
+Sonuç:
+- `fixtures_venue_id_fkey` hataları ortadan kalkar.
+- RAW arşiv (JSONB) değişmeden kalır; CORE idempotent biçimde genişler.
+
 ---
 
 ## 8) Coolify / Docker Deploy
@@ -195,6 +206,9 @@ Backfill / operational ayrımı:
   - `FIXTURE_DETAILS_FINALIZE_BATCH=50`
   - `FIXTURE_LINEUPS_WINDOW_BATCH=50`
   - `VENUES_BACKFILL_MAX_PER_RUN=5`
+  - `BACKFILL_FIXTURES_MAX_TASKS_PER_RUN=6`
+  - `BACKFILL_FIXTURES_MAX_PAGES_PER_TASK=6` *(window sayısı; ENV adı backward-compat için değişmedi)*
+  - `BACKFILL_FIXTURES_WINDOW_DAYS=30`
 
 #### MCP (Coolify) — HTTP/SSE (production)
 
@@ -273,6 +287,10 @@ echo "vm.overcommit_memory=1" | sudo tee -a /etc/sysctl.conf
   - `core.fixtures`, `core.injuries`, `core.fixture_*` tablolarda satır artışı
 - **Coverage yazılıyor mu?**
   - `mart.coverage_status` satırları oluşuyor mu?
+
+Ek doğrulama (fixtures backfill):
+- Log’larda `fixtures_backfill_core_upserted` ve `fixtures_backfill_completed_all_windows` görülmeli.
+- Log gürültüsü kontrolü: `venues_upserted_dependency` artık backfill task başına 1 kez loglanır (window başına spam yok).
 
 ---
 

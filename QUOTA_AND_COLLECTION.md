@@ -56,9 +56,11 @@ Backfill sezonları:
 
 #### Fixtures backfill (en ağır)
 - Job: `fixtures_backfill_league_season`
-- Endpoint: `GET /fixtures?league=<id>&season=<season>&page=<n>`
+- Endpoint (windowed): `GET /fixtures?league=<id>&season=<season>&from=YYYY-MM-DD&to=YYYY-MM-DD`
+- Fallback (rare): Eğer `core.leagues.seasons` içinde sezon başlangıç/bitiş tarihleri yoksa tek sefer:
+  - `GET /fixtures?league=<id>&season=<season>`
 - Sıklık: **her 1 dakika** (cron `* * * * *`)
-- Resume: `core.backfill_progress.next_page`
+- Resume: `core.backfill_progress.next_page` (**window index** olarak kullanılır)
 
 #### Standings backfill (ucuz)
 - Job: `standings_backfill_league_season`
@@ -74,15 +76,21 @@ Backfill sezonları:
 
 Bu ENV’ler backfill hızını ayarlar (quota-safe):
 
-### 4.1 Fixtures backfill (paging)
+### 4.1 Fixtures backfill (windowing)
 - `BACKFILL_FIXTURES_MAX_TASKS_PER_RUN` (default: **6**)  
   Aynı çalıştırmada kaç (league,season) işlenecek.
 - `BACKFILL_FIXTURES_MAX_PAGES_PER_TASK` (default: **6**)  
-  Her (league,season) için kaç sayfa çekilecek.
+  Her (league,season) için kaç **window** çekilecek. (ENV adı backward-compat için değişmedi.)
+- `BACKFILL_FIXTURES_WINDOW_DAYS` (default: **30**)  
+  Her window kaç gün kapsasın. Küçük değer = daha çok request, daha granular backfill.
 
 Yaklaşık istek/dk:
-- Maks `tasks * pages` (ör: 6*6=36 request/run).  
-Job her 1 dk çalıştığı için ≈ **36 req/min** sadece fixtures backfill.
+- Maks `tasks * windows` (ör: 6*6=36 request/run).  
+Job her 1 dk çalıştığı için ≈ **36 req/min** (sadece fixtures backfill).
+
+Notlar:
+- Window içinde fixture sayısı artınca DB upsert maliyeti artar ama API request sayısı değişmez.
+- `window_days` küçülürse aynı sezonu bitirmek için daha fazla window gerekir (daha fazla toplam request).
 
 ### 4.2 Standings backfill
 - `BACKFILL_STANDINGS_MAX_TASKS_PER_RUN` (default: **2**)  
