@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -249,13 +250,13 @@ async def sync_daily_fixtures(
                 if max_venues <= 0:
                     upserted_venues = 0
                 else:
-                upserted_venues = await backfill_missing_venues_for_fixtures(
-                    venue_ids=venue_ids,
-                    client=client2,
-                    limiter=limiter2,
-                    dry_run=False,
+                    upserted_venues = await backfill_missing_venues_for_fixtures(
+                        venue_ids=venue_ids,
+                        client=client2,
+                        limiter=limiter2,
+                        dry_run=False,
                         max_to_fetch=max_venues,
-                )
+                    )
                 if upserted_venues:
                     logger.info("venues_backfilled", league_id=league_id, upserted=upserted_venues)
             except Exception as e:

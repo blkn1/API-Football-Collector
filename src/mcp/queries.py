@@ -145,6 +145,11 @@ DATABASE_STATS_QUERY = """
       (SELECT COUNT(*) FROM core.venues) AS core_venues,
       (SELECT COUNT(*) FROM core.fixtures) AS core_fixtures,
       (SELECT COUNT(*) FROM core.fixture_details) AS core_fixture_details,
+      (SELECT COUNT(*) FROM core.injuries) AS core_injuries,
+      (SELECT COUNT(*) FROM core.fixture_players) AS core_fixture_players,
+      (SELECT COUNT(*) FROM core.fixture_events) AS core_fixture_events,
+      (SELECT COUNT(*) FROM core.fixture_statistics) AS core_fixture_statistics,
+      (SELECT COUNT(*) FROM core.fixture_lineups) AS core_fixture_lineups,
       (SELECT COUNT(*) FROM core.standings) AS core_standings,
       (SELECT MAX(fetched_at) FROM raw.api_responses) AS raw_last_fetched_at,
       (SELECT MAX(updated_at) FROM core.fixtures) AS core_fixtures_last_updated_at

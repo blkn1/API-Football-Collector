@@ -7,7 +7,12 @@ from typing import Any
 
 import yaml
 
-from utils.db import query_scalar
+try:
+    # scripts/ context (adds /src to sys.path)
+    from utils.db import query_scalar  # type: ignore
+except Exception:  # pragma: no cover
+    # src/ package context
+    from src.utils.db import query_scalar  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,187 @@ class CoverageCalculator:
             "overall_coverage": round(overall, 2),
         }
 
+    def calculate_injuries_coverage(self, league_id: int, season: int) -> dict[str, Any]:
+        """
+        Coverage for /injuries (current-only):
+        - expected_count = 1 (we only need "present + fresh")
+        - actual_count = 1 if we have any injuries rows for league+season, else 0
+        """
+        core_total = int(
+            query_scalar(
+                "SELECT COUNT(*) FROM core.injuries WHERE league_id = %s AND season = %s",
+                (int(league_id), int(season)),
+            )
+            or 0
+        )
+        actual = 1 if core_total > 0 else 0
+        expected = 1
+        count_cov = 100.0 if actual >= expected else 0.0
+
+        last_update = self._query_last_update_generic(
+            table="core.injuries",
+            where="league_id = %s AND season = %s",
+            params=(int(league_id), int(season)),
+        )
+        lag_minutes = self._calculate_lag_minutes(last_update)
+        max_lag = int(self.config.max_lag_minutes_daily)
+        freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
+
+        raw_count = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM raw.api_responses
+                WHERE endpoint = '/injuries'
+                  AND fetched_at > NOW() - INTERVAL '24 hours'
+                  AND requested_params->>'league' = %s
+                  AND requested_params->>'season' = %s
+                """,
+                (str(int(league_id)), str(int(season))),
+            )
+            or 0
+        )
+
+        # For injuries, "pipeline" is best represented as freshness/presence (counts aren't comparable to RAW envelopes).
+        pipeline_cov = 100.0 if raw_count > 0 and core_total >= 0 else 0.0
+
+        w = self.config.weights
+        overall = (
+            count_cov * float(w["count_coverage"])
+            + freshness_cov * float(w["freshness_coverage"])
+            + pipeline_cov * float(w["pipeline_coverage"])
+        )
+
+        last_update_iso = last_update.isoformat().replace("+00:00", "Z") if last_update else None
+        return {
+            "league_id": int(league_id),
+            "league_name": self._query_league_name(league_id),
+            "season": int(season),
+            "endpoint": "/injuries",
+            "expected_count": expected,
+            "actual_count": actual,
+            "count_coverage": round(count_cov, 2),
+            "last_update": last_update_iso,
+            "lag_minutes": int(lag_minutes),
+            "freshness_coverage": round(freshness_cov, 2),
+            "raw_count": raw_count,
+            "core_count": core_total,
+            "pipeline_coverage": round(pipeline_cov, 2),
+            "overall_coverage": round(overall, 2),
+        }
+
+    def calculate_fixture_endpoint_coverage(
+        self,
+        *,
+        league_id: int,
+        season: int,
+        endpoint: str,
+        core_table: str,
+        days: int = 90,
+    ) -> dict[str, Any]:
+        """
+        Coverage for per-fixture endpoints (players/events/statistics/lineups) over a rolling window.
+        - expected_count = completed fixtures in last N days
+        - actual_count   = distinct fixtures with RAW call for endpoint in last N days
+        - pipeline_cov   = distinct fixtures with CORE rows / distinct fixtures with RAW call
+        """
+        expected = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM core.fixtures
+                WHERE league_id = %s AND season = %s
+                  AND date >= NOW() - (%s::text || ' days')::interval
+                  AND status_short = ANY(ARRAY['FT','AET','PEN'])
+                """,
+                (int(league_id), int(season), int(days)),
+            )
+            or 0
+        )
+
+        raw_fixtures = int(
+            query_scalar(
+                """
+                SELECT COUNT(DISTINCT f.id)
+                FROM raw.api_responses r
+                JOIN core.fixtures f ON f.id = (r.requested_params->>'fixture')::bigint
+                WHERE r.endpoint = %s
+                  AND f.league_id = %s
+                  AND f.season = %s
+                  AND f.date >= NOW() - (%s::text || ' days')::interval
+                  AND f.status_short = ANY(ARRAY['FT','AET','PEN'])
+                """,
+                (str(endpoint), int(league_id), int(season), int(days)),
+            )
+            or 0
+        )
+
+        core_fixtures = int(
+            query_scalar(
+                f"""
+                SELECT COUNT(DISTINCT t.fixture_id)
+                FROM {core_table} t
+                JOIN core.fixtures f ON f.id = t.fixture_id
+                WHERE f.league_id = %s
+                  AND f.season = %s
+                  AND f.date >= NOW() - (%s::text || ' days')::interval
+                  AND f.status_short = ANY(ARRAY['FT','AET','PEN'])
+                """,
+                (int(league_id), int(season), int(days)),
+            )
+            or 0
+        )
+
+        count_cov = (raw_fixtures / expected * 100.0) if expected > 0 else 0.0
+
+        last_update = self._query_last_raw_endpoint_update_joined(endpoint=endpoint, league_id=league_id, season=season)
+        lag_minutes = self._calculate_lag_minutes(last_update)
+        max_lag = int(self.config.max_lag_minutes_daily)
+        freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
+
+        raw_count_24h = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM raw.api_responses r
+                JOIN core.fixtures f ON f.id = (r.requested_params->>'fixture')::bigint
+                WHERE r.endpoint = %s
+                  AND r.fetched_at > NOW() - INTERVAL '24 hours'
+                  AND f.league_id = %s
+                  AND f.season = %s
+                """,
+                (str(endpoint), int(league_id), int(season)),
+            )
+            or 0
+        )
+
+        pipeline_cov = (core_fixtures / raw_fixtures * 100.0) if raw_fixtures > 0 else 0.0
+
+        w = self.config.weights
+        overall = (
+            count_cov * float(w["count_coverage"])
+            + freshness_cov * float(w["freshness_coverage"])
+            + pipeline_cov * float(w["pipeline_coverage"])
+        )
+
+        last_update_iso = last_update.isoformat().replace("+00:00", "Z") if last_update else None
+        return {
+            "league_id": int(league_id),
+            "league_name": self._query_league_name(league_id),
+            "season": int(season),
+            "endpoint": str(endpoint),
+            "expected_count": expected,
+            "actual_count": raw_fixtures,
+            "count_coverage": round(count_cov, 2),
+            "last_update": last_update_iso,
+            "lag_minutes": int(lag_minutes),
+            "freshness_coverage": round(freshness_cov, 2),
+            "raw_count": raw_count_24h,
+            "core_count": core_fixtures,
+            "pipeline_coverage": round(pipeline_cov, 2),
+            "overall_coverage": round(overall, 2),
+        }
+
     def _query_actual_fixtures(self, league_id: int, season: int) -> int:
         return int(
             query_scalar(
@@ -102,6 +288,32 @@ class CoverageCalculator:
             (int(league_id), int(season)),
         )
         # psycopg2 returns datetime already
+        if isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc)
+        return None
+
+    def _query_last_update_generic(self, *, table: str, where: str, params: tuple[Any, ...]) -> datetime | None:
+        v = query_scalar(f"SELECT MAX(updated_at) FROM {table} WHERE {where}", params)
+        if isinstance(v, datetime):
+            if v.tzinfo is None:
+                return v.replace(tzinfo=timezone.utc)
+            return v.astimezone(timezone.utc)
+        return None
+
+    def _query_last_raw_endpoint_update_joined(self, *, endpoint: str, league_id: int, season: int) -> datetime | None:
+        v = query_scalar(
+            """
+            SELECT MAX(r.fetched_at)
+            FROM raw.api_responses r
+            JOIN core.fixtures f ON f.id = (r.requested_params->>'fixture')::bigint
+            WHERE r.endpoint = %s
+              AND f.league_id = %s
+              AND f.season = %s
+            """,
+            (str(endpoint), int(league_id), int(season)),
+        )
         if isinstance(v, datetime):
             if v.tzinfo is None:
                 return v.replace(tzinfo=timezone.utc)

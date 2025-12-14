@@ -17,6 +17,11 @@ from zoneinfo import ZoneInfo
 from src.collector.api_client import APIClient
 from src.collector.rate_limiter import EmergencyStopError, RateLimiter
 from src.jobs.incremental_daily import run_daily_fixtures_by_date, run_daily_standings
+from src.jobs.injuries import run_injuries_hourly
+from src.jobs.fixture_details import (
+    run_fixture_details_backfill_90d,
+    run_fixture_details_recent_finalize,
+)
 from src.jobs.static_bootstrap import (
     run_bootstrap_countries,
     run_bootstrap_leagues,
@@ -136,7 +141,7 @@ def _build_runner(
 
     Supported:
     - static_bootstrap: bootstrap_timezones, bootstrap_countries, bootstrap_leagues, bootstrap_teams
-    - incremental_daily: daily_fixtures_by_date, daily_standings
+    - incremental_daily: daily_fixtures_by_date, daily_standings, injuries_hourly, fixture_details_recent_finalize, fixture_details_backfill_90d
     """
 
     async def _run() -> None:
@@ -177,6 +182,16 @@ def _build_runner(
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
                 )
+            elif job.job_id == "injuries_hourly":
+                await run_injuries_hourly(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "fixture_details_recent_finalize":
+                await run_fixture_details_recent_finalize(client=client, limiter=limiter)
+            elif job.job_id == "fixture_details_backfill_90d":
+                await run_fixture_details_backfill_90d(client=client, limiter=limiter)
             else:
                 raise ValueError(f"Unknown incremental_daily job_id: {job.job_id}")
         else:

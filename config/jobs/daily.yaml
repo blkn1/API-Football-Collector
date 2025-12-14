@@ -3,7 +3,7 @@ jobs:
   # Enable and fill params according to your tracked leagues/seasons.
   - job_id: "daily_standings"
     type: "incremental_daily"
-    enabled: false
+    enabled: true
     priority: "HIGH"
     endpoint: "/standings"
     params:
@@ -25,7 +25,7 @@ jobs:
 
   - job_id: "daily_fixtures_by_date"
     type: "incremental_daily"
-    enabled: false
+    enabled: true
     priority: "HIGH"
     endpoint: "/fixtures"
     params:
@@ -34,6 +34,57 @@ jobs:
       type: "cron"
       cron: "0 * * * *"  # Hourly
     target_layer: "raw+core+mart"
+  - job_id: "injuries_hourly"
+    type: "incremental_daily"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/injuries"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "0 * * * *"  # Hourly (interpreted in SCHEDULER_TIMEZONE)
+    target_layer: "raw+core"
+    dependencies:
+      - "bootstrap_leagues"
+      - "bootstrap_teams"
+    coverage_target:
+      endpoint: "/injuries"
+      min_records: 1
+      max_lag_minutes: 120
+
+  - job_id: "fixture_details_recent_finalize"
+    type: "incremental_daily"
+    enabled: true
+    priority: "HIGH"
+    endpoint: "/fixtures/*"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "*/15 * * * *"  # Every 15 minutes (for lineup window + last-24h finalization)
+    target_layer: "raw+core"
+    dependencies:
+      - "daily_fixtures_by_date"
+    coverage_target:
+      endpoint: "/fixtures/details"
+      min_records: 1
+      max_lag_minutes: 240
+
+  - job_id: "fixture_details_backfill_90d"
+    type: "incremental_daily"
+    enabled: false  # Enable after observing quota trends (rolling 90d backfill can be expensive).
+    priority: "MEDIUM"
+    endpoint: "/fixtures/*"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "*/10 * * * *"  # Every 10 minutes, bounded by FIXTURE_DETAILS_BACKFILL_BATCH
+    target_layer: "raw+core"
+    dependencies:
+      - "daily_fixtures_by_date"
+    coverage_target:
+      endpoint: "/fixtures/details_backfill_90d"
+      min_records: 1
+      max_lag_minutes: 1440
     dependencies:
       - "bootstrap_leagues"
       - "bootstrap_teams"

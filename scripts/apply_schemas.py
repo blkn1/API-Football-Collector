@@ -81,11 +81,11 @@ def main() -> int:
     if not schemas_dir.exists():
         raise SystemExit(f"schemas_dir_missing:{schemas_dir}")
 
-    # Apply in a deterministic order and avoid psql meta-commands (\i) in 00_init.sql.
+    # Apply base schemas in a deterministic order and avoid psql meta-commands (\i) in 00_init.sql.
     # raw.sql must run before mart.sql (mart depends on raw.api_responses).
-    ordered = ["raw.sql", "core.sql", "mart.sql"]
-    sql_files = [schemas_dir / name for name in ordered if (schemas_dir / name).exists()]
-    if not sql_files:
+    base = ["raw.sql", "core.sql", "mart.sql"]
+    base_files = [schemas_dir / name for name in base if (schemas_dir / name).exists()]
+    if not base_files:
         raise SystemExit(f"no_sql_files_found:{schemas_dir}")
 
     # Ensure DB exists before attempting to connect/apply schemas.
@@ -95,18 +95,35 @@ def main() -> int:
     try:
         conn.autocommit = True
         with conn.cursor() as cur:
-            if _schemas_already_applied(cur):
-                print("[OK] schemas already applied (skipping)")
-                return 0
-            for p in sql_files:
+            base_applied = _schemas_already_applied(cur)
+
+            # Always apply extension/migration files (idempotent). This allows schema evolution without
+            # re-running trigger-heavy core.sql on every startup.
+            extras = sorted(
+                [
+                    p
+                    for p in schemas_dir.glob("*.sql")
+                    if p.name not in set(base + ["00_init.sql"])
+                ]
+            )
+
+            if not base_applied:
+                for p in base_files:
+                    sql_text = p.read_text(encoding="utf-8")
+                    try:
+                        cur.execute(sql_text)
+                        print(f"[OK] applied {p.name}")
+                    except pg_errors.DuplicateObject:
+                        # Triggers already exist -> safe to continue.
+                        print(f"[OK] base already present (duplicate objects while applying {p.name}); continuing")
+
+            for p in extras:
                 sql_text = p.read_text(encoding="utf-8")
                 try:
                     cur.execute(sql_text)
                     print(f"[OK] applied {p.name}")
                 except pg_errors.DuplicateObject:
-                    # Most common case: triggers already exist. Treat as already applied and exit cleanly.
-                    print(f"[OK] schema already present (duplicate objects while applying {p.name}); skipping")
-                    return 0
+                    print(f"[OK] already present (duplicate objects while applying {p.name}); continuing")
     finally:
         conn.close()
     return 0
