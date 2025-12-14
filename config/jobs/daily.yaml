@@ -85,14 +85,6 @@ jobs:
       endpoint: "/fixtures/details_backfill_90d"
       min_records: 1
       max_lag_minutes: 1440
-    dependencies:
-      - "bootstrap_leagues"
-      - "bootstrap_teams"
-    coverage_target:
-      endpoint: "/fixtures"
-      date_range: "custom"
-      min_fixtures_count: 1
-      max_lag_minutes: 60
 
 
 # Phase 3: Daily sync script configuration
