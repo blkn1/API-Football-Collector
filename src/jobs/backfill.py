@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,7 +16,7 @@ from src.transforms.fixtures import transform_fixtures
 from src.transforms.standings import transform_standings
 from src.utils.db import get_db_connection, get_transaction, query_scalar, upsert_core, upsert_raw
 from src.utils.logging import get_logger
-from src.utils.dependencies import ensure_fixtures_dependencies, ensure_standings_dependencies
+from src.utils.dependencies import ensure_fixtures_dependencies, ensure_league_exists, ensure_standings_dependencies
 
 
 logger = get_logger(component="jobs_backfill")
@@ -63,6 +64,67 @@ def _load_backfill_seasons(config_path: Path) -> list[int]:
     if not out:
         raise ValueError(f"No valid integers in backfill.seasons in {config_path}")
     return out
+
+
+def _parse_iso_date(value: Any) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            return date.fromisoformat(s)
+        except Exception:
+            return None
+    return None
+
+
+def _get_league_season_date_range(*, league_id: int, season: int) -> tuple[date, date] | None:
+    """
+    Get season start/end from core.leagues.seasons JSONB (sourced from /leagues).
+    Expected shape:
+      seasons: [{year: 2024, start: "2024-08-16", end: "2025-05-18", ...}, ...]
+    """
+    seasons = query_scalar("SELECT seasons FROM core.leagues WHERE id=%s", (int(league_id),))
+    if not isinstance(seasons, list):
+        return None
+    for item in seasons:
+        if not isinstance(item, dict):
+            continue
+        try:
+            year = int(item.get("year")) if item.get("year") is not None else None
+        except Exception:
+            year = None
+        if year != int(season):
+            continue
+        start = _parse_iso_date(item.get("start"))
+        end = _parse_iso_date(item.get("end"))
+        if start and end:
+            return (start, end)
+    return None
+
+
+def _window_bounds(*, start: date, end: date, window_days: int, index_1_based: int) -> tuple[date, date] | None:
+    """
+    Deterministic windowing for resume:
+      idx=1 => [start, start+window_days-1]
+      idx=2 => [start+window_days, start+2*window_days-1]
+    """
+    if window_days <= 0:
+        raise ValueError("window_days must be > 0")
+    if index_1_based <= 0:
+        raise ValueError("index_1_based must be >= 1")
+    offset_days = (index_1_based - 1) * window_days
+    w_start = start + timedelta(days=offset_days)
+    if w_start > end:
+        return None
+    w_end = min(end, w_start + timedelta(days=window_days - 1))
+    return (w_start, w_end)
 
 
 async def _safe_get_envelope(
@@ -211,19 +273,24 @@ async def run_fixtures_backfill_league_season(
 
     for league_id, season, next_page in tasks:
         logger.info("fixtures_backfill_task_start", league_id=league_id, season=season, next_page=next_page)
-        window_index = int(next_page)
+        window_index = int(next_page)  # stored in core.backfill_progress.next_page
         windows_done = 0
         try:
-            # Populate core.leagues.seasons if missing so we can window.
+            # Ensure league exists so seasons metadata is available for deterministic windowing.
             try:
                 await ensure_league_exists(league_id=league_id, season=season, client=client, limiter=limiter)
             except Exception as e:
-                logger.warning("fixtures_backfill_ensure_league_failed", league_id=league_id, season=season, err=str(e))
+                # best effort; fallback path may still succeed
+                logger.warning(
+                    "fixtures_backfill_ensure_league_failed",
+                    league_id=league_id,
+                    season=season,
+                    err=str(e),
+                )
 
             rng = _get_league_season_date_range(league_id=league_id, season=season)
-
-            # Bug 1 fix: fallback path has full error handling + progress updates
             if rng is None:
+                # Bug 1 fix: fallback path MUST be fully error-handled and persist last_error.
                 label = f"/fixtures(league={league_id},season={season})"
                 params = {"league": int(league_id), "season": int(season)}
 
@@ -236,7 +303,7 @@ async def run_fixtures_backfill_league_season(
                 except RateLimitError:
                     logger.warning("fixtures_backfill_429", league_id=league_id, season=season, sleep_seconds=5)
                     await asyncio.sleep(5)
-                    return
+                    continue
                 except (APIClientError, RuntimeError) as e:
                     logger.error("fixtures_backfill_api_failed", league_id=league_id, season=season, err=str(e))
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
@@ -326,34 +393,72 @@ async def run_fixtures_backfill_league_season(
             season_start, season_end = rng
 
             while windows_done < max_windows_per_task:
-                bounds = _window_bounds(start=season_start, end=season_end, window_days=window_days, index_1_based=window_index)
+                bounds = _window_bounds(
+                    start=season_start,
+                    end=season_end,
+                    window_days=window_days,
+                    index_1_based=window_index,
+                )
                 if bounds is None:
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, completed=True, last_error=None)
                     logger.info("fixtures_backfill_completed_all_windows", league_id=league_id, season=season)
                     break
 
                 w_start, w_end = bounds
-                label = f"/fixtures(league={league_id},season={season},from={w_start.isoformat()},to={w_end.isoformat()})"
-                params = {"league": int(league_id), "season": int(season), "from": w_start.isoformat(), "to": w_end.isoformat()}
+                label = (
+                    f"/fixtures(league={league_id},season={season},from={w_start.isoformat()},to={w_end.isoformat()})"
+                )
+                params = {
+                    "league": int(league_id),
+                    "season": int(season),
+                    "from": w_start.isoformat(),
+                    "to": w_end.isoformat(),
+                }
 
                 try:
-                    res, env = await _safe_get_envelope(client=client, limiter=limiter, endpoint="/fixtures", params=params, label=label)
+                    res, env = await _safe_get_envelope(
+                        client=client, limiter=limiter, endpoint="/fixtures", params=params, label=label
+                    )
                 except EmergencyStopError:
                     raise
                 except RateLimitError:
-                    logger.warning("fixtures_backfill_429", league_id=league_id, season=season, window_index=window_index, sleep_seconds=5)
+                    logger.warning(
+                        "fixtures_backfill_429",
+                        league_id=league_id,
+                        season=season,
+                        window_index=window_index,
+                        sleep_seconds=5,
+                    )
                     await asyncio.sleep(5)
                     continue
                 except (APIClientError, RuntimeError) as e:
-                    logger.error("fixtures_backfill_api_failed", league_id=league_id, season=season, window_index=window_index, err=str(e))
+                    logger.error(
+                        "fixtures_backfill_api_failed",
+                        league_id=league_id,
+                        season=season,
+                        window_index=window_index,
+                        err=str(e),
+                    )
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
                     break
                 except Exception as e:
-                    logger.error("fixtures_backfill_unexpected_error", league_id=league_id, season=season, window_index=window_index, err=str(e))
+                    logger.error(
+                        "fixtures_backfill_unexpected_error",
+                        league_id=league_id,
+                        season=season,
+                        window_index=window_index,
+                        err=str(e),
+                    )
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
                     break
 
-                upsert_raw(endpoint="/fixtures", requested_params=params, status_code=res.status_code, response_headers=res.headers, body=env)
+                upsert_raw(
+                    endpoint="/fixtures",
+                    requested_params=params,
+                    status_code=res.status_code,
+                    response_headers=res.headers,
+                    body=env,
+                )
 
                 try:
                     await ensure_fixtures_dependencies(
@@ -406,6 +511,7 @@ async def run_fixtures_backfill_league_season(
                                 update_cols=["events", "lineups", "statistics", "players"],
                                 conn=conn,
                             )
+
                     logger.info(
                         "fixtures_backfill_core_upserted",
                         league_id=league_id,
@@ -417,7 +523,13 @@ async def run_fixtures_backfill_league_season(
                         details=len(details_ids),
                     )
                 except Exception as e:
-                    logger.error("fixtures_backfill_db_failed", league_id=league_id, season=season, window_index=window_index, err=str(e))
+                    logger.error(
+                        "fixtures_backfill_db_failed",
+                        league_id=league_id,
+                        season=season,
+                        window_index=window_index,
+                        err=str(e),
+                    )
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
                     break
 
@@ -430,7 +542,6 @@ async def run_fixtures_backfill_league_season(
             logger.error("fixtures_backfill_emergency_stop", league_id=league_id, season=season, err=str(e))
             break
         except Exception as e:
-            # Bug 1 guard: never fail silently; persist the error for retry tracking.
             logger.error("fixtures_backfill_task_unhandled_exception", league_id=league_id, season=season, err=str(e))
             _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
             continue
