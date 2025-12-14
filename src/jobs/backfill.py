@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -63,6 +64,62 @@ def _load_backfill_seasons(config_path: Path) -> list[int]:
     if not out:
         raise ValueError(f"No valid integers in backfill.seasons in {config_path}")
     return out
+
+
+def _parse_iso_date(s: Any) -> date | None:
+    if s is None:
+        return None
+    if isinstance(s, date) and not isinstance(s, datetime):
+        return s
+    if isinstance(s, str):
+        try:
+            return date.fromisoformat(s.strip())
+        except Exception:
+            return None
+    return None
+
+
+def _get_league_season_date_range(*, league_id: int, season: int) -> tuple[date, date] | None:
+    """
+    Get season start/end from core.leagues.seasons JSONB (sourced from /leagues).
+    Expected shape (example):
+      seasons: [{year: 2024, start: "2024-08-16", end: "2025-05-18", ...}, ...]
+    """
+    seasons = query_scalar("SELECT seasons FROM core.leagues WHERE id=%s", (int(league_id),))
+    if not isinstance(seasons, list):
+        return None
+    for item in seasons:
+        if not isinstance(item, dict):
+            continue
+        try:
+            year = int(item.get("year")) if item.get("year") is not None else None
+        except Exception:
+            year = None
+        if year != int(season):
+            continue
+        start = _parse_iso_date(item.get("start"))
+        end = _parse_iso_date(item.get("end"))
+        if start and end:
+            return (start, end)
+    return None
+
+
+def _window_bounds(*, start: date, end: date, window_days: int, index_1_based: int) -> tuple[date, date] | None:
+    """
+    Deterministic windowing for resume:
+      idx=1 => [start, start+window_days-1]
+      idx=2 => [start+window_days, start+2*window_days-1]
+    """
+    if window_days <= 0:
+        raise ValueError("window_days must be > 0")
+    if index_1_based <= 0:
+        raise ValueError("index_1_based must be >= 1")
+    offset_days = (index_1_based - 1) * window_days
+    w_start = start + timedelta(days=offset_days)
+    if w_start > end:
+        return None
+    w_end = min(end, w_start + timedelta(days=window_days - 1))
+    return (w_start, w_end)
 
 
 async def _safe_get_envelope(
@@ -192,7 +249,8 @@ async def run_fixtures_backfill_league_season(
     # Defaults tuned for 75k/day quota while staying below 300/min hard cap (shared rate limiter).
     # Override via Coolify env if you want slower/faster.
     max_tasks = int(os.getenv("BACKFILL_FIXTURES_MAX_TASKS_PER_RUN", "6"))
-    max_pages_per_task = int(os.getenv("BACKFILL_FIXTURES_MAX_PAGES_PER_TASK", "6"))
+    max_windows_per_task = int(os.getenv("BACKFILL_FIXTURES_MAX_PAGES_PER_TASK", "6"))
+    window_days = int(os.getenv("BACKFILL_FIXTURES_WINDOW_DAYS", "30"))
 
     league_ids = [l.id for l in leagues]
     _ensure_progress_rows(FIXTURES_JOB_ID, league_ids, seasons)
@@ -201,16 +259,126 @@ async def run_fixtures_backfill_league_season(
         logger.info("fixtures_backfill_no_work")
         return
 
-    logger.info("fixtures_backfill_run_start", tasks=len(tasks), max_pages_per_task=max_pages_per_task)
+    logger.info(
+        "fixtures_backfill_run_start",
+        tasks=len(tasks),
+        max_windows_per_task=max_windows_per_task,
+        window_days=window_days,
+    )
 
     for league_id, season, next_page in tasks:
         logger.info("fixtures_backfill_task_start", league_id=league_id, season=season, next_page=next_page)
-        page = int(next_page)
-        pages_done = 0
+        window_index = int(next_page)  # stored in core.backfill_progress.next_page
+        windows_done = 0
         try:
-            while pages_done < max_pages_per_task:
-                label = f"/fixtures(league={league_id},season={season},page={page})"
-                params = {"league": int(league_id), "season": int(season), "page": int(page)}
+            # Prefer season range from core.leagues.seasons; if missing, fall back to a single unbounded call.
+            # Ensure league exists so seasons metadata is available.
+            try:
+                # ensure_fixtures_dependencies will also do this, but doing it up-front avoids extra failures.
+                await ensure_fixtures_dependencies(
+                    league_id=league_id,
+                    season=season,
+                    fixtures_envelope={"response": []},
+                    client=client,
+                    limiter=limiter,
+                )
+            except Exception:
+                # best effort; we may still succeed without seasons metadata
+                pass
+
+            rng = _get_league_season_date_range(league_id=league_id, season=season)
+            if rng is None:
+                # Fallback: call once without from/to (API supports league+season).
+                label = f"/fixtures(league={league_id},season={season})"
+                params = {"league": int(league_id), "season": int(season)}
+
+                res, env = await _safe_get_envelope(
+                    client=client, limiter=limiter, endpoint="/fixtures", params=params, label=label
+                )
+
+                upsert_raw(
+                    endpoint="/fixtures",
+                    requested_params=params,
+                    status_code=res.status_code,
+                    response_headers=res.headers,
+                    body=env,
+                )
+
+                # Dependencies using actual envelope
+                await ensure_fixtures_dependencies(
+                    league_id=league_id,
+                    season=season,
+                    fixtures_envelope=env,
+                    client=client,
+                    limiter=limiter,
+                )
+
+                fixtures_rows, details_rows = transform_fixtures(env)
+                fixture_ids = [int(r["id"]) for r in fixtures_rows]
+                details_ids = [int(r["fixture_id"]) for r in details_rows]
+                with get_transaction() as conn:
+                    upsert_core(
+                        full_table_name="core.fixtures",
+                        rows=fixtures_rows,
+                        conflict_cols=["id"],
+                        update_cols=[
+                            "league_id",
+                            "season",
+                            "round",
+                            "date",
+                            "api_timestamp",
+                            "referee",
+                            "timezone",
+                            "venue_id",
+                            "home_team_id",
+                            "away_team_id",
+                            "status_short",
+                            "status_long",
+                            "elapsed",
+                            "goals_home",
+                            "goals_away",
+                            "score",
+                        ],
+                        conn=conn,
+                    )
+                    if details_rows:
+                        upsert_core(
+                            full_table_name="core.fixture_details",
+                            rows=details_rows,
+                            conflict_cols=["fixture_id"],
+                            update_cols=["events", "lineups", "statistics", "players"],
+                            conn=conn,
+                        )
+
+                _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, completed=True, last_error=None)
+                logger.info(
+                    "fixtures_backfill_completed_unbounded",
+                    league_id=league_id,
+                    season=season,
+                    fixtures=len(fixture_ids),
+                    details=len(details_ids),
+                )
+                continue
+
+            season_start, season_end = rng
+
+            while windows_done < max_windows_per_task:
+                bounds = _window_bounds(
+                    start=season_start, end=season_end, window_days=window_days, index_1_based=window_index
+                )
+                if bounds is None:
+                    _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, completed=True, last_error=None)
+                    logger.info("fixtures_backfill_completed_all_windows", league_id=league_id, season=season)
+                    break
+
+                w_start, w_end = bounds
+                label = f"/fixtures(league={league_id},season={season},from={w_start.isoformat()},to={w_end.isoformat()})"
+                params = {
+                    "league": int(league_id),
+                    "season": int(season),
+                    "from": w_start.isoformat(),
+                    "to": w_end.isoformat(),
+                }
 
                 try:
                     res, env = await _safe_get_envelope(
@@ -220,11 +388,11 @@ async def run_fixtures_backfill_league_season(
                     raise
                 except RateLimitError:
                     # 429 handled at APIClient level
-                    logger.warning("fixtures_backfill_429", league_id=league_id, season=season, page=page, sleep_seconds=5)
+                    logger.warning("fixtures_backfill_429", league_id=league_id, season=season, window_index=window_index, sleep_seconds=5)
                     await asyncio.sleep(5)
                     continue
                 except APIClientError as e:
-                    logger.error("fixtures_backfill_api_failed", league_id=league_id, season=season, page=page, err=str(e))
+                    logger.error("fixtures_backfill_api_failed", league_id=league_id, season=season, window_index=window_index, err=str(e))
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
                     break
 
@@ -293,49 +461,28 @@ async def run_fixtures_backfill_league_season(
                         "fixtures_backfill_core_upserted",
                         league_id=league_id,
                         season=season,
-                        page=page,
+                        window_index=window_index,
+                        window_from=w_start.isoformat(),
+                        window_to=w_end.isoformat(),
                         fixtures=len(fixture_ids),
                         details=len(details_ids),
                     )
                 except Exception as e:
-                    logger.error("fixtures_backfill_db_failed", league_id=league_id, season=season, page=page, err=str(e))
+                    logger.error("fixtures_backfill_db_failed", league_id=league_id, season=season, window_index=window_index, err=str(e))
                     _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, last_error=str(e))
                     break
 
-                # Paging state
-                paging = env.get("paging") or {}
-                total_pages = paging.get("total")
-                results = env.get("results")
+                windows_done += 1
+                window_index += 1
+                _update_progress(
+                    job_id=FIXTURES_JOB_ID,
+                    league_id=league_id,
+                    season=season,
+                    next_page=window_index,
+                    last_error=None,
+                )
 
-                pages_done += 1
-
-                if results == 0 or (isinstance(fixture_ids, list) and len(fixture_ids) == 0):
-                    # No data -> mark completed
-                    _update_progress(
-                        job_id=FIXTURES_JOB_ID,
-                        league_id=league_id,
-                        season=season,
-                        completed=True,
-                        next_page=page + 1,
-                        last_error=None,
-                    )
-                    logger.info("fixtures_backfill_completed_no_results", league_id=league_id, season=season, page=page)
-                    break
-
-                # Advance page
-                page += 1
-                _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, next_page=page, last_error=None)
-
-                if total_pages is not None:
-                    try:
-                        if int(page) > int(total_pages):
-                            _update_progress(job_id=FIXTURES_JOB_ID, league_id=league_id, season=season, completed=True, last_error=None)
-                            logger.info("fixtures_backfill_completed_total_pages", league_id=league_id, season=season, total_pages=int(total_pages))
-                            break
-                    except Exception:
-                        pass
-
-            # end while pages
+            # end while windows
         except EmergencyStopError as e:
             logger.error("fixtures_backfill_emergency_stop", league_id=league_id, season=season, err=str(e))
             break
