@@ -137,7 +137,9 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      # IMPORTANT (Coolify): host port might already be in use on the server.
+      # Override MCP_HOST_PORT in Coolify env if you see "port is already allocated".
+      - "${MCP_HOST_PORT:-8001}:${FASTMCP_PORT:-8000}"
     command: ["sh", "-lc", "python -m src.mcp.server"]
     volumes:
       - ./logs:/app/logs
