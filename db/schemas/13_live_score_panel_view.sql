@@ -3,7 +3,30 @@
 
 CREATE SCHEMA IF NOT EXISTS mart;
 
-DROP MATERIALIZED VIEW IF EXISTS mart.live_score_panel;
+-- IMPORTANT:
+-- Postgres will ERROR on DROP MATERIALIZED VIEW IF EXISTS when an object exists
+-- with the same name but different type (e.g. a plain VIEW). Make this migration
+-- idempotent by conditionally dropping based on actual type.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_matviews
+    WHERE schemaname = 'mart'
+      AND matviewname = 'live_score_panel'
+  ) THEN
+    EXECUTE 'DROP MATERIALIZED VIEW mart.live_score_panel';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_views
+    WHERE schemaname = 'mart'
+      AND viewname = 'live_score_panel'
+  ) THEN
+    EXECUTE 'DROP VIEW mart.live_score_panel';
+  END IF;
+END $$;
 
 CREATE OR REPLACE VIEW mart.live_score_panel AS
 SELECT
