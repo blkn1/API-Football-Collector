@@ -258,3 +258,73 @@ FIXTURE_LINEUPS_QUERY = """
 """
 
 
+# --- Ops / monitoring helpers ---
+
+BACKFILL_PROGRESS_SUMMARY_QUERY = """
+    SELECT
+      job_id,
+      COUNT(*)::int AS total_tasks,
+      SUM(CASE WHEN completed THEN 1 ELSE 0 END)::int AS completed_tasks,
+      SUM(CASE WHEN NOT completed THEN 1 ELSE 0 END)::int AS pending_tasks,
+      MAX(updated_at) AS last_updated_at
+    FROM core.backfill_progress
+    WHERE 1=1
+      AND (%s::text IS NULL OR job_id = %s::text)
+      AND (%s::int IS NULL OR season = %s::int)
+    GROUP BY job_id
+    ORDER BY job_id ASC
+"""
+
+BACKFILL_PROGRESS_LIST_QUERY = """
+    SELECT
+      job_id,
+      league_id,
+      season,
+      next_page,
+      completed,
+      last_error,
+      last_run_at,
+      updated_at
+    FROM core.backfill_progress
+    WHERE 1=1
+      AND (%s::text IS NULL OR job_id = %s::text)
+      AND (%s::int IS NULL OR season = %s::int)
+      AND (%s::bool IS TRUE OR completed = FALSE)
+    ORDER BY
+      completed ASC,
+      updated_at DESC NULLS LAST,
+      league_id ASC,
+      season DESC
+    LIMIT %s
+"""
+
+RAW_ERROR_SUMMARY_QUERY = """
+    SELECT
+      COUNT(*)::int AS total_requests,
+      SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS ok_2xx,
+      SUM(CASE WHEN status_code BETWEEN 400 AND 499 THEN 1 ELSE 0 END)::int AS err_4xx,
+      SUM(CASE WHEN status_code BETWEEN 500 AND 599 THEN 1 ELSE 0 END)::int AS err_5xx,
+      SUM(CASE WHEN COALESCE(jsonb_array_length(errors), 0) > 0 THEN 1 ELSE 0 END)::int AS envelope_errors,
+      MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE fetched_at >= NOW() - make_interval(mins => %s)
+      AND (%s::text IS NULL OR endpoint = %s::text)
+"""
+
+RAW_ERRORS_BY_ENDPOINT_QUERY = """
+    SELECT
+      endpoint,
+      COUNT(*)::int AS total_requests,
+      SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS ok_2xx,
+      SUM(CASE WHEN status_code NOT BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS non_2xx,
+      SUM(CASE WHEN COALESCE(jsonb_array_length(errors), 0) > 0 THEN 1 ELSE 0 END)::int AS envelope_errors,
+      MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE fetched_at >= NOW() - make_interval(mins => %s)
+      AND (%s::text IS NULL OR endpoint = %s::text)
+    GROUP BY endpoint
+    ORDER BY non_2xx DESC, envelope_errors DESC, total_requests DESC
+    LIMIT %s
+"""
+
+

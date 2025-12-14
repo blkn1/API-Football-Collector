@@ -152,6 +152,48 @@ services:
     networks:
       - api_football_net
 
+  # Read API (REST + SSE) for external consumers (read-only, DB-backed)
+  read_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-api_football}
+
+      # Access control (recommended in production)
+      READ_API_BASIC_USER: ${READ_API_BASIC_USER:-}
+      READ_API_BASIC_PASSWORD: ${READ_API_BASIC_PASSWORD:-}
+      READ_API_IP_ALLOWLIST: ${READ_API_IP_ALLOWLIST:-}
+
+      # Service port inside container
+      READ_API_PORT: ${READ_API_PORT:-8080}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "${READ_API_HOST_PORT:-8082}:${READ_API_PORT:-8080}"
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_read_api.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    command:
+      [
+        "sh",
+        "-lc",
+        "uvicorn src.read_api.app:app --host 0.0.0.0 --port ${READ_API_PORT:-8080}",
+      ]
+    restart: unless-stopped
+    networks:
+      - api_football_net
+
 volumes:
   postgres_data:
 

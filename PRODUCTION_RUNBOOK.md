@@ -1,0 +1,158 @@
+## Production Runbook (v3)
+
+Bu runbook; çalışan collector + Postgres + MCP + Read API stack’inde **deploy sonrası doğrulama**, **günlük operasyon**, ve **incident** (quota/coverage/data gap) akışlarını tek yerde toplar.
+
+### 0) Servisler ve roller
+- **collector**: config-driven job scheduler, quota-safe API çağrıları, RAW→CORE→MART yazımı
+- **postgres**: RAW/CORE/MART source of truth
+- **mcp**: read-only gözlem arayüzü (tool’lar)
+- **read_api**: read-only REST + SSE (ops ve dış tüketim için okuma katmanı)
+
+---
+
+## 1) MCP Acceptance Test (Prod Smoke)
+
+### 1.1 Önkoşullar
+- DB erişimi OK olmalı.
+- MCP healthcheck:
+
+```bash
+python scripts/healthcheck_mcp.py
+```
+
+> Coolify/Docker’da healthcheck container içinde çalışır. Local’de aynı env’lerle çalıştır.
+
+### 1.2 MCP tool çağrıları (minimum set)
+Aşağıdaki tool’lar `src/mcp/server.py` içinde tanımlıdır.
+
+- **A) Quota**: `get_rate_limit_status()`
+  - Beklenen minimum: `ok=true`, `daily_remaining`/`minute_remaining` (int veya None)
+- **B) DB snapshot**: `get_database_stats()`
+  - Beklenen minimum: `ok=true`, RAW/CORE sayıları int
+- **C) Coverage**: `get_coverage_summary()` (gerekirse `season=...`)
+  - Beklenen minimum: `ok=true`, `summary` None olabilir
+- **D) Job status**: `get_job_status()`
+  - Beklenen minimum: `ok=true`, config job’ları listelenir; log varsa status set edilir
+- **E) CORE örnekleme**: `query_fixtures(limit=10)`
+  - Beklenen minimum: liste, alanlar: `id, league_id, date_utc, status, home_team, away_team`
+
+Ek ops gözlemler (Phase 1.5):
+- **Backfill progress**: `get_backfill_progress()`
+- **RAW error health**: `get_raw_error_summary(since_minutes=60)`
+- **Recent error logs**: `get_recent_log_errors(limit=50)`
+
+### 1.3 PASS / FAIL kriteri
+- **PASS**: A+B+D `ok=true` ve DB bağlantısı sağlıklı.
+- **FAIL**: Tool exception / DB bağlantı hatası / output şeması bozulmuş.
+
+---
+
+## 2) DB doğrulama sorguları (read-only)
+
+### 2.1 RAW akışı
+```sql
+SELECT COUNT(*) FROM raw.api_responses;
+
+SELECT endpoint, COUNT(*) AS cnt, MAX(fetched_at) AS last_fetched
+FROM raw.api_responses
+GROUP BY endpoint
+ORDER BY MAX(fetched_at) DESC;
+```
+
+### 2.2 Quota header gözlemi
+```sql
+SELECT
+  fetched_at,
+  response_headers->>'x-ratelimit-requests-remaining' AS daily_remaining,
+  response_headers->>'X-RateLimit-Remaining' AS minute_remaining
+FROM raw.api_responses
+WHERE response_headers ? 'x-ratelimit-requests-remaining'
+   OR response_headers ? 'X-RateLimit-Remaining'
+ORDER BY fetched_at DESC
+LIMIT 5;
+```
+
+### 2.3 CORE doluluk
+```sql
+SELECT COUNT(*) FROM core.fixtures;
+SELECT COUNT(*) FROM core.standings;
+SELECT COUNT(*) FROM core.injuries;
+```
+
+### 2.4 Coverage
+```sql
+SELECT season, COUNT(*) AS rows, MAX(calculated_at) AS last_calculated
+FROM mart.coverage_status
+GROUP BY season
+ORDER BY season DESC;
+```
+
+### 2.5 Backfill progress
+```sql
+SELECT job_id, COUNT(*) AS total, SUM(CASE WHEN completed THEN 1 ELSE 0 END) AS completed
+FROM core.backfill_progress
+GROUP BY job_id
+ORDER BY job_id;
+
+SELECT *
+FROM core.backfill_progress
+WHERE completed = FALSE
+ORDER BY updated_at DESC
+LIMIT 50;
+```
+
+---
+
+## 3) Read API (REST + SSE)
+
+### 3.1 REST (read-only)
+- `GET /v1/health`
+- `GET /v1/quota`
+- `GET /v1/fixtures?league_id=&date=&status=&limit=`
+- `GET /v1/standings/{league_id}/{season}`
+- `GET /v1/teams?search=&league_id=&limit=`
+- `GET /v1/injuries?league_id=&season=&team_id=&player_id=&limit=`
+
+### 3.2 SSE (read-only)
+- `GET /v1/sse/system-status` → event: `system_status`
+- `GET /v1/sse/live-scores` → event: `live_score_update`
+
+### 3.3 Access control (prod)
+- Basic auth:
+  - `READ_API_BASIC_USER`
+  - `READ_API_BASIC_PASSWORD`
+- IP allowlist (ops):
+  - `READ_API_IP_ALLOWLIST` (comma-separated)
+
+---
+
+## 4) Günlük operasyon checklist
+- **Quota trend**: `get_rate_limit_status()` / `GET /v1/quota`
+- **Coverage**: `get_coverage_summary()` + en düşük coverage satırlarını `get_coverage_status(league_id)` ile drilldown
+- **Job health**: `get_job_status()` + `get_recent_log_errors()`
+- **Data drift**: `get_raw_error_summary(since_minutes=1440)` (son 24h)
+
+---
+
+## 5) Incident runbooks
+
+### 5.1 Quota low / emergency stop
+- Belirti: `daily_remaining` hızla düşer veya collector loglarında `emergency_stop_daily_quota_low`.
+- Aksiyon:
+  - Backfill ve ağır job’ları disable et (config-driven).
+  - Sadece temel daily job’lar (fixtures/standings/injuries) açık kalsın.
+  - `get_raw_error_summary()` ile 4xx/429 trendini kontrol et.
+
+### 5.2 RAW var CORE yok (transform/upsert sorunu)
+- Belirti: `raw.api_responses` artıyor ama `core.fixtures`/diğer tablolar artmıyor.
+- Aksiyon:
+  - Collector loglarında `db_upsert_failed` / transform hataları.
+  - DB constraint/FK ihlalleri için Postgres logs.
+  - FK bağımlılıkları: leagues/teams/venues → fixtures sırası.
+
+### 5.3 Coverage düşmüş
+- Belirti: `mart.coverage_status.overall_coverage` düşer.
+- Aksiyon:
+  - MCP `get_coverage_status(league_id)` ile endpoint bazında bak.
+  - İlgili endpoint için `get_last_sync_time()` ve RAW error summary.
+

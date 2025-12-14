@@ -863,6 +863,186 @@ async def get_job_status(job_name: str | None = None) -> dict:
         return _ok_error("get_job_status_failed", details=str(e))
 
 
+@app.tool()
+async def get_backfill_progress(
+    job_id: str | None = None,
+    season: int | None = None,
+    include_completed: bool = False,
+    limit: int = 200,
+) -> dict:
+    """
+    Report backfill progress from core.backfill_progress.
+
+    Returns:
+    - summaries: grouped by job_id (counts + last_updated_at)
+    - tasks: most recently updated tasks (optionally excluding completed)
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 1000))
+        job_id_str = str(job_id) if job_id is not None else None
+        season_int = int(season) if season is not None else None
+
+        summary_rows = await _db_fetchall_async(
+            queries.BACKFILL_PROGRESS_SUMMARY_QUERY,
+            (job_id_str, job_id_str, season_int, season_int),
+        )
+        task_rows = await _db_fetchall_async(
+            queries.BACKFILL_PROGRESS_LIST_QUERY,
+            (job_id_str, job_id_str, season_int, season_int, bool(include_completed), safe_limit),
+        )
+
+        summaries: list[dict[str, Any]] = []
+        for r in summary_rows:
+            summaries.append(
+                {
+                    "job_id": r[0],
+                    "total_tasks": _to_int_or_none(r[1]),
+                    "completed_tasks": _to_int_or_none(r[2]),
+                    "pending_tasks": _to_int_or_none(r[3]),
+                    "last_updated_at_utc": _to_iso_or_none(r[4]),
+                }
+            )
+
+        tasks: list[dict[str, Any]] = []
+        for r in task_rows:
+            tasks.append(
+                {
+                    "job_id": r[0],
+                    "league_id": _to_int_or_none(r[1]),
+                    "season": _to_int_or_none(r[2]),
+                    "next_page": _to_int_or_none(r[3]),
+                    "completed": bool(r[4]),
+                    "last_error": r[5],
+                    "last_run_at_utc": _to_iso_or_none(r[6]),
+                    "updated_at_utc": _to_iso_or_none(r[7]),
+                }
+            )
+
+        return {
+            "ok": True,
+            "filters": {"job_id": job_id_str, "season": season_int, "include_completed": bool(include_completed), "limit": safe_limit},
+            "summaries": summaries,
+            "tasks": tasks,
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_backfill_progress_failed", details=str(e))
+
+
+@app.tool()
+async def get_raw_error_summary(
+    since_minutes: int = 60,
+    endpoint: str | None = None,
+    top_endpoints_limit: int = 25,
+) -> dict:
+    """
+    Summarize RAW request health (status_code + envelope errors) over a recent time window.
+    This is read-only and meant for operational monitoring.
+    """
+    try:
+        mins = max(1, min(int(since_minutes), 60 * 24 * 14))  # cap at 14 days
+        ep = str(endpoint) if endpoint is not None else None
+        safe_top = max(1, min(int(top_endpoints_limit), 200))
+
+        row = await _db_fetchone_async(queries.RAW_ERROR_SUMMARY_QUERY, (mins, ep, ep))
+        by_ep = await _db_fetchall_async(queries.RAW_ERRORS_BY_ENDPOINT_QUERY, (mins, ep, ep, safe_top))
+
+        summary = None
+        if row:
+            summary = {
+                "total_requests": _to_int_or_none(row[0]),
+                "ok_2xx": _to_int_or_none(row[1]),
+                "err_4xx": _to_int_or_none(row[2]),
+                "err_5xx": _to_int_or_none(row[3]),
+                "envelope_errors": _to_int_or_none(row[4]),
+                "last_fetched_at_utc": _to_iso_or_none(row[5]),
+            }
+
+        endpoints: list[dict[str, Any]] = []
+        for r in by_ep:
+            endpoints.append(
+                {
+                    "endpoint": r[0],
+                    "total_requests": _to_int_or_none(r[1]),
+                    "ok_2xx": _to_int_or_none(r[2]),
+                    "non_2xx": _to_int_or_none(r[3]),
+                    "envelope_errors": _to_int_or_none(r[4]),
+                    "last_fetched_at_utc": _to_iso_or_none(r[5]),
+                }
+            )
+
+        return {
+            "ok": True,
+            "window": {"since_minutes": mins},
+            "filters": {"endpoint": ep, "top_endpoints_limit": safe_top},
+            "summary": summary,
+            "by_endpoint": endpoints,
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_raw_error_summary_failed", details=str(e))
+
+
+def _parse_recent_log_errors(*, job_name: str | None, limit: int) -> dict[str, Any]:
+    log_path = Path(os.getenv("COLLECTOR_LOG_FILE", str(PROJECT_ROOT / "logs" / "collector.jsonl")))
+    if not log_path.exists():
+        return {"log_file": str(log_path), "errors": []}
+
+    max_lines = int(os.getenv("MCP_LOG_TAIL_LINES", "4000"))
+    try:
+        text = log_path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()[-max_lines:]
+    except Exception as e:
+        return {"log_file": str(log_path), "errors": [], "error": f"failed_to_read_logs: {e}"}
+
+    out: list[dict[str, Any]] = []
+    for ln in reversed(lines):
+        ln = ln.strip()
+        if not ln.startswith("{"):
+            continue
+        try:
+            obj = json.loads(ln)
+        except Exception:
+            continue
+
+        script = str(obj.get("script") or obj.get("component") or obj.get("job_id") or "unknown")
+        if job_name and script != job_name:
+            continue
+
+        level = str(obj.get("level") or "")
+        event = str(obj.get("event") or "")
+        is_error = (level == "error") or event.endswith("_failed")
+        if not is_error:
+            continue
+
+        out.append(
+            {
+                "job_name": script,
+                "timestamp": obj.get("timestamp"),
+                "level": level or None,
+                "event": event or None,
+                "raw": obj,
+            }
+        )
+        if len(out) >= limit:
+            break
+
+    return {"log_file": str(log_path), "errors": list(reversed(out))}
+
+
+@app.tool()
+async def get_recent_log_errors(job_name: str | None = None, limit: int = 50) -> dict:
+    """
+    Return the most recent error-level structured log events from collector.jsonl (best-effort).
+    """
+    try:
+        safe_limit = max(1, min(int(limit), 200))
+        parsed = _parse_recent_log_errors(job_name=job_name, limit=safe_limit)
+        return {"ok": True, "job_name": job_name, "log_file": parsed.get("log_file"), "errors": parsed.get("errors") or [], "ts_utc": _utc_now_iso()}
+    except Exception as e:
+        return _ok_error("get_recent_log_errors_failed", details=str(e))
+
+
 async def main() -> None:
     transport = str(os.getenv("MCP_TRANSPORT", "stdio")).strip().lower()
     if transport not in ("stdio", "sse", "streamable-http"):
