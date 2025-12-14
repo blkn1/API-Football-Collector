@@ -59,6 +59,35 @@ def _extract_team_ids_from_standings_envelope(envelope: dict[str, Any]) -> set[i
     return ids
 
 
+def _extract_venue_rows_from_fixtures_envelope(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Build minimal core.venues rows from /fixtures response payload.
+    This avoids extra API calls and prevents FK violations on core.fixtures.venue_id.
+    """
+    venues_by_id: dict[int, dict[str, Any]] = {}
+    for item in envelope.get("response") or []:
+        fixture = (item or {}).get("fixture") or {}
+        venue = fixture.get("venue") or {}
+        vid = venue.get("id")
+        try:
+            if vid is None:
+                continue
+            vid_int = int(vid)
+        except Exception:
+            continue
+        if vid_int <= 0:
+            # API uses 0 to mean "unknown"
+            continue
+        # name/city are typically present; other columns remain NULL
+        venues_by_id[vid_int] = {
+            "id": vid_int,
+            "name": venue.get("name"),
+            "city": venue.get("city"),
+        }
+    # deterministic
+    return [venues_by_id[k] for k in sorted(venues_by_id)]
+
+
 async def _fetch_and_store(
     *,
     client: APIClient,
@@ -173,6 +202,22 @@ async def ensure_fixtures_dependencies(
         client=client,
         limiter=limiter,
     )
+
+    # Venues referenced by fixtures must exist before inserting core.fixtures (FK).
+    venue_rows = _extract_venue_rows_from_fixtures_envelope(fixtures_envelope)
+    if venue_rows:
+        upsert_core(
+            full_table_name="core.venues",
+            rows=venue_rows,
+            conflict_cols=["id"],
+            update_cols=["name", "city"],
+        )
+        logger.info(
+            "venues_upserted_dependency",
+            league_id=int(league_id),
+            season=int(season),
+            venues_upserted=len(venue_rows),
+        )
 
 
 async def ensure_standings_dependencies(

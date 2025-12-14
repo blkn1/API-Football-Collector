@@ -107,7 +107,9 @@ def transform_fixtures(
             "api_timestamp": r.fixture.timestamp,
             "referee": r.fixture.referee,
             "timezone": r.fixture.timezone,
-            "venue_id": venue.id,
+            # API sometimes returns venue.id=0 (or missing) meaning "unknown / not set".
+            # FK requires referenced venues to exist, so treat 0 as NULL.
+            "venue_id": (int(venue.id) if venue.id not in (None, 0) else None),
             "home_team_id": r.teams.home.id,
             "away_team_id": r.teams.away.id,
             "status_short": status.short,
