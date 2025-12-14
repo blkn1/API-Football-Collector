@@ -243,12 +243,18 @@ async def sync_daily_fixtures(
             # Ensure referenced venues exist before inserting fixtures (prevents FK violations).
             # Best-effort: if this fails, the fixture upsert may still fail; we log and continue.
             try:
+                # IMPORTANT: Venue backfill can be extremely expensive (per-venue API calls).
+                # Keep it disabled by default; enable explicitly via env if you want it.
+                max_venues = int(os.getenv("VENUES_BACKFILL_MAX_PER_RUN", "0"))
+                if max_venues <= 0:
+                    upserted_venues = 0
+                else:
                 upserted_venues = await backfill_missing_venues_for_fixtures(
                     venue_ids=venue_ids,
                     client=client2,
                     limiter=limiter2,
                     dry_run=False,
-                    max_to_fetch=50,
+                        max_to_fetch=max_venues,
                 )
                 if upserted_venues:
                     logger.info("venues_backfilled", league_id=league_id, upserted=upserted_venues)

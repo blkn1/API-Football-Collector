@@ -23,6 +23,7 @@ from transforms.fixtures import transform_fixtures  # noqa: E402
 from utils.db import get_transaction, upsert_core, upsert_raw  # noqa: E402
 from utils.logging import get_logger, setup_logging  # noqa: E402
 from utils.venues_backfill import backfill_missing_venues_for_fixtures  # noqa: E402
+import os
 from utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
 from utils.dependencies import ensure_fixtures_dependencies  # noqa: E402
 
@@ -240,13 +241,15 @@ async def run_iteration(
     # Ensure referenced venues exist before inserting fixtures (prevents FK violations).
     venue_ids = [int(r["venue_id"]) for r in fixtures_rows if r.get("venue_id") is not None]
     try:
-        await backfill_missing_venues_for_fixtures(
-            venue_ids=venue_ids,
-            client=client,
-            limiter=limiter,
-            dry_run=False,
-            max_to_fetch=50,
-        )
+        max_venues = int(os.getenv("VENUES_BACKFILL_MAX_PER_RUN", "0"))
+        if max_venues > 0:
+            await backfill_missing_venues_for_fixtures(
+                venue_ids=venue_ids,
+                client=client,
+                limiter=limiter,
+                dry_run=False,
+                max_to_fetch=max_venues,
+            )
     except Exception as e:
         logger.warning("venues_backfill_failed", err=str(e))
 
