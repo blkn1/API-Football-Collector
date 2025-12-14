@@ -5,7 +5,11 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from transforms.fixture_details import transform_fixture_details
+try:
+    # scripts/ context (scripts add src/ to sys.path)
+    from transforms.fixture_details import transform_fixture_details  # type: ignore
+except Exception:  # pragma: no cover
+    from src.transforms.fixture_details import transform_fixture_details
 
 def _ensure_utc(dt: datetime) -> datetime:
     """

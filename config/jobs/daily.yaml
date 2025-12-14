@@ -71,7 +71,7 @@ jobs:
 
   - job_id: "fixture_details_backfill_90d"
     type: "incremental_daily"
-    enabled: false  # Enable after observing quota trends (rolling 90d backfill can be expensive).
+    enabled: true  # Enabled for DB fill; bounded by FIXTURE_DETAILS_BACKFILL_BATCH.
     priority: "MEDIUM"
     endpoint: "/fixtures/*"
     params: {}
@@ -83,6 +83,38 @@ jobs:
       - "daily_fixtures_by_date"
     coverage_target:
       endpoint: "/fixtures/details_backfill_90d"
+      min_records: 1
+      max_lag_minutes: 1440
+
+  # Backfill fixtures across seasons (quota-safe, resumeable via core.backfill_progress)
+  - job_id: "fixtures_backfill_league_season"
+    type: "incremental_daily"
+    enabled: true
+    priority: "MEDIUM"
+    endpoint: "/fixtures"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "*/10 * * * *"  # bounded by BACKFILL_FIXTURES_MAX_TASKS_PER_RUN / BACKFILL_FIXTURES_MAX_PAGES_PER_TASK
+    target_layer: "raw+core"
+    coverage_target:
+      endpoint: "/fixtures_backfill"
+      min_records: 1
+      max_lag_minutes: 1440
+
+  # Backfill standings across seasons (quota-safe, resumeable via core.backfill_progress)
+  - job_id: "standings_backfill_league_season"
+    type: "incremental_daily"
+    enabled: true
+    priority: "LOW"
+    endpoint: "/standings"
+    params: {}
+    interval:
+      type: "cron"
+      cron: "*/30 * * * *"  # bounded by BACKFILL_STANDINGS_MAX_TASKS_PER_RUN
+    target_layer: "raw+core"
+    coverage_target:
+      endpoint: "/standings_backfill"
       min_records: 1
       max_lag_minutes: 1440
 
@@ -101,4 +133,8 @@ tracked_leagues:
     name: "Ligue 1"
   - id: 78
     name: "Bundesliga"
+
+# Backfill configuration (fixtures + standings)
+backfill:
+  seasons: [2023, 2024, 2025]
 

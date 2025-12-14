@@ -2,13 +2,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from collector.api_client import APIClient, APIResult
-from collector.rate_limiter import RateLimiter
-from transforms.leagues import transform_leagues
-from transforms.teams import transform_teams
-from transforms.venues import transform_venues_from_teams
-from utils.db import query_scalar, upsert_core, upsert_raw
-from utils.logging import get_logger
+try:
+    # scripts/ context (scripts add src/ to sys.path)
+    from collector.api_client import APIClient, APIResult  # type: ignore
+    from collector.rate_limiter import RateLimiter  # type: ignore
+    from transforms.leagues import transform_leagues  # type: ignore
+    from transforms.teams import transform_teams  # type: ignore
+    from transforms.venues import transform_venues_from_teams  # type: ignore
+    from utils.db import query_scalar, upsert_core, upsert_raw  # type: ignore
+    from utils.logging import get_logger  # type: ignore
+except Exception:  # pragma: no cover
+    # package context
+    from src.collector.api_client import APIClient, APIResult
+    from src.collector.rate_limiter import RateLimiter
+    from src.transforms.leagues import transform_leagues
+    from src.transforms.teams import transform_teams
+    from src.transforms.venues import transform_venues_from_teams
+    from src.utils.db import query_scalar, upsert_core, upsert_raw
+    from src.utils.logging import get_logger
 
 
 logger = get_logger(component="dependencies")

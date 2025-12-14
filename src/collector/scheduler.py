@@ -22,6 +22,10 @@ from src.jobs.fixture_details import (
     run_fixture_details_backfill_90d,
     run_fixture_details_recent_finalize,
 )
+from src.jobs.backfill import (
+    run_fixtures_backfill_league_season,
+    run_standings_backfill_league_season,
+)
 from src.jobs.static_bootstrap import (
     run_bootstrap_countries,
     run_bootstrap_leagues,
@@ -141,7 +145,8 @@ def _build_runner(
 
     Supported:
     - static_bootstrap: bootstrap_timezones, bootstrap_countries, bootstrap_leagues, bootstrap_teams
-    - incremental_daily: daily_fixtures_by_date, daily_standings, injuries_hourly, fixture_details_recent_finalize, fixture_details_backfill_90d
+    - incremental_daily: daily_fixtures_by_date, daily_standings, injuries_hourly, fixture_details_recent_finalize, fixture_details_backfill_90d,
+      fixtures_backfill_league_season, standings_backfill_league_season
     """
 
     async def _run() -> None:
@@ -192,6 +197,18 @@ def _build_runner(
                 await run_fixture_details_recent_finalize(client=client, limiter=limiter)
             elif job.job_id == "fixture_details_backfill_90d":
                 await run_fixture_details_backfill_90d(client=client, limiter=limiter)
+            elif job.job_id == "fixtures_backfill_league_season":
+                await run_fixtures_backfill_league_season(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "standings_backfill_league_season":
+                await run_standings_backfill_league_season(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
             else:
                 raise ValueError(f"Unknown incremental_daily job_id: {job.job_id}")
         else:
