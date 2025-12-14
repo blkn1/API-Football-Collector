@@ -467,6 +467,7 @@ async def run_fixtures_backfill_league_season(
                         fixtures_envelope=env,
                         client=client,
                         limiter=limiter,
+                        log_venues=(windows_done == 0),
                     )
                 except Exception as e:
                     logger.error("fixtures_backfill_dependency_failed", league_id=league_id, season=season, err=str(e))

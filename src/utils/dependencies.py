@@ -190,6 +190,7 @@ async def ensure_fixtures_dependencies(
     fixtures_envelope: dict[str, Any],
     client: APIClient,
     limiter: RateLimiter,
+    log_venues: bool = True,
 ) -> None:
     await ensure_league_exists(league_id=league_id, season=season, client=client, limiter=limiter)
     team_ids = _extract_team_ids_from_fixtures_envelope(fixtures_envelope)
@@ -212,12 +213,13 @@ async def ensure_fixtures_dependencies(
             conflict_cols=["id"],
             update_cols=["name", "city"],
         )
-        logger.info(
-            "venues_upserted_dependency",
-            league_id=int(league_id),
-            season=int(season),
-            venues_upserted=len(venue_rows),
-        )
+        if log_venues:
+            logger.info(
+                "venues_upserted_dependency",
+                league_id=int(league_id),
+                season=int(season),
+                venues_upserted=len(venue_rows),
+            )
 
 
 async def ensure_standings_dependencies(
