@@ -1,0 +1,160 @@
+## MCP Usage Guide (API-Football Collector)
+
+Bu doküman, `api-football` projesinin **MCP (Model Context Protocol)** sunucusunu nasıl çalıştıracağını ve **Claude Desktop** üzerinden nasıl bağlanacağını anlatır.
+
+> MCP bu projede **read-only gözlem/izleme** katmanıdır. DB üzerinde INSERT/UPDATE yapmaz.
+
+---
+
+## 1) MCP Nedir? Bu projede ne işe yarar?
+
+MCP sunucusu (`src/mcp/server.py`), PostgreSQL’deki RAW/CORE/MART katmanlarından **read-only** sorgular yapıp tool çıktıları üretir.
+
+Temel kullanım:
+- Quota (daily/minute remaining)
+- DB sayımları (RAW/CORE)
+- Coverage özetleri
+- Job durumları (config + collector log tail)
+- Backfill progress
+- RAW hata özetleri
+
+---
+
+## 2) Transport modları: Claude Desktop vs Prod
+
+### 2.1 Claude Desktop (Local) → **stdio**
+Claude Desktop tipik olarak MCP’yi **stdio** üzerinden çalıştırır.
+- `MCP_TRANSPORT=stdio`
+- Claude Desktop, komutu local’de çalıştırır ve tool çağrıları stdio’dan gider.
+
+### 2.2 Coolify/Prod → **SSE**
+Coolify’da MCP servisiniz HTTP üzerinden SSE ile açılır.
+- `MCP_TRANSPORT=sse`
+- Endpoint’ler (default mount `/`):
+  - SSE stream: `/sse`
+  - messages: `/messages/`
+
+> Not: Claude Desktop’ın stdio dışı transport desteği versiyona göre değişebilir. Prod SSE endpoint’i daha çok HTTP/SSE MCP client’ları içindir.
+
+---
+
+## 3) Claude Desktop kurulumu (Linux)
+
+### 3.1 Gerekenler
+- Bu repo local’de mevcut olmalı (ör: `/home/ybc/Desktop/api-football`)
+- Python 3 kurulu olmalı
+- Proje bağımlılıkları kurulu olmalı (`requirements.txt`)
+
+### 3.2 Claude Desktop MCP config dosyası
+Linux’ta tipik path:
+- `~/.config/Claude/claude_desktop_config.json`
+
+Aşağıdaki config ile MCP sunucusunu Claude Desktop başlatır.
+
+> Önemli: `cd` gerektirdiği için komutu `bash -lc` ile çalıştırıyoruz.
+
+```json
+{
+  "mcpServers": {
+    "api-football": {
+      "command": "bash",
+      "args": [
+        "-lc",
+        "cd /home/ybc/Desktop/api-football && MCP_TRANSPORT=stdio DATABASE_URL='postgresql://postgres:postgres@localhost:5432/api_football' COLLECTOR_LOG_FILE='/home/ybc/Desktop/api-football/logs/collector.jsonl' python3 -m src.mcp.server"
+      ]
+    }
+  }
+}
+```
+
+### 3.3 ENV açıklamaları
+- **`MCP_TRANSPORT=stdio`**: Claude Desktop için.
+- **`DATABASE_URL`**: MCP’nin okuyacağı Postgres.
+- **`COLLECTOR_LOG_FILE`**: `get_job_status()` ve `get_recent_log_errors()` için JSONL log path.
+- Opsiyonel:
+  - `API_FOOTBALL_DAILY_CONFIG`: MCP’nin season/tracked leagues okuduğu config (default: `config/jobs/daily.yaml`).
+  - `MCP_LOG_TAIL_LINES`: log tail okuma limiti (default 2000/4000).
+
+---
+
+## 4) Prod SSE endpoint hızlı doğrulama (opsiyonel)
+
+Örnek domain: `https://mcp.zinalyze.pro`
+
+- Ana sayfa:
+  - `curl -i https://mcp.zinalyze.pro/`
+- SSE bağlantısı (açık stream):
+  - `curl -iN https://mcp.zinalyze.pro/sse`
+
+> SSE bağlantısı uzun süre açık kalır; reverse-proxy timeout’larında kopma normal olabilir. Asıl doğrulama MCP client’ın tool çağırabilmesidir.
+
+---
+
+## 5) MCP Tool kataloğu (bu projede)
+
+Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
+
+### 5.1 Sistem/operasyon
+- `get_rate_limit_status()`
+  - RAW header’larından daily/minute remaining.
+- `get_database_stats()`
+  - RAW/CORE tablo sayımları, son aktivite.
+- `get_job_status(job_name=None)`
+  - Job config + collector log tail merge.
+- `get_coverage_summary(season=None)`
+- `get_coverage_status(league_id=None, season=None)`
+
+### 5.2 Backfill + hata gözlemi
+- `get_backfill_progress(job_id=None, season=None, include_completed=False, limit=200)`
+- `get_raw_error_summary(since_minutes=60, endpoint=None, top_endpoints_limit=25)`
+- `get_recent_log_errors(job_name=None, limit=50)`
+
+### 5.3 Veri sorguları
+- `query_fixtures(league_id=None, date=None, status=None, limit=10)`
+- `query_standings(league_id, season)`
+- `query_teams(league_id=None, search=None, limit=20)`
+- `query_injuries(league_id=None, season=None, team_id=None, player_id=None, limit=50)`
+- `get_fixture_detail_status(fixture_id)`
+- `query_fixture_players(fixture_id, team_id=None, limit=300)`
+- `query_fixture_events(fixture_id, limit=300)`
+- `query_fixture_statistics(fixture_id)`
+- `query_fixture_lineups(fixture_id)`
+
+---
+
+## 6) Claude Desktop test senaryosu (minimum acceptance)
+
+Claude’a şu sırayla tool çağırmasını söyle:
+1) `get_database_stats()` → DB bağlantısı ve sayımlar geliyor mu?
+2) `get_rate_limit_status()` → daily/minute remaining doluyor mu?
+3) `get_job_status()` → job listesi + log bilgisi geliyor mu?
+4) `get_backfill_progress()` → backfill state görülebiliyor mu?
+5) `get_raw_error_summary(since_minutes=60)` → son 60 dk health summary
+
+PASS kriteri:
+- İlk 3 tool `ok=true` dönüyor ve exception yok.
+
+---
+
+## 7) Sık görülen sorunlar
+
+### 7.1 `season_required`
+`get_coverage_*` veya bazı filtreli tool’lar season ister.
+- Çözüm: `config/jobs/daily.yaml` içinde `season:` olmalı veya tool’a `season=...` parametresi verilmeli.
+
+### 7.2 DB bağlanamıyor
+- `DATABASE_URL` yanlış/kapalı
+- Coolify network/port erişimi
+
+### 7.3 Log dosyası yok
+- `COLLECTOR_LOG_FILE` path yanlış
+- Volume mount yoksa container içinde dosya görünmez
+
+---
+
+## 8) Güvenlik notu
+
+MCP ve Read API operasyonel veri içerir. Prod’da:
+- Domain’i public bırakma
+- IP allowlist veya basic auth uygula
+- DB user’ı read-only yap (mümkünse)
