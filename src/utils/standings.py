@@ -23,6 +23,7 @@ logger = get_logger(component="standings_sync")
 class TrackedLeague:
     id: int
     name: str | None = None
+    season: int | None = None
 
 
 @dataclass(frozen=True)
@@ -34,9 +35,9 @@ class StandingsSyncSummary:
     minute_remaining: int | None
 
 
-def _load_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
+def _load_config(config_path: Path) -> list[TrackedLeague]:
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    season = cfg.get("season")
+    default_season = cfg.get("season")
     tracked_leagues = cfg.get("tracked_leagues")
 
     leagues: list[TrackedLeague] = []
@@ -44,7 +45,10 @@ def _load_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
         for x in tracked_leagues:
             if not isinstance(x, dict) or "id" not in x:
                 continue
-            leagues.append(TrackedLeague(id=int(x["id"]), name=x.get("name")))
+            s = x.get("season")
+            if s is None:
+                s = default_season
+            leagues.append(TrackedLeague(id=int(x["id"]), name=x.get("name"), season=(int(s) if s is not None else None)))
 
     # fallback: infer from jobs config
     if not leagues:
@@ -59,16 +63,17 @@ def _load_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
             job_season = params.get("season")
             if league_id is None:
                 continue
-            leagues.append(TrackedLeague(id=int(league_id), name=j.get("job_id")))
-            if season is None and job_season is not None:
-                season = int(job_season)
+            s = job_season if job_season is not None else default_season
+            leagues.append(TrackedLeague(id=int(league_id), name=j.get("job_id"), season=(int(s) if s is not None else None)))
 
-    if season is None:
-        raise ValueError(f"Missing season in config: {config_path}")
     if not leagues:
         raise ValueError(f"No tracked leagues configured in {config_path}")
 
-    return int(season), leagues
+    missing = [l.id for l in leagues if l.season is None]
+    if missing:
+        raise ValueError(f"Missing season for leagues={missing} in config: {config_path}")
+
+    return leagues
 
 
 def _replace_standings(conn, *, league_id: int, season: int, rows: list[dict[str, Any]]) -> None:
@@ -115,7 +120,7 @@ async def sync_standings(
     - RAW archived (unless dry-run)
     - CORE standings replaced fully per league+season (delete-then-insert in one transaction)
     """
-    season, tracked = _load_config(config_path)
+    tracked = _load_config(config_path)
 
     leagues = tracked
     if league_filter is not None:
@@ -129,12 +134,17 @@ async def sync_standings(
     api_requests = 0
     total_rows = 0
 
-    logger.info("standings_sync_started", season=season, dry_run=dry_run, leagues=[l.id for l in leagues])
+    logger.info(
+        "standings_sync_started",
+        dry_run=dry_run,
+        leagues=[{"league_id": l.id, "season": int(l.season or 0)} for l in leagues],
+    )
 
     try:
         for l in leagues:
             league_id = l.id
             league_name = l.name or f"League {league_id}"
+            season = int(l.season or 0)
             params = {"league": league_id, "season": season}
             logger.info("league_standings_started", league_id=league_id, league_name=league_name, season=season)
 

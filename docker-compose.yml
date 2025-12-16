@@ -53,6 +53,15 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-api_football}
       API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
       LOG_FILE: /app/logs/collector.jsonl
+      # Aşama 1: fill empty static tables on startup (idempotent)
+      BOOTSTRAP_STATIC_ON_START: ${BOOTSTRAP_STATIC_ON_START:-1}
+
+      # Aşama 4: rollout throttles (override in Coolify env)
+      BACKFILL_FIXTURES_MAX_TASKS_PER_RUN: ${BACKFILL_FIXTURES_MAX_TASKS_PER_RUN:-6}
+      BACKFILL_FIXTURES_MAX_PAGES_PER_TASK: ${BACKFILL_FIXTURES_MAX_PAGES_PER_TASK:-6}
+      BACKFILL_FIXTURES_WINDOW_DAYS: ${BACKFILL_FIXTURES_WINDOW_DAYS:-30}
+      BACKFILL_STANDINGS_MAX_TASKS_PER_RUN: ${BACKFILL_STANDINGS_MAX_TASKS_PER_RUN:-2}
+      FIXTURE_DETAILS_BACKFILL_BATCH: ${FIXTURE_DETAILS_BACKFILL_BATCH:-25}
     depends_on:
       postgres:
         condition: service_healthy

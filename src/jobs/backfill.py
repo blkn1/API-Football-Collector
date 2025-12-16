@@ -30,10 +30,12 @@ STANDINGS_JOB_ID = "standings_backfill_league_season"
 class TrackedLeague:
     id: int
     name: str | None = None
+    season: int | None = None
 
 
 def _load_tracked_leagues(config_path: Path) -> list[TrackedLeague]:
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    default_season = cfg.get("season")
     tracked = cfg.get("tracked_leagues") or []
     if not isinstance(tracked, list) or not tracked:
         raise ValueError(f"Missing tracked_leagues in {config_path}")
@@ -41,20 +43,24 @@ def _load_tracked_leagues(config_path: Path) -> list[TrackedLeague]:
     for x in tracked:
         if not isinstance(x, dict) or x.get("id") is None:
             continue
-        out.append(TrackedLeague(id=int(x["id"]), name=x.get("name")))
+        s = x.get("season")
+        if s is None:
+            s = default_season
+        out.append(TrackedLeague(id=int(x["id"]), name=x.get("name"), season=(int(s) if s is not None else None)))
     if not out:
         raise ValueError(f"No valid tracked_leagues items in {config_path}")
+    missing = [l.id for l in out if l.season is None]
+    if missing:
+        raise ValueError(f"Missing season for leagues={missing} in {config_path}")
     return out
 
 
-def _load_backfill_seasons(config_path: Path) -> list[int]:
+def _load_backfill_seasons(config_path: Path) -> list[int] | None:
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     backfill = cfg.get("backfill") or {}
     seasons = backfill.get("seasons")
     if not isinstance(seasons, list) or not seasons:
-        raise ValueError(
-            f"Missing backfill.seasons in {config_path}. Example: backfill: {{seasons: [2023, 2024, 2025]}}"
-        )
+        return None
     out: list[int] = []
     for s in seasons:
         try:
@@ -62,8 +68,31 @@ def _load_backfill_seasons(config_path: Path) -> list[int]:
         except Exception:
             continue
     if not out:
-        raise ValueError(f"No valid integers in backfill.seasons in {config_path}")
+        return None
     return out
+
+
+def _derive_backfill_pairs(*, config_path: Path, leagues: list[TrackedLeague]) -> list[tuple[int, int]]:
+    """
+    SeçenekB:
+    - If backfill.seasons exists -> treat as an explicit override (cross-product with all leagues).
+    - Else derive per-league seasons as [current, current-1] where current = tracked_leagues[].season.
+    """
+    override_seasons = _load_backfill_seasons(config_path)
+    pairs: set[tuple[int, int]] = set()
+    if override_seasons:
+        for l in leagues:
+            for s in override_seasons:
+                pairs.add((int(l.id), int(s)))
+    else:
+        for l in leagues:
+            cur = int(l.season or 0)
+            if cur <= 0:
+                continue
+            pairs.add((int(l.id), cur))
+            if cur - 1 > 0:
+                pairs.add((int(l.id), cur - 1))
+    return sorted(pairs, key=lambda x: (x[0], x[1]))
 
 
 def _parse_iso_date(value: Any) -> date | None:
@@ -157,17 +186,16 @@ async def _safe_get_envelope(
     raise RuntimeError(f"api_errors:{label}:max_retries_exceeded")
 
 
-def _ensure_progress_rows(job_id: str, league_ids: list[int], seasons: list[int]) -> None:
+def _ensure_progress_rows(job_id: str, pairs: list[tuple[int, int]]) -> None:
     """
     Create missing progress rows so backfill can resume deterministically.
     """
-    if not league_ids or not seasons:
+    if not pairs:
         return
     # Insert all combos; ON CONFLICT do nothing.
     rows: list[tuple[Any, ...]] = []
-    for lid in league_ids:
-        for s in seasons:
-            rows.append((job_id, int(lid), int(s), 1, False))
+    for lid, s in pairs:
+        rows.append((job_id, int(lid), int(s), 1, False))
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             psycopg2.extras.execute_values(
@@ -249,7 +277,7 @@ async def run_fixtures_backfill_league_season(
     - Update core.backfill_progress.next_page / completed (next_page used as window index)
     """
     leagues = _load_tracked_leagues(config_path)
-    seasons = _load_backfill_seasons(config_path)
+    pairs = _derive_backfill_pairs(config_path=config_path, leagues=leagues)
 
     # Defaults tuned for 75k/day quota while staying below 300/min hard cap (shared rate limiter).
     # Override via Coolify env if you want slower/faster.
@@ -257,8 +285,7 @@ async def run_fixtures_backfill_league_season(
     max_windows_per_task = int(os.getenv("BACKFILL_FIXTURES_MAX_PAGES_PER_TASK", "6"))
     window_days = int(os.getenv("BACKFILL_FIXTURES_WINDOW_DAYS", "30"))
 
-    league_ids = [l.id for l in leagues]
-    _ensure_progress_rows(FIXTURES_JOB_ID, league_ids, seasons)
+    _ensure_progress_rows(FIXTURES_JOB_ID, pairs)
     tasks = _pick_progress_tasks(FIXTURES_JOB_ID, max_tasks)
     if not tasks:
         logger.info("fixtures_backfill_no_work")
@@ -564,20 +591,21 @@ async def run_standings_backfill_league_season(
 ) -> None:
     """
     Resumeable standings backfill:
-    - For each (league, season) in backfill.seasons x tracked_leagues:
+    - For each (league, season) in derived pairs:
+      - backfill.seasons override => (tracked_leagues x seasons)
+      - else => per-league [current, current-1] where current = tracked_leagues[].season
       - GET /standings?league=<id>&season=<season>
       - Store RAW
       - Replace core.standings per league+season (delete then insert in one transaction)
       - Mark completed
     """
     leagues = _load_tracked_leagues(config_path)
-    seasons = _load_backfill_seasons(config_path)
+    pairs = _derive_backfill_pairs(config_path=config_path, leagues=leagues)
 
     # Standings is much cheaper than fixtures paging; keep it modest.
     max_tasks = int(os.getenv("BACKFILL_STANDINGS_MAX_TASKS_PER_RUN", "2"))
 
-    league_ids = [l.id for l in leagues]
-    _ensure_progress_rows(STANDINGS_JOB_ID, league_ids, seasons)
+    _ensure_progress_rows(STANDINGS_JOB_ID, pairs)
     tasks = _pick_progress_tasks(STANDINGS_JOB_ID, max_tasks)
     if not tasks:
         logger.info("standings_backfill_no_work")

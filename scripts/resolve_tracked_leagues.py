@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import yaml
 
@@ -16,9 +19,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
 sys.path.insert(0, str(SRC_DIR))
 
-from collector.api_client import APIClient  # noqa: E402
 from collector.rate_limiter import RateLimiter  # noqa: E402
-from utils.config import load_rate_limiter_config  # noqa: E402
 
 
 _WOMEN_AMATEUR_PAT = re.compile(r"(women|kadın|kadin|femenina|amatör|amator|amateur)", re.IGNORECASE)
@@ -87,6 +88,78 @@ COUNTRY_TR_TO_API = {
     "Uganda": "Uganda",
     "Lebanon": "Lebanon",
 }
+
+def _load_env_file_kv(path: Path) -> dict[str, str]:
+    """
+    Minimal .env parser (stdlib only). Supports KEY=VALUE, ignores comments/empty lines.
+    """
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    for ln in path.read_text(encoding="utf-8").splitlines():
+        s = ln.strip()
+        if not s or s.startswith("#"):
+            continue
+        if "=" not in s:
+            continue
+        k, v = s.split("=", 1)
+        k = k.strip()
+        v = v.strip().strip("'").strip('"')
+        if k:
+            out[k] = v
+    return out
+
+
+def _load_rate_limiter_cfg() -> tuple[int, int | None]:
+    """
+    Read config/rate_limiter.yaml without depending on src/utils/config (keeps this script runnable
+    even when project deps aren't installed on the host).
+    Returns: (minute_soft_limit, emergency_stop_threshold)
+    """
+    path = PROJECT_ROOT / "config" / "rate_limiter.yaml"
+    cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    minute_soft_limit = int(cfg.get("minute_soft_limit", 250))
+    thr = cfg.get("emergency_stop_threshold")
+    emergency_stop_threshold = int(thr) if thr is not None else None
+    return minute_soft_limit, emergency_stop_threshold
+
+
+@dataclass(frozen=True)
+class SimpleAPIClient:
+    """
+    Stdlib-only API-Football client:
+    - GET only
+    - ONLY x-apisports-key custom header
+    """
+
+    base_url: str
+    api_key: str
+    timeout_seconds: float = 30.0
+
+    def get(self, endpoint: str, params: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+        if not endpoint.startswith("/"):
+            endpoint = f"/{endpoint}"
+        qs = urlencode({k: v for k, v in (params or {}).items() if v is not None})
+        url = f"{self.base_url.rstrip('/')}{endpoint}"
+        if qs:
+            url = f"{url}?{qs}"
+
+        req = Request(url=url, method="GET")
+        # IMPORTANT: exactly one auth header (no other custom headers).
+        req.add_header("x-apisports-key", self.api_key)
+
+        with urlopen(req, timeout=float(self.timeout_seconds)) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+            headers = {k: v for (k, v) in resp.headers.items()}
+            try:
+                data = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                data = {"errors": ["invalid_json"], "raw": body}
+            return data, headers
+
+    async def aclose(self) -> None:
+        # No persistent connections in stdlib client.
+        return None
 
 
 def _norm(s: str) -> str:
@@ -219,6 +292,25 @@ def _score(candidate_name: str, query: str) -> int:
     overlap = len(c_tokens.intersection(q_tokens))
     return int(70 * (overlap / max(1, len(q_tokens))))
 
+def _has_digit_token(s: str) -> bool:
+    return any(tok.isdigit() for tok in _norm(s).split())
+
+def _query_has_digit_token(t: Target) -> bool:
+    return any(tok.isdigit() for tok in _norm(t.league_query).split())
+
+def _has_youth_token(s: str) -> bool:
+    # Detect tokens like u19/u21/u23 after normalization.
+    for tok in _norm(s).split():
+        if tok.startswith("u") and tok[1:].isdigit():
+            return True
+    return False
+
+def _query_has_youth_token(t: Target) -> bool:
+    for tok in _norm(t.league_query).split():
+        if tok.startswith("u") and tok[1:].isdigit():
+            return True
+    return False
+
 
 def _current_season_year(seasons: list[dict[str, Any]]) -> int | None:
     years: list[int] = []
@@ -233,10 +325,10 @@ def _current_season_year(seasons: list[dict[str, Any]]) -> int | None:
     return max(years) if years else None
 
 
-async def _fetch_leagues_catalog(*, client: APIClient, limiter: RateLimiter) -> dict[str, Any]:
+async def _fetch_leagues_catalog(*, client: SimpleAPIClient, limiter: RateLimiter) -> dict[str, Any]:
     return await _safe_get(client=client, limiter=limiter, endpoint="/leagues", params={"current": "true"}, label="/leagues")
 
-async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
+async def _fetch_leagues_by_country(*, client: SimpleAPIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
     return await _safe_get(
         client=client,
         limiter=limiter,
@@ -245,7 +337,7 @@ async def _fetch_leagues_by_country(*, client: APIClient, limiter: RateLimiter, 
         label=f"/leagues(country={country_api})",
     )
 
-async def _fetch_leagues_by_country_all(*, client: APIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
+async def _fetch_leagues_by_country_all(*, client: SimpleAPIClient, limiter: RateLimiter, country_api: str) -> dict[str, Any]:
     """
     Full catalog for a country (no 'current' filter).
     This is used only as a fallback for leagues/cups that aren't flagged as current.
@@ -258,7 +350,7 @@ async def _fetch_leagues_by_country_all(*, client: APIClient, limiter: RateLimit
         label=f"/leagues(country_all={country_api})",
     )
 
-async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, search: str) -> dict[str, Any]:
+async def _fetch_leagues_search(*, client: SimpleAPIClient, limiter: RateLimiter, search: str) -> dict[str, Any]:
     """
     IMPORTANT: API-Football does not allow combining 'search' with 'country' or 'current'.
     So we fetch with search only, then filter client-side.
@@ -274,7 +366,7 @@ async def _fetch_leagues_search(*, client: APIClient, limiter: RateLimiter, sear
 
 async def _safe_get(
     *,
-    client: APIClient,
+    client: SimpleAPIClient,
     limiter: RateLimiter,
     endpoint: str,
     params: dict[str, Any],
@@ -290,9 +382,8 @@ async def _safe_get(
     backoff = 2.0
     for attempt in range(max_retries):
         limiter.acquire_token()
-        res = await client.get(endpoint, params=params)
-        limiter.update_from_headers(res.headers)
-        env = res.data or {}
+        env, headers = await asyncio.to_thread(client.get, endpoint, params)
+        limiter.update_from_headers(headers)
         errors = env.get("errors") or {}
         # API-Football may return 200 with errors.rateLimit
         if isinstance(errors, dict) and errors.get("rateLimit"):
@@ -313,6 +404,11 @@ def _extract_candidates(env: dict[str, Any]) -> list[dict[str, Any]]:
         league = item.get("league") or {}
         country = item.get("country") or {}
         seasons = item.get("seasons") or []
+        # Guardrail: exclude women/amateur competitions from candidate pool.
+        # Targets already filter these lines, but API catalogs can still contain them and cause mis-wires.
+        league_name = str(league.get("name") or "")
+        if _WOMEN_AMATEUR_PAT.search(league_name):
+            continue
         try:
             lid = int(league.get("id"))
         except Exception:
@@ -320,7 +416,7 @@ def _extract_candidates(env: dict[str, Any]) -> list[dict[str, Any]]:
         out.append(
             {
                 "id": lid,
-                "name": str(league.get("name") or ""),
+                "name": league_name,
                 "type": str(league.get("type") or ""),
                 "country": str(country.get("name") or ""),
                 "season": _current_season_year(seasons),
@@ -346,6 +442,16 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
             unresolved.append(f"{t.raw_line} -> no_candidates_for_country({t.country_api})")
             continue
 
+        wanted_type = _wanted_type(t)
+        if wanted_type:
+            cands = [c for c in cands if str(c.get("type") or "").strip().lower() == wanted_type]
+            if not cands:
+                unresolved.append(f"{t.raw_line} -> no_candidates_for_type({wanted_type})")
+                continue
+
+        q_has_digit = _query_has_digit_token(t)
+        q_has_youth = _query_has_youth_token(t)
+
         best = None
         best_score = -1
         for c in cands:
@@ -353,6 +459,13 @@ def _resolve(targets: list[Target], candidates: list[dict[str, Any]]) -> tuple[l
             sc = 0
             for q in _expand_queries(t.league_query):
                 sc = max(sc, _score(c["name"], q))
+            # Guardrail: if query includes a digit token (e.g., "La Liga 2", "1. Lig", "U21"),
+            # prefer candidates that also include digits. Otherwise we risk mis-wiring "2" leagues to "1".
+            if q_has_digit and not _has_digit_token(str(c.get("name") or "")):
+                sc = max(0, sc - 30)
+            # Guardrail: if query does NOT mention youth (U19/U21/U23) but candidate does, heavily penalize.
+            if (not q_has_youth) and _has_youth_token(str(c.get("name") or "")):
+                sc = max(0, sc - 50)
             if sc > best_score:
                 best_score = sc
                 best = c
@@ -413,7 +526,7 @@ def _load_overrides(path: Path) -> dict[str, dict[str, Any]]:
 
 async def _fetch_league_by_id(
     *,
-    client: APIClient,
+    client: SimpleAPIClient,
     limiter: RateLimiter,
     league_id: int,
 ) -> dict[str, Any] | None:
@@ -453,7 +566,7 @@ async def _apply_overrides(
     targets: list[Target],
     candidates: list[dict[str, Any]],
     overrides: dict[str, dict[str, Any]],
-    client: APIClient,
+    client: SimpleAPIClient,
     limiter: RateLimiter,
 ) -> tuple[list[dict[str, Any]], list[Target]]:
     """
@@ -580,8 +693,17 @@ def _apply_to_configs(*, resolved: list[dict[str, Any]]) -> None:
     daily = yaml.safe_load(daily_path.read_text(encoding="utf-8")) or {}
     live = yaml.safe_load(live_path.read_text(encoding="utf-8")) or {}
 
+    # Safety: enforce uniqueness by league_id before writing configs.
+    uniq: dict[int, dict[str, Any]] = {}
+    for r in resolved:
+        try:
+            uniq[int(r["id"])] = r
+        except Exception:
+            continue
+    resolved_u = sorted(uniq.values(), key=lambda d: int(d["id"]))
+
     # Update tracked leagues list used by scripts + scheduler.
-    daily["tracked_leagues"] = [{"id": r["id"], "name": r["name"], "season": r["season"]} for r in resolved]
+    daily["tracked_leagues"] = [{"id": r["id"], "name": r["name"], "season": r["season"]} for r in resolved_u]
     # Remove top-level season assumption; per-league season is authoritative.
     if "season" in daily:
         daily.pop("season", None)
@@ -610,7 +732,7 @@ def _apply_to_configs(*, resolved: list[dict[str, Any]]) -> None:
             continue
         if j.get("job_id") == "live_fixtures_all":
             j.setdefault("filters", {})
-            j["filters"]["tracked_leagues"] = [r["id"] for r in resolved]
+            j["filters"]["tracked_leagues"] = [int(r["id"]) for r in resolved_u]
     live["jobs"] = live_jobs
 
     daily_path.write_text(yaml.safe_dump(daily, sort_keys=False, allow_unicode=True), encoding="utf-8")
@@ -628,11 +750,24 @@ async def amain() -> int:
     targets = _parse_targets(Path(args.targets))
     overrides = _load_overrides(Path(args.overrides))
 
-    client = APIClient()
+    # Resolve API key from env or .env (stdlib-only; avoids python-dotenv dependency here).
+    api_key = os.getenv("API_FOOTBALL_KEY")
+    if not api_key:
+        env_kv = _load_env_file_kv(PROJECT_ROOT / ".env")
+        api_key = env_kv.get("API_FOOTBALL_KEY")
+    if not api_key:
+        raise SystemExit("Missing API key: set API_FOOTBALL_KEY in env or .env")
+
+    client = SimpleAPIClient(base_url="https://v3.football.api-sports.io", api_key=api_key, timeout_seconds=30.0)
+
     # IMPORTANT: RateLimiter.refill_rate is tokens/second. Use config soft limit per minute to avoid bursting.
-    rl_cfg = load_rate_limiter_config()
-    max_tokens = int(rl_cfg.minute_soft_limit)
-    limiter = RateLimiter(max_tokens=max_tokens, refill_rate=float(max_tokens) / 60.0, emergency_stop_threshold=rl_cfg.emergency_stop_threshold)
+    minute_soft_limit, emergency_stop_threshold = _load_rate_limiter_cfg()
+    max_tokens = int(minute_soft_limit)
+    limiter = RateLimiter(
+        max_tokens=max_tokens,
+        refill_rate=float(max_tokens) / 60.0,
+        emergency_stop_threshold=emergency_stop_threshold,
+    )
     try:
         # Phase 1: global current leagues catalog
         env = await _fetch_leagues_catalog(client=client, limiter=limiter)

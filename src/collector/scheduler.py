@@ -33,6 +33,7 @@ from src.jobs.static_bootstrap import (
     run_bootstrap_timezones,
 )
 from src.utils.config import load_api_config, load_rate_limiter_config
+from src.utils.db import query_scalar
 from src.utils.logging import get_logger, setup_logging
 
 
@@ -236,6 +237,44 @@ async def amain() -> int:
         timeout_seconds=api_cfg.timeout_seconds,
         api_key_env=api_cfg.api_key_env,
     )
+
+    def _env_flag(name: str, default: str = "1") -> bool:
+        v = str(os.getenv(name, default)).strip().lower()
+        return v in {"1", "true", "yes", "y", "on"}
+
+    async def _maybe_bootstrap_countries_timezones_if_empty() -> None:
+        """
+        One-off guardrail:
+        - If core.countries or core.timezones are empty, populate them immediately.
+        - Idempotent: only runs when count == 0.
+        - Controlled by env BOOTSTRAP_STATIC_ON_START (default enabled).
+        """
+        if not _env_flag("BOOTSTRAP_STATIC_ON_START", "1"):
+            logger.info("bootstrap_static_on_start_disabled")
+            return
+
+        try:
+            countries_cnt = int(await asyncio.to_thread(lambda: query_scalar("SELECT COUNT(*) FROM core.countries") or 0))
+            timezones_cnt = int(await asyncio.to_thread(lambda: query_scalar("SELECT COUNT(*) FROM core.timezones") or 0))
+        except Exception as e:
+            # If schemas aren't applied yet, later jobs will fail anyway; log but don't crash scheduler here.
+            logger.warning("bootstrap_static_on_start_db_check_failed", err=str(e))
+            return
+
+        if countries_cnt <= 0:
+            logger.info("bootstrap_countries_on_start", reason="core.countries_empty")
+            await run_bootstrap_countries(client=client, limiter=limiter)
+        else:
+            logger.info("bootstrap_countries_skipped", reason="core.countries_nonempty", count=countries_cnt)
+
+        if timezones_cnt <= 0:
+            logger.info("bootstrap_timezones_on_start", reason="core.timezones_empty")
+            await run_bootstrap_timezones(client=client, limiter=limiter)
+        else:
+            logger.info("bootstrap_timezones_skipped", reason="core.timezones_nonempty", count=timezones_cnt)
+
+    # Aşama 1: Don't wait for cron if tables are empty.
+    await _maybe_bootstrap_countries_timezones_if_empty()
 
     # Load all enabled jobs (excluding live_loop which should run as a dedicated service).
     jobs: list[Job] = []

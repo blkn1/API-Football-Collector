@@ -1,0 +1,619 @@
+resolved:
+- id: 141
+  name: Segunda División
+  country: Spain
+  type: League
+  season: 2025
+  source: İspanya La Liga 2
+  match_score: 999
+  override: true
+- id: 345
+  name: Czech Liga
+  country: Czech-Republic
+  type: League
+  season: 2025
+  source: Çekya 1. Lig
+  match_score: 999
+  override: true
+- id: 185
+  name: League Cup
+  country: Scotland
+  type: Cup
+  season: 2025
+  source: İskoçya Lig Kupası
+  match_score: 999
+  override: true
+- id: 262
+  name: Liga MX
+  country: Mexico
+  type: League
+  season: 2025
+  source: Meksika Primera Ligi (Açılış Playoff)
+  match_score: 999
+  override: true
+- id: 281
+  name: Primera División
+  country: Peru
+  type: League
+  season: 2025
+  source: Peru Primera Ligi (Büyük Final)
+  match_score: 999
+  override: true
+- id: 210
+  name: HNL
+  country: Croatia
+  type: League
+  season: 2025
+  source: Hırvatistan 1. HNL
+  match_score: 999
+  override: true
+- id: 399
+  name: NPFL
+  country: Nigeria
+  type: League
+  season: 2026
+  source: Nijerya Profesyonel Futbol Ligi
+  match_score: 999
+  override: true
+- id: 188
+  name: A-League
+  country: Australia
+  type: League
+  season: 2025
+  source: Avustralya A-Ligi
+  match_score: 999
+  override: true
+- id: 274
+  name: Liga 1
+  country: Indonesia
+  type: League
+  season: 2025
+  source: Endonezya 1. Lig
+  match_score: 999
+  override: true
+- id: 419
+  name: Premyer Liqa
+  country: Azerbaijan
+  type: League
+  season: 2025
+  source: Azerbaycan Premier Lig
+  match_score: 999
+  override: true
+- id: 121
+  name: DBU Pokalen
+  country: Denmark
+  type: Cup
+  season: 2025
+  source: Danimarka Kupası
+  match_score: 999
+  override: true
+- id: 396
+  name: Primera Division
+  country: Nicaragua
+  type: League
+  season: 2025
+  source: Nikaragua Primera Ligi
+  match_score: 999
+  override: true
+- id: 162
+  name: Primera División
+  country: Costa-Rica
+  type: League
+  season: 2025
+  source: Kosta Rika Primera Lig (Açılış)
+  match_score: 999
+  override: true
+- id: 370
+  name: Primera Division
+  country: El-Salvador
+  type: League
+  season: 2025
+  source: El Salvador 1. Lig (Açılış – Eleme)
+  match_score: 999
+  override: true
+- id: 283
+  name: Liga I
+  country: Romania
+  type: League
+  season: 2025
+  source: Romanya 1. Lig
+  match_score: 999
+  override: true
+- id: 208
+  name: Challenge League
+  country: Switzerland
+  type: League
+  season: 2025
+  source: İsviçre Challenge Ligi
+  match_score: 999
+  override: true
+- id: 302
+  name: League Cup
+  country: United-Arab-Emirates
+  type: Cup
+  season: 2025
+  source: Birleşik Arap Emirlikleri Pro Lig Kupası
+  match_score: 999
+  override: true
+- id: 112
+  name: Welsh Cup
+  country: Wales
+  type: Cup
+  season: 2025
+  source: Galler Federasyon Kupası
+  match_score: 999
+  override: true
+- id: 381
+  name: HKFA 1st Division
+  country: Hong-Kong
+  type: League
+  season: 2025
+  source: Hong Kong 1. Lig
+  match_score: 999
+  override: true
+- id: 828
+  name: Ligue 2
+  country: Tunisia
+  type: League
+  season: 2025
+  source: Tunus 2. Lig (Grup A)
+  match_score: 999
+  override: true
+- id: 145
+  name: Challenger Pro League
+  country: Belgium
+  type: League
+  season: 2025
+  source: Belçika 2. Lig (İlk Etap)
+  match_score: 999
+  override: true
+- id: 242
+  name: Liga Pro
+  country: Ecuador
+  type: League
+  season: 2025
+  source: Ekvador Serie A
+  match_score: 999
+  override: true
+- id: 308
+  name: Division 1
+  country: Saudi-Arabia
+  type: League
+  season: 2025
+  source: Suudi Arabistan 1. Lig
+  match_score: 999
+  override: true
+- id: 290
+  name: Persian Gulf Pro League
+  country: Iran
+  type: League
+  season: 2025
+  source: İran Pro Ligi
+  match_score: 999
+  override: true
+- id: 315
+  name: Premijer Liga
+  country: Bosnia
+  type: League
+  season: 2025
+  source: Bosna Hersek Premijer Ligi
+  match_score: 999
+  override: true
+- id: 344
+  name: Primera División
+  country: Bolivia
+  type: League
+  season: 2025
+  source: Bolivya Profesyonel Lig
+  match_score: 999
+  override: true
+- id: 312
+  name: 1a Divisió
+  country: Andorra
+  type: League
+  season: 2025
+  source: Andorra Primera Division
+  match_score: 999
+  override: true
+- id: 303
+  name: Division 1
+  country: United-Arab-Emirates
+  type: League
+  season: 2025
+  source: Birleşik Arap Emirlikleri 1. Lig
+  match_score: 999
+  override: true
+- id: 291
+  name: Azadegan League
+  country: Iran
+  type: League
+  season: 2025
+  source: İran Azadegan Ligi
+  match_score: 999
+  override: true
+- id: 865
+  name: Liga 3
+  country: Portugal
+  type: League
+  season: 2025
+  source: Portekiz 3. Lig
+  match_score: 999
+  override: true
+- id: 705
+  name: Campionato Primavera - 1
+  country: Italy
+  type: League
+  season: 2025
+  source: İtalya Bahar Şampiyonası
+  match_score: 999
+  override: true
+- id: 701
+  name: Liga Revelação U23
+  country: Portugal
+  type: League
+  season: 2025
+  source: Portekiz U23 Championship (1. Phase)
+  match_score: 999
+  override: true
+- id: 871
+  name: Premier League Cup
+  country: England
+  type: Cup
+  season: 2025
+  source: İngiltere U21 Premier League Cup (Knockout)
+  match_score: 999
+  override: true
+- id: 871
+  name: Premier League Cup
+  country: England
+  type: Cup
+  season: 2025
+  source: İngiltere U21 Premier League Cup (Group)
+  match_score: 999
+  override: true
+- id: 203
+  name: Süper Lig
+  country: Turkey
+  type: League
+  season: 2025
+  source: Türkiye Süper Lig
+  match_score: 100
+- id: 204
+  name: 1. Lig
+  country: Turkey
+  type: League
+  season: 2025
+  source: Türkiye 1. Lig
+  match_score: 100
+- id: 39
+  name: Premier League
+  country: England
+  type: League
+  season: 2025
+  source: İngiltere Premier Lig
+  match_score: 100
+- id: 135
+  name: Serie A
+  country: Italy
+  type: League
+  season: 2025
+  source: İtalya Serie A
+  match_score: 100
+- id: 140
+  name: La Liga
+  country: Spain
+  type: League
+  season: 2025
+  source: İspanya La Liga
+  match_score: 100
+- id: 78
+  name: Bundesliga
+  country: Germany
+  type: League
+  season: 2025
+  source: Almanya Bundesliga
+  match_score: 100
+- id: 61
+  name: Ligue 1
+  country: France
+  type: League
+  season: 2025
+  source: Fransa Ligue 1
+  match_score: 100
+- id: 94
+  name: Primeira Liga
+  country: Portugal
+  type: League
+  season: 2025
+  source: Portekiz Premier Lig
+  match_score: 100
+- id: 88
+  name: Eredivisie
+  country: Netherlands
+  type: League
+  season: 2025
+  source: Hollanda Eredivisie
+  match_score: 100
+- id: 197
+  name: Super League 1
+  country: Greece
+  type: League
+  season: 2025
+  source: Yunanistan Süper Lig
+  match_score: 80
+- id: 144
+  name: Jupiler Pro League
+  country: Belgium
+  type: League
+  season: 2025
+  source: Belçika Pro Lig
+  match_score: 80
+- id: 40
+  name: Championship
+  country: England
+  type: League
+  season: 2025
+  source: İngiltere Championship
+  match_score: 100
+- id: 79
+  name: 2. Bundesliga
+  country: Germany
+  type: League
+  season: 2025
+  source: Almanya 2. Bundesliga
+  match_score: 100
+- id: 62
+  name: Ligue 2
+  country: France
+  type: League
+  season: 2025
+  source: Fransa Ligue 2
+  match_score: 100
+- id: 218
+  name: Bundesliga
+  country: Austria
+  type: League
+  season: 2025
+  source: Avusturya Bundesliga
+  match_score: 100
+- id: 207
+  name: Super League
+  country: Switzerland
+  type: League
+  season: 2025
+  source: İsviçre Süper Lig
+  match_score: 100
+- id: 179
+  name: Premiership
+  country: Scotland
+  type: League
+  season: 2025
+  source: İskoçya Premiership
+  match_score: 100
+- id: 41
+  name: League One
+  country: England
+  type: League
+  season: 2025
+  source: İngiltere 1. Lig
+  match_score: 70
+- id: 42
+  name: League Two
+  country: England
+  type: League
+  season: 2025
+  source: İngiltere 2. Lig
+  match_score: 70
+- id: 106
+  name: Ekstraklasa
+  country: Poland
+  type: League
+  season: 2025
+  source: Polonya Ekstraklasa
+  match_score: 100
+- id: 136
+  name: Serie B
+  country: Italy
+  type: League
+  season: 2025
+  source: İtalya Serie B
+  match_score: 100
+- id: 516
+  name: Super Cup
+  country: Algeria
+  type: Cup
+  season: 2024
+  source: Cezayir Kupası
+  match_score: 80
+- id: 80
+  name: 3. Liga
+  country: Germany
+  type: League
+  season: 2025
+  source: Almanya 3. Lig
+  match_score: 80
+- id: 271
+  name: NB I
+  country: Hungary
+  type: League
+  season: 2025
+  source: Macaristan NB I
+  match_score: 100
+- id: 184
+  name: League Two
+  country: Scotland
+  type: League
+  season: 2025
+  source: İskoçya 2. Lig
+  match_score: 70
+- id: 183
+  name: League One
+  country: Scotland
+  type: League
+  season: 2025
+  source: İskoçya 1. Lig
+  match_score: 70
+- id: 219
+  name: 2. Liga
+  country: Austria
+  type: League
+  season: 2025
+  source: Avusturya 2. Lig
+  match_score: 80
+- id: 180
+  name: Championship
+  country: Scotland
+  type: League
+  season: 2025
+  source: İskoçya Championship
+  match_score: 100
+- id: 1059
+  name: Recopa Catarinense
+  country: Brazil
+  type: Cup
+  season: 2024
+  source: Brezilya Kupası
+  match_score: 80
+- id: 380
+  name: Premier League
+  country: Hong-Kong
+  type: League
+  season: 2025
+  source: Hong Kong Premier Lig
+  match_score: 100
+- id: 976
+  name: Serie C - Promotion - Play-offs
+  country: Italy
+  type: League
+  season: 2024
+  source: İtalya Serie C
+  match_score: 80
+- id: 408
+  name: Premiership
+  country: Northern-Ireland
+  type: League
+  season: 2025
+  source: Kuzey İrlanda Premiership
+  match_score: 100
+- id: 407
+  name: Championship
+  country: Northern-Ireland
+  type: League
+  season: 2025
+  source: Kuzey İrlanda Championship
+  match_score: 100
+- id: 95
+  name: Segunda Liga
+  country: Portugal
+  type: League
+  season: 2025
+  source: Portekiz 2. Lig
+  match_score: 70
+- id: 332
+  name: Super Liga
+  country: Slovakia
+  type: League
+  season: 2025
+  source: Slovakya Superliga
+  match_score: 100
+- id: 333
+  name: Premier League
+  country: Ukraine
+  type: League
+  season: 2025
+  source: Ukrayna Premier Lig
+  match_score: 100
+- id: 570
+  name: Premier League
+  country: Ghana
+  type: League
+  season: 2025
+  source: Gana Premier Lig
+  match_score: 100
+- id: 1168
+  name: FIFA Intercontinental Cup
+  country: World
+  type: Cup
+  season: 2025
+  source: FIFA Intercontinental Cup
+  match_score: 100
+- id: 393
+  name: Premier League
+  country: Malta
+  type: League
+  season: 2025
+  source: Malta Premier Lig (Top 6 – İlk Etap)
+  match_score: 70
+- id: 241
+  name: Copa Colombia
+  country: Colombia
+  type: Cup
+  season: 2025
+  source: Kolombiya Kupası
+  match_score: 80
+- id: 677
+  name: QSL Cup
+  country: Qatar
+  type: Cup
+  season: 2025
+  source: Katar QSL Cup
+  match_score: 100
+- id: 286
+  name: Super Liga
+  country: Serbia
+  type: League
+  season: 2025
+  source: Sırbistan Superliga
+  match_score: 100
+- id: 276
+  name: FKF Premier League
+  country: Kenya
+  type: League
+  season: 2025
+  source: Kenya Premier Lig
+  match_score: 80
+- id: 296
+  name: Thai League 1
+  country: Thailand
+  type: League
+  season: 2025
+  source: Tayland 1. Lig
+  match_score: 70
+- id: 111
+  name: FAW Championship
+  country: Wales
+  type: League
+  season: 2025
+  source: Galler Championship
+  match_score: 80
+- id: 585
+  name: Premier League
+  country: Uganda
+  type: League
+  season: 2025
+  source: Uganda Premier League
+  match_score: 100
+- id: 492
+  name: Tweede Divisie
+  country: Netherlands
+  type: League
+  season: 2025
+  source: Hollanda Tweede Divisie
+  match_score: 100
+- id: 967
+  name: Cup
+  country: Lebanon
+  type: Cup
+  season: 2024
+  source: Bulgaristan Kupası
+  match_score: 80
+- id: 390
+  name: Premier League
+  country: Lebanon
+  type: League
+  season: 2025
+  source: Lebanon Premier Lig
+  match_score: 100
+unresolved: []
+ts_utc:
+  current: 'true'

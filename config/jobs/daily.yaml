@@ -1,140 +1,357 @@
 jobs:
-  # Disabled by default to avoid assuming league/season/date targets.
-  # Enable and fill params according to your tracked leagues/seasons.
-  - job_id: "daily_standings"
-    type: "incremental_daily"
-    enabled: true
-    priority: "HIGH"
-    endpoint: "/standings"
-    params:
-      league: null
-      season: null
-    interval:
-      type: "cron"
-      cron: "0 1 * * *"  # Daily 01:00 UTC
-    target_layer: "raw+core"
-    dependencies:
-      - "bootstrap_leagues"
-      - "bootstrap_teams"
-    coverage_target:
-      endpoint: "/standings"
-      league_id: null
-      season: null
-      min_records: 1
-      max_lag_minutes: 1440
-
-  - job_id: "daily_fixtures_by_date"
-    type: "incremental_daily"
-    enabled: true
-    priority: "HIGH"
-    endpoint: "/fixtures"
-    params:
-      date: null
-    interval:
-      type: "cron"
-      cron: "0 * * * *"  # Hourly
-    target_layer: "raw+core+mart"
-  - job_id: "injuries_hourly"
-    type: "incremental_daily"
-    enabled: true
-    priority: "HIGH"
-    endpoint: "/injuries"
-    params: {}
-    interval:
-      type: "cron"
-      cron: "0 * * * *"  # Hourly (interpreted in SCHEDULER_TIMEZONE)
-    target_layer: "raw+core"
-    dependencies:
-      - "bootstrap_leagues"
-      - "bootstrap_teams"
-    coverage_target:
-      endpoint: "/injuries"
-      min_records: 1
-      max_lag_minutes: 120
-
-  - job_id: "fixture_details_recent_finalize"
-    type: "incremental_daily"
-    enabled: true
-    priority: "HIGH"
-    endpoint: "/fixtures/*"
-    params: {}
-    interval:
-      type: "cron"
-      cron: "*/15 * * * *"  # Every 15 minutes (for lineup window + last-24h finalization)
-    target_layer: "raw+core"
-    dependencies:
-      - "daily_fixtures_by_date"
-    coverage_target:
-      endpoint: "/fixtures/details"
-      min_records: 1
-      max_lag_minutes: 240
-
-  - job_id: "fixture_details_backfill_90d"
-    type: "incremental_daily"
-    enabled: true  # Enabled for DB fill; bounded by FIXTURE_DETAILS_BACKFILL_BATCH.
-    priority: "MEDIUM"
-    endpoint: "/fixtures/*"
-    params: {}
-    interval:
-      type: "cron"
-      cron: "*/10 * * * *"  # Every 10 minutes, bounded by FIXTURE_DETAILS_BACKFILL_BATCH
-    target_layer: "raw+core"
-    dependencies:
-      - "daily_fixtures_by_date"
-    coverage_target:
-      endpoint: "/fixtures/details_backfill_90d"
-      min_records: 1
-      max_lag_minutes: 1440
-
-  # Backfill fixtures across seasons (quota-safe, resumeable via core.backfill_progress)
-  - job_id: "fixtures_backfill_league_season"
-    type: "incremental_daily"
-    enabled: true
-    priority: "MEDIUM"
-    endpoint: "/fixtures"
-    params: {}
-    interval:
-      type: "cron"
-      cron: "* * * * *"  # every minute; bounded by BACKFILL_FIXTURES_MAX_TASKS_PER_RUN / BACKFILL_FIXTURES_MAX_PAGES_PER_TASK
-    target_layer: "raw+core"
-    coverage_target:
-      endpoint: "/fixtures_backfill"
-      min_records: 1
-      max_lag_minutes: 1440
-
-  # Backfill standings across seasons (quota-safe, resumeable via core.backfill_progress)
-  - job_id: "standings_backfill_league_season"
-    type: "incremental_daily"
-    enabled: true
-    priority: "LOW"
-    endpoint: "/standings"
-    params: {}
-    interval:
-      type: "cron"
-      cron: "*/10 * * * *"  # every 10 minutes; bounded by BACKFILL_STANDINGS_MAX_TASKS_PER_RUN
-    target_layer: "raw+core"
-    coverage_target:
-      endpoint: "/standings_backfill"
-      min_records: 1
-      max_lag_minutes: 1440
-
-
-# Phase 3: Daily sync script configuration
-# IMPORTANT: This does not enable scheduler jobs; it is used by scripts/daily_sync.py.
-season: 2024
+- job_id: daily_standings
+  type: incremental_daily
+  enabled: true
+  priority: HIGH
+  endpoint: /standings
+  params:
+    league: null
+    season: null
+  interval:
+    type: cron
+    cron: 45 6 * * *
+  target_layer: raw+core
+  dependencies:
+  - bootstrap_leagues
+  - bootstrap_teams
+  coverage_target:
+    endpoint: /standings
+    league_id: null
+    season: null
+    min_records: 1
+    max_lag_minutes: 1440
+- job_id: daily_fixtures_by_date
+  type: incremental_daily
+  enabled: true
+  priority: HIGH
+  endpoint: /fixtures
+  params:
+    date: null
+  interval:
+    type: cron
+    cron: 15 6 * * *
+  target_layer: raw+core+mart
+- job_id: injuries_hourly
+  type: incremental_daily
+  enabled: true
+  priority: HIGH
+  endpoint: /injuries
+  params: {}
+  interval:
+    type: cron
+    cron: 0 * * * *
+  target_layer: raw+core
+  dependencies:
+  - bootstrap_leagues
+  - bootstrap_teams
+  coverage_target:
+    endpoint: /injuries
+    min_records: 1
+    max_lag_minutes: 120
+- job_id: fixture_details_recent_finalize
+  type: incremental_daily
+  enabled: true
+  priority: HIGH
+  endpoint: /fixtures/*
+  params: {}
+  interval:
+    type: cron
+    cron: '*/15 * * * *'
+  target_layer: raw+core
+  dependencies:
+  - daily_fixtures_by_date
+  coverage_target:
+    endpoint: /fixtures/details
+    min_records: 1
+    max_lag_minutes: 240
+- job_id: fixture_details_backfill_90d
+  type: incremental_daily
+  enabled: true
+  priority: MEDIUM
+  endpoint: /fixtures/*
+  params: {}
+  interval:
+    type: cron
+    cron: '*/10 * * * *'
+  target_layer: raw+core
+  dependencies:
+  - daily_fixtures_by_date
+  coverage_target:
+    endpoint: /fixtures/details_backfill_90d
+    min_records: 1
+    max_lag_minutes: 1440
+- job_id: fixtures_backfill_league_season
+  type: incremental_daily
+  enabled: true
+  priority: MEDIUM
+  endpoint: /fixtures
+  params: {}
+  interval:
+    type: cron
+    cron: '* * * * *'
+  target_layer: raw+core
+  coverage_target:
+    endpoint: /fixtures_backfill
+    min_records: 1
+    max_lag_minutes: 1440
+- job_id: standings_backfill_league_season
+  type: incremental_daily
+  enabled: true
+  priority: LOW
+  endpoint: /standings
+  params: {}
+  interval:
+    type: cron
+    cron: '*/10 * * * *'
+  target_layer: raw+core
+  coverage_target:
+    endpoint: /standings_backfill
+    min_records: 1
+    max_lag_minutes: 1440
 tracked_leagues:
-  - id: 39
-    name: "Premier League"
-  - id: 140
-    name: "La Liga"
-  - id: 135
-    name: "Serie A"
-  - id: 61
-    name: "Ligue 1"
-  - id: 78
-    name: "Bundesliga"
-
-# Backfill configuration (fixtures + standings)
-backfill:
-  seasons: [2023, 2024, 2025]
-
+- id: 39
+  name: Premier League
+  season: 2025
+- id: 40
+  name: Championship
+  season: 2025
+- id: 41
+  name: League One
+  season: 2025
+- id: 42
+  name: League Two
+  season: 2025
+- id: 61
+  name: Ligue 1
+  season: 2025
+- id: 62
+  name: Ligue 2
+  season: 2025
+- id: 78
+  name: Bundesliga
+  season: 2025
+- id: 79
+  name: 2. Bundesliga
+  season: 2025
+- id: 80
+  name: 3. Liga
+  season: 2025
+- id: 88
+  name: Eredivisie
+  season: 2025
+- id: 94
+  name: Primeira Liga
+  season: 2025
+- id: 95
+  name: Segunda Liga
+  season: 2025
+- id: 106
+  name: Ekstraklasa
+  season: 2025
+- id: 111
+  name: FAW Championship
+  season: 2025
+- id: 112
+  name: Welsh Cup
+  season: 2025
+- id: 121
+  name: DBU Pokalen
+  season: 2025
+- id: 135
+  name: Serie A
+  season: 2025
+- id: 136
+  name: Serie B
+  season: 2025
+- id: 140
+  name: La Liga
+  season: 2025
+- id: 141
+  name: Segunda División
+  season: 2025
+- id: 144
+  name: Jupiler Pro League
+  season: 2025
+- id: 145
+  name: Challenger Pro League
+  season: 2025
+- id: 162
+  name: Primera División
+  season: 2025
+- id: 179
+  name: Premiership
+  season: 2025
+- id: 180
+  name: Championship
+  season: 2025
+- id: 183
+  name: League One
+  season: 2025
+- id: 184
+  name: League Two
+  season: 2025
+- id: 185
+  name: League Cup
+  season: 2025
+- id: 188
+  name: A-League
+  season: 2025
+- id: 197
+  name: Super League 1
+  season: 2025
+- id: 203
+  name: Süper Lig
+  season: 2025
+- id: 204
+  name: 1. Lig
+  season: 2025
+- id: 207
+  name: Super League
+  season: 2025
+- id: 208
+  name: Challenge League
+  season: 2025
+- id: 210
+  name: HNL
+  season: 2025
+- id: 218
+  name: Bundesliga
+  season: 2025
+- id: 219
+  name: 2. Liga
+  season: 2025
+- id: 241
+  name: Copa Colombia
+  season: 2025
+- id: 242
+  name: Liga Pro
+  season: 2025
+- id: 262
+  name: Liga MX
+  season: 2025
+- id: 271
+  name: NB I
+  season: 2025
+- id: 274
+  name: Liga 1
+  season: 2025
+- id: 276
+  name: FKF Premier League
+  season: 2025
+- id: 281
+  name: Primera División
+  season: 2025
+- id: 283
+  name: Liga I
+  season: 2025
+- id: 286
+  name: Super Liga
+  season: 2025
+- id: 290
+  name: Persian Gulf Pro League
+  season: 2025
+- id: 291
+  name: Azadegan League
+  season: 2025
+- id: 296
+  name: Thai League 1
+  season: 2025
+- id: 302
+  name: League Cup
+  season: 2025
+- id: 303
+  name: Division 1
+  season: 2025
+- id: 308
+  name: Division 1
+  season: 2025
+- id: 312
+  name: 1a Divisió
+  season: 2025
+- id: 315
+  name: Premijer Liga
+  season: 2025
+- id: 332
+  name: Super Liga
+  season: 2025
+- id: 333
+  name: Premier League
+  season: 2025
+- id: 344
+  name: Primera División
+  season: 2025
+- id: 345
+  name: Czech Liga
+  season: 2025
+- id: 370
+  name: Primera Division
+  season: 2025
+- id: 380
+  name: Premier League
+  season: 2025
+- id: 381
+  name: HKFA 1st Division
+  season: 2025
+- id: 390
+  name: Premier League
+  season: 2025
+- id: 393
+  name: Premier League
+  season: 2025
+- id: 396
+  name: Primera Division
+  season: 2025
+- id: 399
+  name: NPFL
+  season: 2026
+- id: 407
+  name: Championship
+  season: 2025
+- id: 408
+  name: Premiership
+  season: 2025
+- id: 419
+  name: Premyer Liqa
+  season: 2025
+- id: 492
+  name: Tweede Divisie
+  season: 2025
+- id: 516
+  name: Super Cup
+  season: 2024
+- id: 570
+  name: Premier League
+  season: 2025
+- id: 585
+  name: Premier League
+  season: 2025
+- id: 677
+  name: QSL Cup
+  season: 2025
+- id: 701
+  name: Liga Revelação U23
+  season: 2025
+- id: 705
+  name: Campionato Primavera - 1
+  season: 2025
+- id: 828
+  name: Ligue 2
+  season: 2025
+- id: 865
+  name: Liga 3
+  season: 2025
+- id: 871
+  name: Premier League Cup
+  season: 2025
+- id: 967
+  name: Cup
+  season: 2024
+- id: 976
+  name: Serie C - Promotion - Play-offs
+  season: 2024
+- id: 1059
+  name: Recopa Catarinense
+  season: 2024
+- id: 1168
+  name: FIFA Intercontinental Cup
+  season: 2025
