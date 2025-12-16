@@ -14,7 +14,7 @@ High-signal docs:
 - **Data layers (PostgreSQL)**: `db/schemas/` (RAW JSONB archive → CORE normalized UPSERT → MART coverage)
 - **Backfill**: `src/jobs/backfill.py` (resumeable `core.backfill_progress`)
 - **MCP**: `src/mcp/` (read-only tools: coverage, db stats, fixtures/standings/injuries/fixture_details queries)
-- **Docker / Coolify**: root `docker-compose.yml` (+ optional `docker-compose.live.yml`)
+- **Docker / Coolify**: root `docker-compose.yml` (collector + live_loop + mcp + read_api)
 - **Healthchecks**: `scripts/healthcheck_*.py`
 - **Tests**: `tests/unit/`, `tests/integration/`, `tests/mcp/`
 

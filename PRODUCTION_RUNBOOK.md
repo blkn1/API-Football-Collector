@@ -143,6 +143,18 @@ LIMIT 50;
   - Sadece temel daily job’lar (fixtures/standings/injuries) açık kalsın.
   - `get_raw_error_summary()` ile 4xx/429 trendini kontrol et.
 
+### 5.2 Per-minute rateLimit (429 / errors.rateLimit)
+- Belirti: collector loglarında `api_errors:/teams:{rateLimit: ...}` veya `api_rate_limited`.
+- Kalıcı önlemler (mevcut sistem):
+  - Token bucket startup burst engeli (bucket default 0 token ile başlar).
+  - `/teams` dependency cache: `core.team_bootstrap_progress` (completed=true ise aynı league+season için `/teams` tekrar çağrılmaz).
+- Aksiyon (acil):
+  - Backfill hızını düşür:
+    - `BACKFILL_FIXTURES_MAX_TASKS_PER_RUN`
+    - `BACKFILL_FIXTURES_MAX_PAGES_PER_TASK`
+    - `BACKFILL_FIXTURES_WINDOW_DAYS`
+  - MCP: `get_raw_error_summary(since_minutes=60)` ile 429 trendini doğrula.
+
 ### 5.2 RAW var CORE yok (transform/upsert sorunu)
 - Belirti: `raw.api_responses` artıyor ama `core.fixtures`/diğer tablolar artmıyor.
 - Aksiyon:
@@ -155,4 +167,51 @@ LIMIT 50;
 - Aksiyon:
   - MCP `get_coverage_status(league_id)` ile endpoint bazında bak.
   - İlgili endpoint için `get_last_sync_time()` ve RAW error summary.
+
+---
+
+## 6) 83 Lig Rollout (Wave planı) + 30–60 dk gözlem
+
+Bu bölüm, wave1/wave2 rollout’u **config-driven** yapar ve MCP ile gözlemi tanımlar.
+
+### 6.1 Wave uygulama
+
+Dalga seçmek için helper:
+- `scripts/apply_league_wave.py`
+
+Örnek:
+- Wave1 (ilk 10 lig):
+
+```bash
+python3 scripts/apply_league_wave.py --size 10
+```
+
+- Wave2 (+25 lig):
+
+```bash
+python3 scripts/apply_league_wave.py --size 25 --offset 10
+```
+
+Uygulama sonrası:
+- Coolify redeploy (collector)
+- MCP üzerinden gözlem
+
+### 6.2 MCP ile gözlem (30–60 dk)
+
+Minimum:
+- `get_backfill_progress()` → satır sayısı ve completed oranı artmalı
+- `get_raw_error_summary(since_minutes=60)` → rateLimit/5xx yükselmiyorsa OK
+- `get_rate_limit_status()` → minute_remaining trendi stabil
+- `get_database_stats()` → core.fixtures/core.teams artışı
+
+### 6.3 DB gözlemi (ops)
+
+```sql
+SELECT completed, COUNT(*) FROM core.team_bootstrap_progress GROUP BY completed;
+
+SELECT job_id, COUNT(*) AS total, SUM(CASE WHEN completed THEN 1 ELSE 0 END) AS completed
+FROM core.backfill_progress
+GROUP BY job_id
+ORDER BY job_id;
+```
 

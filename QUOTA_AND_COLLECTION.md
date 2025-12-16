@@ -7,7 +7,7 @@ Bu doküman, **75.000/gün** quota ile sistemin **hangi job’ın ne sıklıkta*
 - **Daily limit (hard)**: 75.000 / gün
 - **Daily usage target (policy)**: %90 → **67.500 / gün**
 - **Minute limit (hard)**: 300 / dakika
-- **Minute soft limit (working cap)**: 280 / dakika (sistem içi token bucket)
+- **Minute soft limit (working cap)**: `config/rate_limiter.yaml -> minute_soft_limit` (token bucket)
 - **Emergency stop**: `daily_remaining < 7.500` olduğunda tüm job’lar stop (quota buffer)
 
 Kaynak config:
@@ -32,10 +32,10 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
 - `daily_fixtures_by_date` → `GET /fixtures?date=YYYY-MM-DD` (saatlik)
   - **RAW**: `/fixtures`
   - **CORE**: `core.fixtures` (+ bazı nested bloklar gelirse `core.fixture_details` JSONB)
-- `daily_standings` → `GET /standings?league&season` (günlük)
+- `daily_standings` → `GET /standings?league&season` (**per-league season**, günlük)
   - **RAW**: `/standings`
   - **CORE**: `core.standings` (league+season bazında replace)
-- `injuries_hourly` → `GET /injuries?league&season` (saatlik)
+- `injuries_hourly` → `GET /injuries?league&season` (**per-league season**, saatlik)
   - **RAW**: `/injuries`
   - **CORE**: `core.injuries`
 - `fixture_details_recent_finalize` (15 dk)
@@ -51,14 +51,17 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
 Backfill state tablosu:
 - `core.backfill_progress` (resume edilebilir backfill)
 
-Backfill sezonları:
-- `config/jobs/daily.yaml` → `backfill.seasons: [2023, 2024, 2025]`
+Backfill sezonları (SeçenekB, lig bazlı doğru sezon):
+- `config/jobs/daily.yaml tracked_leagues[].season` = **current**
+- Varsayılan backfill pairs = **(league, current)** + **(league, current-1)**
+- `backfill.seasons` artık kullanılmıyor (global cross-product çok maliyetliydi).
 
 #### Fixtures backfill (en ağır)
 - Job: `fixtures_backfill_league_season`
 - Endpoint (windowed): `GET /fixtures?league=<id>&season=<season>&from=YYYY-MM-DD&to=YYYY-MM-DD`
-- Fallback (rare): Eğer `core.leagues.seasons` içinde sezon başlangıç/bitiş tarihleri yoksa tek sefer:
+- Fallback (rare): Eğer `core.leagues.seasons` içinde sezon başlangıç/bitiş tarihleri yoksa tek sefer “unbounded” olabilir:
   - `GET /fixtures?league=<id>&season=<season>`
+  - Bu risk `ensure_league_exists` refresh + `/leagues?id=...` ile minimize edildi.
 - Sıklık: **her 1 dakika** (cron `* * * * *`)
 - Resume: `core.backfill_progress.next_page` (**window index** olarak kullanılır)
 
@@ -81,7 +84,7 @@ Bu ENV’ler backfill hızını ayarlar (quota-safe):
   Aynı çalıştırmada kaç (league,season) işlenecek.
 - `BACKFILL_FIXTURES_MAX_PAGES_PER_TASK` (default: **6**)  
   Her (league,season) için kaç **window** çekilecek. (ENV adı backward-compat için değişmedi.)
-- `BACKFILL_FIXTURES_WINDOW_DAYS` (default: **30**)  
+- `BACKFILL_FIXTURES_WINDOW_DAYS` (default: **30**, prod’da **14** önerilir)  
   Her window kaç gün kapsasın. Küçük değer = daha çok request, daha granular backfill.
 
 Yaklaşık istek/dk:
@@ -104,6 +107,12 @@ Bu job’lar per-fixture 4 endpoint çağırır:
 
 Not: rate limiter shared olduğu için toplam request/min hiçbir zaman `minute_soft_limit` üstünde koşamaz; bu değer aşılırsa token bucket bekletir.
 
+### 4.4 Dakikalık rateLimit (API) için kalıcı önlem
+
+- **Token bucket**: `src/collector/rate_limiter.py` (startup burst engellendi: bucket default 0 token ile başlar)
+- **/teams cache**: `core.team_bootstrap_progress`  
+  Aynı `(league_id, season)` için `/teams` bir kere başarılı çalışınca tekrar çağrılmaz.
+
 ## 5) Sizin Coolify ENV setiniz (özet)
 
 Zorunlu / kritik:
@@ -124,6 +133,7 @@ Minimum gözlem metrikleri:
 - RAW request hızı: `raw.api_responses` son 1 dakikadaki artış
 - Quota: MCP `get_rate_limit_status()` (daily/minute remaining)
 - Backfill ilerleme: `core.backfill_progress` satırları (completed oranı, next_page artışı)
+- Teams dependency cache: `core.team_bootstrap_progress` (completed oranı, last_error)
 - CORE doluluk: MCP `get_database_stats()` (fixtures, standings, injuries, fixture_* tabloları)
 
 
