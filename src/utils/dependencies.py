@@ -194,15 +194,59 @@ async def ensure_teams_exist_for_league(
     if not team_ids:
         return
 
-    existing = int(query_scalar("SELECT COUNT(*) FROM core.teams WHERE id = ANY(%s)", (list(team_ids),)) or 0)
-    if existing == len(team_ids):
+    # DB-backed cache: once /teams is fetched successfully for (league_id, season),
+    # skip future /teams calls in this season to avoid per-minute rateLimit errors.
+    cached = query_scalar(
+        "SELECT completed FROM core.team_bootstrap_progress WHERE league_id=%s AND season=%s",
+        (int(league_id), int(season)),
+    )
+    if cached is True:
         return
 
+    # Create progress row if missing (idempotent).
+    try:
+        upsert_core(
+            full_table_name="core.team_bootstrap_progress",
+            rows=[
+                {
+                    "league_id": int(league_id),
+                    "season": int(season),
+                    "completed": False,
+                    "last_error": None,
+                }
+            ],
+            conflict_cols=["league_id", "season"],
+            update_cols=["completed", "last_error"],
+        )
+    except Exception:
+        # Best-effort; proceed with /teams call.
+        pass
+
     params = {"league": int(league_id), "season": int(season)}
-    res = await _fetch_and_store(client=client, limiter=limiter, endpoint="/teams", params=params)
-    env = res.data or {}
-    if env.get("errors"):
-        raise RuntimeError(f"api_errors:/teams:{env.get('errors')}")
+    try:
+        res = await _fetch_and_store(client=client, limiter=limiter, endpoint="/teams", params=params)
+        env = res.data or {}
+        if env.get("errors"):
+            raise RuntimeError(f"api_errors:/teams:{env.get('errors')}")
+    except Exception as e:
+        # Persist error for observability; caller will decide how to proceed.
+        try:
+            upsert_core(
+                full_table_name="core.team_bootstrap_progress",
+                rows=[
+                    {
+                        "league_id": int(league_id),
+                        "season": int(season),
+                        "completed": False,
+                        "last_error": str(e),
+                    }
+                ],
+                conflict_cols=["league_id", "season"],
+                update_cols=["completed", "last_error"],
+            )
+        except Exception:
+            pass
+        raise
 
     venue_rows = transform_venues_from_teams(env)
     if venue_rows:
@@ -221,6 +265,24 @@ async def ensure_teams_exist_for_league(
             conflict_cols=["id"],
             update_cols=["name", "code", "country", "founded", "national", "logo", "venue_id"],
         )
+
+    # Mark completed (cache hit for future windows).
+    try:
+        upsert_core(
+            full_table_name="core.team_bootstrap_progress",
+            rows=[
+                {
+                    "league_id": int(league_id),
+                    "season": int(season),
+                    "completed": True,
+                    "last_error": None,
+                }
+            ],
+            conflict_cols=["league_id", "season"],
+            update_cols=["completed", "last_error"],
+        )
+    except Exception:
+        pass
 
     logger.info(
         "teams_upserted_dependency",

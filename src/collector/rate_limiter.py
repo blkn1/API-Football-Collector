@@ -33,6 +33,7 @@ class RateLimiter:
         max_tokens: int = 300,
         refill_rate: float = 5.0,
         emergency_stop_threshold: int | None = None,
+        initial_tokens: float | None = None,
     ) -> None:
         if max_tokens <= 0:
             raise ValueError("max_tokens must be > 0")
@@ -40,7 +41,12 @@ class RateLimiter:
             raise ValueError("refill_rate must be > 0")
 
         self._max_tokens = float(max_tokens)
-        self._tokens = float(max_tokens)
+        # IMPORTANT: avoid burst on startup; default to empty bucket unless overridden.
+        if initial_tokens is None:
+            self._tokens = 0.0
+        else:
+            self._tokens = float(initial_tokens)
+            self._tokens = max(0.0, min(self._max_tokens, self._tokens))
         self._refill_rate = float(refill_rate)
         self._last_refill = time.monotonic()
         self._lock = Lock()
