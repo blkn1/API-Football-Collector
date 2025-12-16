@@ -14,6 +14,9 @@ def _split_sql_statements(sql_text: str) -> list[str]:
     - single quotes: '...'
     - double quotes: "..."
     - dollar-quoted strings: $$...$$ or $tag$...$tag$
+    - SQL comments:
+      - line comments: -- ... \\n
+      - block comments: /* ... */
 
     This allows us to continue applying later statements even if one statement
     fails with DuplicateObject (e.g. triggers already exist).
@@ -37,6 +40,25 @@ def _split_sql_statements(sql_text: str) -> list[str]:
     while i < n:
         ch = s[i]
         nxt = s[i + 1] if i + 1 < n else ""
+
+        # Skip comments when not inside a quoted string/dollar-quote.
+        if dollar_tag is None and not in_single and not in_double:
+            # Line comment: -- ... (until newline)
+            if ch == "-" and nxt == "-":
+                # consume until newline (but keep newline to avoid merging lines)
+                i += 2
+                while i < n and s[i] != "\n":
+                    i += 1
+                # newline will be handled by normal flow
+                continue
+
+            # Block comment: /* ... */
+            if ch == "/" and nxt == "*":
+                i += 2
+                while i + 1 < n and not (s[i] == "*" and s[i + 1] == "/"):
+                    i += 1
+                i = i + 2 if i + 1 < n else n
+                continue
 
         # Dollar-quote start/end when not inside normal quotes
         if not in_single and not in_double and ch == "$":
