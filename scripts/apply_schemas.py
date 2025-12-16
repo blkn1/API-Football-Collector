@@ -8,6 +8,107 @@ from psycopg2 import errors as pg_errors
 from urllib.parse import urlparse, urlunparse
 
 
+def _split_sql_statements(sql_text: str) -> list[str]:
+    """
+    Split SQL into individual statements by semicolons, while respecting:
+    - single quotes: '...'
+    - double quotes: "..."
+    - dollar-quoted strings: $$...$$ or $tag$...$tag$
+
+    This allows us to continue applying later statements even if one statement
+    fails with DuplicateObject (e.g. triggers already exist).
+    """
+    s = sql_text
+    out: list[str] = []
+    buf: list[str] = []
+
+    in_single = False
+    in_double = False
+    dollar_tag: str | None = None
+    i = 0
+    n = len(s)
+
+    def _flush() -> None:
+        stmt = "".join(buf).strip()
+        buf.clear()
+        if stmt:
+            out.append(stmt)
+
+    while i < n:
+        ch = s[i]
+        nxt = s[i + 1] if i + 1 < n else ""
+
+        # Dollar-quote start/end when not inside normal quotes
+        if not in_single and not in_double and ch == "$":
+            # Parse a dollar tag: $...$
+            j = i + 1
+            while j < n and s[j] != "$" and (s[j].isalnum() or s[j] == "_"):
+                j += 1
+            if j < n and s[j] == "$":
+                tag = s[i : j + 1]  # includes both '$'
+                if dollar_tag is None:
+                    dollar_tag = tag
+                    buf.append(tag)
+                    i = j + 1
+                    continue
+                if dollar_tag == tag:
+                    dollar_tag = None
+                    buf.append(tag)
+                    i = j + 1
+                    continue
+
+        if dollar_tag is not None:
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Single quotes (handle escaped '' inside strings)
+        if not in_double and ch == "'":
+            if in_single and nxt == "'":
+                buf.append("''")
+                i += 2
+                continue
+            in_single = not in_single
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Double quotes (identifiers)
+        if not in_single and ch == '"':
+            in_double = not in_double
+            buf.append(ch)
+            i += 1
+            continue
+
+        # Statement terminator
+        if not in_single and not in_double and ch == ";":
+            _flush()
+            i += 1
+            continue
+
+        buf.append(ch)
+        i += 1
+
+    _flush()
+    return out
+
+
+def _apply_sql_file(cur, path: Path) -> None:
+    """
+    Apply a SQL file statement-by-statement, ignoring DuplicateObject errors.
+    This prevents partial schema application when a later statement (e.g. trigger)
+    already exists.
+    """
+    sql_text = path.read_text(encoding="utf-8")
+    stmts = _split_sql_statements(sql_text)
+    for stmt in stmts:
+        try:
+            cur.execute(stmt)
+        except pg_errors.DuplicateObject:
+            # Triggers/indexes already exist -> safe to continue.
+            continue
+
+
 def _dsn() -> str:
     dsn = os.getenv("DATABASE_URL")
     if dsn:
@@ -66,13 +167,20 @@ def _schemas_already_applied(cur) -> bool:
     Our schema files include CREATE TRIGGER statements without IF NOT EXISTS.
     Re-applying them will raise DuplicateObject. In production, schemas should be applied once per DB.
     """
-    cur.execute("SELECT to_regclass('raw.api_responses');")
-    raw_ok = cur.fetchone()[0] is not None
-    cur.execute("SELECT to_regclass('core.countries');")
-    core_ok = cur.fetchone()[0] is not None
-    cur.execute("SELECT to_regclass('mart.coverage_status');")
-    mart_ok = cur.fetchone()[0] is not None
-    return bool(raw_ok and core_ok and mart_ok)
+    # Guard against partially-applied schemas. We must ensure critical tables exist.
+    checks = [
+        "raw.api_responses",
+        "core.countries",
+        "core.fixtures",
+        "core.standings",
+        "core.backfill_progress",
+        "mart.coverage_status",
+    ]
+    for name in checks:
+        cur.execute("SELECT to_regclass(%s);", (name,))
+        if cur.fetchone()[0] is None:
+            return False
+    return True
 
 
 def main() -> int:
@@ -109,18 +217,16 @@ def main() -> int:
 
             if not base_applied:
                 for p in base_files:
-                    sql_text = p.read_text(encoding="utf-8")
                     try:
-                        cur.execute(sql_text)
+                        _apply_sql_file(cur, p)
                         print(f"[OK] applied {p.name}")
                     except pg_errors.DuplicateObject:
                         # Triggers already exist -> safe to continue.
                         print(f"[OK] base already present (duplicate objects while applying {p.name}); continuing")
 
             for p in extras:
-                sql_text = p.read_text(encoding="utf-8")
                 try:
-                    cur.execute(sql_text)
+                    _apply_sql_file(cur, p)
                     print(f"[OK] applied {p.name}")
                 except pg_errors.DuplicateObject:
                     print(f"[OK] already present (duplicate objects while applying {p.name}); continuing")
