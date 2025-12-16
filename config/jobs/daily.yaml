@@ -214,3 +214,144 @@ tracked_leagues:
 - id: 210
   name: HNL
   season: 2025
+- id: 218
+  name: Bundesliga
+  season: 2025
+- id: 219
+  name: 2. Liga
+  season: 2025
+- id: 241
+  name: Copa Colombia
+  season: 2025
+- id: 242
+  name: Liga Pro
+  season: 2025
+- id: 262
+  name: Liga MX
+  season: 2025
+- id: 271
+  name: NB I
+  season: 2025
+- id: 274
+  name: Liga 1
+  season: 2025
+- id: 276
+  name: FKF Premier League
+  season: 2025
+- id: 281
+  name: Primera División
+  season: 2025
+- id: 283
+  name: Liga I
+  season: 2025
+- id: 286
+  name: Super Liga
+  season: 2025
+- id: 290
+  name: Persian Gulf Pro League
+  season: 2025
+- id: 291
+  name: Azadegan League
+  season: 2025
+- id: 296
+  name: Thai League 1
+  season: 2025
+- id: 302
+  name: League Cup
+  season: 2025
+- id: 303
+  name: Division 1
+  season: 2025
+- id: 308
+  name: Division 1
+  season: 2025
+- id: 312
+  name: 1a Divisió
+  season: 2025
+- id: 315
+  name: Premijer Liga
+  season: 2025
+- id: 332
+  name: Super Liga
+  season: 2025
+- id: 333
+  name: Premier League
+  season: 2025
+- id: 344
+  name: Primera División
+  season: 2025
+- id: 345
+  name: Czech Liga
+  season: 2025
+- id: 370
+  name: Primera Division
+  season: 2025
+- id: 380
+  name: Premier League
+  season: 2025
+- id: 381
+  name: HKFA 1st Division
+  season: 2025
+- id: 390
+  name: Premier League
+  season: 2025
+- id: 393
+  name: Premier League
+  season: 2025
+- id: 396
+  name: Primera Division
+  season: 2025
+- id: 399
+  name: NPFL
+  season: 2026
+- id: 407
+  name: Championship
+  season: 2025
+- id: 408
+  name: Premiership
+  season: 2025
+- id: 419
+  name: Premyer Liqa
+  season: 2025
+- id: 492
+  name: Tweede Divisie
+  season: 2025
+- id: 516
+  name: Super Cup
+  season: 2024
+- id: 570
+  name: Premier League
+  season: 2025
+- id: 585
+  name: Premier League
+  season: 2025
+- id: 677
+  name: QSL Cup
+  season: 2025
+- id: 701
+  name: Liga Revelação U23
+  season: 2025
+- id: 705
+  name: Campionato Primavera - 1
+  season: 2025
+- id: 828
+  name: Ligue 2
+  season: 2025
+- id: 865
+  name: Liga 3
+  season: 2025
+- id: 871
+  name: Premier League Cup
+  season: 2025
+- id: 967
+  name: Cup
+  season: 2024
+- id: 976
+  name: Serie C - Promotion - Play-offs
+  season: 2024
+- id: 1059
+  name: Recopa Catarinense
+  season: 2024
+- id: 1168
+  name: FIFA Intercontinental Cup
+  season: 2025
