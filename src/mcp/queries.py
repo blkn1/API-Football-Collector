@@ -304,7 +304,16 @@ RAW_ERROR_SUMMARY_QUERY = """
       SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS ok_2xx,
       SUM(CASE WHEN status_code BETWEEN 400 AND 499 THEN 1 ELSE 0 END)::int AS err_4xx,
       SUM(CASE WHEN status_code BETWEEN 500 AND 599 THEN 1 ELSE 0 END)::int AS err_5xx,
-      SUM(CASE WHEN COALESCE(jsonb_array_length(errors), 0) > 0 THEN 1 ELSE 0 END)::int AS envelope_errors,
+      -- API-Football envelope "errors" may be [] OR {} depending on the failure shape.
+      -- Guard jsonb_array_length to avoid "array length of a non-array".
+      SUM(
+        CASE
+          WHEN errors IS NULL THEN 0
+          WHEN jsonb_typeof(errors) = 'array' THEN (CASE WHEN jsonb_array_length(errors) > 0 THEN 1 ELSE 0 END)
+          WHEN jsonb_typeof(errors) = 'object' THEN (CASE WHEN errors <> '{}'::jsonb THEN 1 ELSE 0 END)
+          ELSE 0
+        END
+      )::int AS envelope_errors,
       MAX(fetched_at) AS last_fetched_at
     FROM raw.api_responses
     WHERE fetched_at >= NOW() - make_interval(mins => %s)
@@ -317,7 +326,15 @@ RAW_ERRORS_BY_ENDPOINT_QUERY = """
       COUNT(*)::int AS total_requests,
       SUM(CASE WHEN status_code BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS ok_2xx,
       SUM(CASE WHEN status_code NOT BETWEEN 200 AND 299 THEN 1 ELSE 0 END)::int AS non_2xx,
-      SUM(CASE WHEN COALESCE(jsonb_array_length(errors), 0) > 0 THEN 1 ELSE 0 END)::int AS envelope_errors,
+      -- Same envelope error guard as summary query.
+      SUM(
+        CASE
+          WHEN errors IS NULL THEN 0
+          WHEN jsonb_typeof(errors) = 'array' THEN (CASE WHEN jsonb_array_length(errors) > 0 THEN 1 ELSE 0 END)
+          WHEN jsonb_typeof(errors) = 'object' THEN (CASE WHEN errors <> '{}'::jsonb THEN 1 ELSE 0 END)
+          ELSE 0
+        END
+      )::int AS envelope_errors,
       MAX(fetched_at) AS last_fetched_at
     FROM raw.api_responses
     WHERE fetched_at >= NOW() - make_interval(mins => %s)
