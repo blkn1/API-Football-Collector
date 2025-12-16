@@ -48,6 +48,10 @@ Bu doküman, şu ana kadar yaptığımız değişikliklerin **son halini** ve wa
 
 Hızlı doğrulama: `MCP_USAGE_GUIDE.md` bölüm 5.
 
+Claude Desktop notu:
+- Prod MCP `streamable-http` olduğu için Claude Desktop’a bağlamak için **stdio→streamable-http adapter** gerekir.
+- Config: `MCP_USAGE_GUIDE.md` → bölüm 4.
+
 ## 5) Önemli tablolar
 
 - RAW: `raw.api_responses`

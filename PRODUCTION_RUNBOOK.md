@@ -51,6 +51,10 @@ Prod’da MCP `streamable-http` çalışır ve **stateful session** gerektirir:
 - `mcp-session-id` header’ı
 - Önce `initialize`, sonra `tools/list`
 
+Claude Desktop notu:
+- Claude Desktop HTTP transport’ları native konuşmadığı için prod MCP’ye bağlanırken **stdio→streamable-http adapter** kullanın.
+- Ayrıntılı config: `MCP_USAGE_GUIDE.md` → “Claude Desktop → Prod MCP (remote) (streamable-http)”.
+
 Hızlı curl doğrulaması (prod):
 
 ```bash

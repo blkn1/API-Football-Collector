@@ -69,6 +69,7 @@ MCP (Coolify / HTTP-SSE):
 
 Notlar:
 - Streamable HTTP MCP **stateful** çalışır (session + initialize). Ayrıntılar: `MCP_USAGE_GUIDE.md`.
+- Claude Desktop prod MCP’ye bağlanırken stdio→streamable-http adapter kullanır. Ayrıntılar: `MCP_USAGE_GUIDE.md` (bölüm 4).
 
 Enable live loop (optional):
 

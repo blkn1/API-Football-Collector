@@ -59,7 +59,7 @@ Aşağıdaki config ile MCP sunucusunu Claude Desktop başlatır.
       "command": "bash",
       "args": [
         "-lc",
-        "cd /home/ybc/Desktop/api-football && MCP_TRANSPORT=stdio DATABASE_URL='postgresql://postgres:postgres@localhost:5432/api_football' COLLECTOR_LOG_FILE='/home/ybc/Desktop/api-football/logs/collector.jsonl' python3 -m src.mcp.server"
+        "cd /home/ybc/Desktop/api-football && MCP_TRANSPORT=stdio DATABASE_URL='<PASTE_DATABASE_URL>' COLLECTOR_LOG_FILE='/home/ybc/Desktop/api-football/logs/collector.jsonl' python3 -m src.mcp.server"
       ]
     }
   }
@@ -70,7 +70,7 @@ Aşağıdaki config ile MCP sunucusunu Claude Desktop başlatır.
 
 ## 4) Claude Desktop → Prod MCP (remote) (streamable-http)
 
-Claude Desktop doğrudan HTTP transport’ları konuşmadığı için `mcp-remote` proxy kullanılır.
+Claude Desktop doğrudan HTTP transport’ları konuşmadığı için **stdio→streamable-http adapter** kullanılır.
 
 Örnek:
 
@@ -81,11 +81,11 @@ Claude Desktop doğrudan HTTP transport’ları konuşmadığı için `mcp-remot
       "command": "npx",
       "args": [
         "-y",
-        "mcp-remote",
-        "https://mcp.zinalyze.pro/mcp",
-        "--transport",
-        "streamable-http"
+        "@pyroprompts/mcp-stdio-to-streamable-http-adapter"
       ],
+      "env": {
+        "URI": "https://mcp.zinalyze.pro/mcp"
+      },
       "timeout": 30000,
       "initTimeout": 20000
     }
@@ -93,7 +93,9 @@ Claude Desktop doğrudan HTTP transport’ları konuşmadığı için `mcp-remot
 }
 ```
 
-> Eğer “tools bulunamadı / 406 / session” sorunları yaşarsan aşağıdaki “Prod doğrulama” bölümüne bak.
+Notlar:
+- Bu adapter, streamable-http’in **session + initialize** akışını otomatik yönetir.
+- Eğer Claude’da `Tool '...:get_backfill_progress' not found` görürsen, bu genelde **yanlış proxy/yanlış endpoint** demektir. Bu bölümdeki adapter config’e geçince düzelir.
 
 ### 3.3 ENV açıklamaları
 - **`MCP_TRANSPORT=stdio`**: Claude Desktop için.
