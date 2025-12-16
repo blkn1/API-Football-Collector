@@ -1,0 +1,37 @@
+# NocoDB Table Registry (API-Football)
+# Purpose: Stable mapping from logical table names to NocoDB table IDs.
+# Base: Getting Started (pi4ngq1sagmrx35)
+# Sources: core/raw/mart are attached in NocoDB.
+
+base_id: pi4ngq1sagmrx35
+
+# Canonical table name -> NocoDB tableId
+core:
+  countries: mmqj919g1c30jqu
+  leagues: mnf0q8wz71i6qtn
+  teams: mgv3is812g635mv
+  venues: mt4947fvoekqehl
+  fixtures: m3jyrom3vvmqpjk
+  standings: m2y40977qdpgwo3
+
+  fixture_details: mmwovimwjxzq29x
+  fixture_events: mt026omghq0zgay
+  fixture_lineups: mtlk9jimbswt2uv
+  fixture_players: mdq8ewnnd02i6s5
+  fixture_statistics: m8yhw6ird3g3alm
+
+  backfill_progress: mjpeykjmoxv91uf
+  injuries: mxq7crrz4or4dk9
+  players: m1r3oygdroc8dw2
+  timezones: mruatgbq9egfjte
+
+# Optional aliases (Turkish shortcuts) -> canonical name
+aliases:
+  "Fikstürler tablosu": fixtures
+  "Ligler tablosu": leagues
+  "Takımlar tablosu": teams
+  "Statlar tablosu": standings
+  "Sakatlıklar tablosu": injuries
+  "Ülkeler tablosu": countries
+  "Zaman dilimleri tablosu": timezones
+  "Backfill tablosu": backfill_progress

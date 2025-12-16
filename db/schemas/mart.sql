@@ -24,7 +24,31 @@ CREATE INDEX IF NOT EXISTS idx_mart_daily_fixtures_dashboard_league
   ON mart.daily_fixtures_dashboard (league_id);
 
 -- 2) Live score panel (live fixtures list)
-CREATE MATERIALIZED VIEW IF NOT EXISTS mart.live_score_panel AS
+-- NOTE:
+-- We expose live_score_panel as a VIEW (not materialized) so it stays fresh without explicit refresh.
+-- Also make it idempotent across object-type changes (view <-> materialized view).
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_matviews
+    WHERE schemaname = 'mart'
+      AND matviewname = 'live_score_panel'
+  ) THEN
+    EXECUTE 'DROP MATERIALIZED VIEW mart.live_score_panel';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_views
+    WHERE schemaname = 'mart'
+      AND viewname = 'live_score_panel'
+  ) THEN
+    EXECUTE 'DROP VIEW mart.live_score_panel';
+  END IF;
+END $$;
+
+CREATE OR REPLACE VIEW mart.live_score_panel AS
 SELECT
   f.id AS fixture_id,
   f.league_id,
@@ -48,11 +72,6 @@ JOIN core.teams ta ON ta.id = f.away_team_id
 WHERE f.status_short IN ('1H', '2H', 'HT', 'ET', 'BT', 'P', 'LIVE', 'SUSP', 'INT')
   AND f.updated_at > NOW() - INTERVAL '10 minutes'
 ORDER BY f.date DESC;
-
-CREATE INDEX IF NOT EXISTS idx_mart_live_score_panel_league
-  ON mart.live_score_panel (league_id);
-CREATE INDEX IF NOT EXISTS idx_mart_live_score_panel_updated_at
-  ON mart.live_score_panel (updated_at DESC);
 
 -- 3) Coverage status (foundation scope: fixtures pipeline + freshness; no hard-coded league/season)
 -- Phase 3: make this a TABLE so the CoverageCalculator can write per-league metrics.
