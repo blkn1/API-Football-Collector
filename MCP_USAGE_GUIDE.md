@@ -27,14 +27,13 @@ Claude Desktop tipik olarak MCP’yi **stdio** üzerinden çalıştırır.
 - `MCP_TRANSPORT=stdio`
 - Claude Desktop, komutu local’de çalıştırır ve tool çağrıları stdio’dan gider.
 
-### 2.2 Coolify/Prod → **SSE**
-Coolify’da MCP servisiniz HTTP üzerinden SSE ile açılır.
-- `MCP_TRANSPORT=sse`
-- Endpoint’ler (default mount `/`):
-  - SSE stream: `/sse`
-  - messages: `/messages/`
+### 2.2 Coolify/Prod → **streamable-http** (Traefik)
+Prod’da MCP servisiniz HTTP üzerinden **streamable-http** çalışır.
+- `MCP_TRANSPORT=streamable-http`
+- `MCP_MOUNT_PATH=/mcp` (prod endpoint)
+- Reverse proxy: **Traefik** (Coolify)
 
-> Not: Claude Desktop’ın stdio dışı transport desteği versiyona göre değişebilir. Prod SSE endpoint’i daha çok HTTP/SSE MCP client’ları içindir.
+> Not: Streamable HTTP MCP **stateful** çalışır. İstemci (client) `Accept` header’ında hem `application/json` hem `text/event-stream` desteklediğini belirtmeli ve **session id + initialize** akışını takip etmelidir.
 
 ---
 
@@ -67,6 +66,35 @@ Aşağıdaki config ile MCP sunucusunu Claude Desktop başlatır.
 }
 ```
 
+---
+
+## 4) Claude Desktop → Prod MCP (remote) (streamable-http)
+
+Claude Desktop doğrudan HTTP transport’ları konuşmadığı için `mcp-remote` proxy kullanılır.
+
+Örnek:
+
+```json
+{
+  "mcpServers": {
+    "api-football": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "mcp-remote",
+        "https://mcp.zinalyze.pro/mcp",
+        "--transport",
+        "streamable-http"
+      ],
+      "timeout": 30000,
+      "initTimeout": 20000
+    }
+  }
+}
+```
+
+> Eğer “tools bulunamadı / 406 / session” sorunları yaşarsan aşağıdaki “Prod doğrulama” bölümüne bak.
+
 ### 3.3 ENV açıklamaları
 - **`MCP_TRANSPORT=stdio`**: Claude Desktop için.
 - **`DATABASE_URL`**: MCP’nin okuyacağı Postgres.
@@ -77,20 +105,41 @@ Aşağıdaki config ile MCP sunucusunu Claude Desktop başlatır.
 
 ---
 
-## 4) Prod SSE endpoint hızlı doğrulama (opsiyonel)
+## 5) Prod streamable-http hızlı doğrulama (opsiyonel)
 
 Örnek domain: `https://mcp.zinalyze.pro`
 
-- Ana sayfa:
-  - `curl -i https://mcp.zinalyze.pro/`
-- SSE bağlantısı (açık stream):
-  - `curl -iN https://mcp.zinalyze.pro/sse`
+### 5.1 Session + initialize + tools/list (curl)
 
-> SSE bağlantısı uzun süre açık kalır; reverse-proxy timeout’larında kopma normal olabilir. Asıl doğrulama MCP client’ın tool çağırabilmesidir.
+Streamable HTTP için doğru akış:
+
+1) **initialize** (server response header’ında `mcp-session-id` döner; onu kopyala)
+
+```bash
+curl -i -X POST "https://mcp.zinalyze.pro/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0.1"}}}'
+```
+
+2) **tools/list** (aynı session id ile)
+
+```bash
+curl -i -X POST "https://mcp.zinalyze.pro/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: <PASTE_SESSION_ID>" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":null}}'
+```
+
+Sık hata mesajları:
+- `406 Not Acceptable`: `Accept` header’ında iki tip de yok.
+- `400 Missing session ID`: `mcp-session-id` header’ı yok.
+- `-32602 Invalid request parameters`: `tools/list` için `params` object değil (örn. `{ "cursor": null }` kullan).
 
 ---
 
-## 5) MCP Tool kataloğu (bu projede)
+## 6) MCP Tool kataloğu (bu projede)
 
 Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 
@@ -122,7 +171,7 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 
 ---
 
-## 6) Claude Desktop test senaryosu (minimum acceptance)
+## 7) Claude Desktop test senaryosu (minimum acceptance)
 
 Claude’a şu sırayla tool çağırmasını söyle:
 1) `get_database_stats()` → DB bağlantısı ve sayımlar geliyor mu?
@@ -136,7 +185,7 @@ PASS kriteri:
 
 ---
 
-## 7) Sık görülen sorunlar
+## 8) Sık görülen sorunlar
 
 ### 7.1 `season_required`
 `get_coverage_*` veya bazı filtreli tool’lar season ister.
@@ -152,7 +201,7 @@ PASS kriteri:
 
 ---
 
-## 8) Güvenlik notu
+## 9) Güvenlik notu
 
 MCP ve Read API operasyonel veri içerir. Prod’da:
 - Domain’i public bırakma

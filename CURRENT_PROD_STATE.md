@@ -36,6 +36,18 @@ Bu doküman, şu ana kadar yaptığımız değişikliklerin **son halini** ve wa
 - **/teams cache**: `core.team_bootstrap_progress`
   - Aynı `(league_id, season)` için `/teams` bir kere başarılı ise tekrar çağrılmaz
 
+## 4.1 MCP prod transport (Traefik + streamable-http)
+
+- Prod env:
+  - `MCP_TRANSPORT=streamable-http`
+  - `MCP_MOUNT_PATH=/mcp`
+- Streamable HTTP MCP **stateful**:
+  - `Accept: application/json, text/event-stream`
+  - `mcp-session-id` header’ı ile devam
+  - Önce `initialize`, sonra `tools/list`
+
+Hızlı doğrulama: `MCP_USAGE_GUIDE.md` bölüm 5.
+
 ## 5) Önemli tablolar
 
 - RAW: `raw.api_responses`

@@ -61,10 +61,14 @@ Required environment:
 - `REDIS_URL` (only needed if `ENABLE_LIVE_LOOP=1`)
 
 MCP (Coolify / HTTP-SSE):
-- `MCP_TRANSPORT=sse`
+- `MCP_TRANSPORT=streamable-http` (prod default)
 - `FASTMCP_HOST=0.0.0.0`
 - `FASTMCP_PORT=8000`
 - `MCP_HOST_PORT=8001` (host port conflict çözümü)
+- `MCP_MOUNT_PATH=/mcp`
+
+Notlar:
+- Streamable HTTP MCP **stateful** çalışır (session + initialize). Ayrıntılar: `MCP_USAGE_GUIDE.md`.
 
 Enable live loop (optional):
 

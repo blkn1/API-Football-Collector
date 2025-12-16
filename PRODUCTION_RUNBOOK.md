@@ -45,6 +45,31 @@ Ek ops gözlemler (Phase 1.5):
 - **PASS**: A+B+D `ok=true` ve DB bağlantısı sağlıklı.
 - **FAIL**: Tool exception / DB bağlantı hatası / output şeması bozulmuş.
 
+### 1.4 MCP Prod transport notu (Traefik + streamable-http)
+Prod’da MCP `streamable-http` çalışır ve **stateful session** gerektirir:
+- `Accept: application/json, text/event-stream`
+- `mcp-session-id` header’ı
+- Önce `initialize`, sonra `tools/list`
+
+Hızlı curl doğrulaması (prod):
+
+```bash
+curl -i -X POST "https://mcp.zinalyze.pro/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  --data '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0.1"}}}'
+```
+
+> Response header’ından `mcp-session-id` kopyala, sonra:
+
+```bash
+curl -i -X POST "https://mcp.zinalyze.pro/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: <PASTE_SESSION_ID>" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"cursor":null}}'
+```
+
 ---
 
 ## 2) DB doğrulama sorguları (read-only)
@@ -154,6 +179,12 @@ LIMIT 50;
     - `BACKFILL_FIXTURES_MAX_PAGES_PER_TASK`
     - `BACKFILL_FIXTURES_WINDOW_DAYS`
   - MCP: `get_raw_error_summary(since_minutes=60)` ile 429 trendini doğrula.
+
+### 5.4 MCP 4xx/5xx (özellikle 406/400/504)
+- **406 Not Acceptable**: client `Accept` header’ında hem `application/json` hem `text/event-stream` sunmuyor.
+- **400 Missing session ID**: `mcp-session-id` header’ı yok (stateful).
+- **-32602 Invalid request parameters**: `tools/list` için `params` object değil → `{"cursor": null}` gönder.
+- **504 Gateway Timeout**: reverse proxy upstream’e ulaşamıyor (routing/network). Prod’da Traefik path davranışı nedeniyle endpoint doğru olmalı: `/mcp`.
 
 ### 5.2 RAW var CORE yok (transform/upsert sorunu)
 - Belirti: `raw.api_responses` artıyor ama `core.fixtures`/diğer tablolar artmıyor.
