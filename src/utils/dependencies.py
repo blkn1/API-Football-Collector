@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 try:
@@ -23,6 +24,48 @@ except Exception:  # pragma: no cover
 
 
 logger = get_logger(component="dependencies")
+
+
+def _coerce_json_list(value: Any) -> list[Any] | None:
+    """
+    core.leagues.seasons is JSONB. Depending on driver/typecasters, it may come back as:
+    - list (decoded) or
+    - str (JSON text)
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if not s:
+            return None
+        try:
+            obj = json.loads(s)
+        except Exception:
+            return None
+        return obj if isinstance(obj, list) else None
+    return None
+
+
+def _league_has_season_metadata(seasons_value: Any, season: int) -> bool:
+    seasons = _coerce_json_list(seasons_value)
+    if not seasons:
+        return False
+    for item in seasons:
+        if not isinstance(item, dict):
+            continue
+        try:
+            year = int(item.get("year")) if item.get("year") is not None else None
+        except Exception:
+            year = None
+        if year != int(season):
+            continue
+        # Prefer having start/end so backfill can window deterministically.
+        if item.get("start") and item.get("end"):
+            return True
+        # Even without dates, presence of the year is still useful (but we keep it strict here).
+    return False
 
 
 def _extract_team_ids_from_fixtures_envelope(envelope: dict[str, Any]) -> set[int]:
@@ -109,14 +152,19 @@ async def _fetch_and_store(
 
 
 async def ensure_league_exists(*, league_id: int, season: int | None, client: APIClient, limiter: RateLimiter) -> None:
-    exists = query_scalar("SELECT 1 FROM core.leagues WHERE id=%s", (int(league_id),))
-    if exists:
-        return
+    existing_seasons = query_scalar("SELECT seasons FROM core.leagues WHERE id=%s", (int(league_id),))
+    if existing_seasons is not None:
+        # If season is not specified, existence is enough.
+        if season is None or int(season) <= 0:
+            return
+        # If the league exists but doesn't contain the requested season metadata, refresh.
+        if _league_has_season_metadata(existing_seasons, int(season)):
+            return
 
-    # Use the smallest safe call: /leagues?id=... (optionally season scoped)
+    # Refresh (or create): fetch full league object by id.
+    # IMPORTANT: do NOT season-scope this request; we want the full seasons array
+    # so backfill windowing can work for current+prev without extra API calls.
     params: dict[str, Any] = {"id": int(league_id)}
-    if season is not None and int(season) > 0:
-        params["season"] = int(season)
     res = await _fetch_and_store(client=client, limiter=limiter, endpoint="/leagues", params=params)
     env = res.data or {}
     if env.get("errors"):
@@ -132,7 +180,7 @@ async def ensure_league_exists(*, league_id: int, season: int | None, client: AP
         conflict_cols=["id"],
         update_cols=["name", "type", "logo", "country_name", "country_code", "country_flag", "seasons"],
     )
-    logger.info("league_upserted_dependency", league_id=int(league_id), season=int(season))
+    logger.info("league_upserted_dependency", league_id=int(league_id), season=(int(season) if season is not None else None))
 
 
 async def ensure_teams_exist_for_league(
