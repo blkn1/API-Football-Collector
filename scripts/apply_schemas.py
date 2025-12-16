@@ -109,6 +109,12 @@ def _apply_sql_file(cur, path: Path) -> None:
         except pg_errors.DuplicateObject:
             # Triggers/indexes already exist -> safe to continue.
             continue
+        except psycopg2.ProgrammingError as e:
+            # Some splits may yield comment-only statements (e.g. "-- ...") which PostgreSQL treats
+            # as an empty query. Skip those safely.
+            if "can't execute an empty query" in str(e):
+                continue
+            raise
 
 
 def _dsn() -> str:
