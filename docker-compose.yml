@@ -20,8 +20,9 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    networks:
-      - api_football_net
+    # NOTE (Coolify/Traefik):
+    # Do not force a custom network here. Let the platform attach its proxy
+    # to the app network so domains can reach containers.
 
   redis:
     image: redis:7-alpine
@@ -34,8 +35,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    networks:
-      - api_football_net
+    # see note above (Coolify/Traefik networking)
 
   # Scheduler: runs enabled non-live jobs from config/jobs/*.yaml
   collector:
@@ -76,8 +76,7 @@ services:
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
-    networks:
-      - api_football_net
+    # see note above (Coolify/Traefik networking)
 
   # Optional: live polling loop (/fixtures?live=all every 15s).
   # Set ENABLE_LIVE_LOOP=1 to actually run it; otherwise the container stays idle (does NOT call API).
@@ -117,8 +116,7 @@ services:
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
-    networks:
-      - api_football_net
+    # see note above (Coolify/Traefik networking)
 
   # MCP server (read-only query interface)
   # For Claude Desktop: use stdio transport.
@@ -158,8 +156,7 @@ services:
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
-    networks:
-      - api_football_net
+    # see note above (Coolify/Traefik networking)
 
   # Read API (REST + SSE) for external consumers (read-only, DB-backed)
   read_api:
@@ -200,13 +197,8 @@ services:
         "uvicorn src.read_api.app:app --host 0.0.0.0 --port ${READ_API_PORT:-8080}",
       ]
     restart: unless-stopped
-    networks:
-      - api_football_net
+    # see note above (Coolify/Traefik networking)
 
 volumes:
   postgres_data:
-
-networks:
-  api_football_net:
-
 
