@@ -139,3 +139,78 @@ tracked_leagues:
 - id: 88
   name: Eredivisie
   season: 2025
+- id: 94
+  name: Primeira Liga
+  season: 2025
+- id: 95
+  name: Segunda Liga
+  season: 2025
+- id: 106
+  name: Ekstraklasa
+  season: 2025
+- id: 111
+  name: FAW Championship
+  season: 2025
+- id: 112
+  name: Welsh Cup
+  season: 2025
+- id: 121
+  name: DBU Pokalen
+  season: 2025
+- id: 135
+  name: Serie A
+  season: 2025
+- id: 136
+  name: Serie B
+  season: 2025
+- id: 140
+  name: La Liga
+  season: 2025
+- id: 141
+  name: Segunda División
+  season: 2025
+- id: 144
+  name: Jupiler Pro League
+  season: 2025
+- id: 145
+  name: Challenger Pro League
+  season: 2025
+- id: 162
+  name: Primera División
+  season: 2025
+- id: 179
+  name: Premiership
+  season: 2025
+- id: 180
+  name: Championship
+  season: 2025
+- id: 183
+  name: League One
+  season: 2025
+- id: 184
+  name: League Two
+  season: 2025
+- id: 185
+  name: League Cup
+  season: 2025
+- id: 188
+  name: A-League
+  season: 2025
+- id: 197
+  name: Super League 1
+  season: 2025
+- id: 203
+  name: Süper Lig
+  season: 2025
+- id: 204
+  name: 1. Lig
+  season: 2025
+- id: 207
+  name: Super League
+  season: 2025
+- id: 208
+  name: Challenge League
+  season: 2025
+- id: 210
+  name: HNL
+  season: 2025
