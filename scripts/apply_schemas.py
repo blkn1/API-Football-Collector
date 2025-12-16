@@ -102,6 +102,8 @@ def _apply_sql_file(cur, path: Path) -> None:
     sql_text = path.read_text(encoding="utf-8")
     stmts = _split_sql_statements(sql_text)
     for stmt in stmts:
+        if not stmt.strip():
+            continue
         try:
             cur.execute(stmt)
         except pg_errors.DuplicateObject:

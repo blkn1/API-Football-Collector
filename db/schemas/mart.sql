@@ -56,7 +56,42 @@ CREATE INDEX IF NOT EXISTS idx_mart_live_score_panel_updated_at
 
 -- 3) Coverage status (foundation scope: fixtures pipeline + freshness; no hard-coded league/season)
 -- Phase 3: make this a TABLE so the CoverageCalculator can write per-league metrics.
-DROP MATERIALIZED VIEW IF EXISTS mart.coverage_status;
+-- IMPORTANT:
+-- Postgres errors on DROP MATERIALIZED VIEW IF EXISTS when an object exists with the same
+-- name but different type (e.g. TABLE). Make this idempotent by dropping based on actual type.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_matviews
+    WHERE schemaname = 'mart'
+      AND matviewname = 'coverage_status'
+  ) THEN
+    EXECUTE 'DROP MATERIALIZED VIEW mart.coverage_status';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_views
+    WHERE schemaname = 'mart'
+      AND viewname = 'coverage_status'
+  ) THEN
+    EXECUTE 'DROP VIEW mart.coverage_status';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'mart'
+      AND c.relname = 'coverage_status'
+      AND c.relkind = 'r'  -- table
+  ) THEN
+    -- If table already exists, we keep it (idempotent) and skip drop.
+    -- This block is intentionally empty.
+    NULL;
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS mart.coverage_status (
   league_id BIGINT NOT NULL,
