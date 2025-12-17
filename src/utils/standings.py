@@ -13,7 +13,7 @@ from collector.rate_limiter import RateLimiter
 from transforms.standings import transform_standings
 from utils.db import get_transaction, query_scalar, upsert_raw
 from utils.logging import get_logger
-from utils.dependencies import ensure_standings_dependencies
+from utils.dependencies import ensure_standings_dependencies, get_missing_team_ids_in_core
 
 
 logger = get_logger(component="standings_sync")
@@ -194,6 +194,20 @@ async def sync_standings(
 
             if dry_run:
                 logger.info("core_skipped_dry_run", league_id=league_id, rows=len(rows))
+                continue
+
+            # Safety guard: if FK targets (core.teams) are missing, skip replace to avoid
+            # transaction failure (delete-then-insert would otherwise rollback).
+            team_ids = {int(r["team_id"]) for r in rows if r.get("team_id") is not None}
+            missing = get_missing_team_ids_in_core(team_ids)
+            if missing:
+                logger.error(
+                    "standings_missing_teams_skip_replace",
+                    league_id=league_id,
+                    season=season,
+                    missing_team_ids_count=len(missing),
+                    missing_team_ids_sample=sorted(list(missing))[:25],
+                )
                 continue
 
             try:

@@ -16,7 +16,12 @@ from src.transforms.fixtures import transform_fixtures
 from src.transforms.standings import transform_standings
 from src.utils.db import get_db_connection, get_transaction, query_scalar, upsert_core, upsert_raw
 from src.utils.logging import get_logger
-from src.utils.dependencies import ensure_fixtures_dependencies, ensure_league_exists, ensure_standings_dependencies
+from src.utils.dependencies import (
+    ensure_fixtures_dependencies,
+    ensure_league_exists,
+    ensure_standings_dependencies,
+    get_missing_team_ids_in_core,
+)
 
 
 logger = get_logger(component="jobs_backfill")
@@ -655,6 +660,25 @@ async def run_standings_backfill_league_season(
                 continue
 
             rows = transform_standings(env)
+
+            # Safety guard: if FK targets are missing, skip replace to avoid delete-then-insert rollback.
+            team_ids = {int(r["team_id"]) for r in rows if r.get("team_id") is not None}
+            missing = get_missing_team_ids_in_core(team_ids)
+            if missing:
+                logger.error(
+                    "standings_backfill_missing_teams_skip_replace",
+                    league_id=league_id,
+                    season=season,
+                    missing_team_ids_count=len(missing),
+                    missing_team_ids_sample=sorted(list(missing))[:25],
+                )
+                _update_progress(
+                    job_id=STANDINGS_JOB_ID,
+                    league_id=league_id,
+                    season=season,
+                    last_error=f"missing_teams_in_core:{len(missing)}",
+                )
+                continue
 
             # Replace inside one transaction
             try:

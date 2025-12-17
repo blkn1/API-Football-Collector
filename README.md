@@ -20,6 +20,11 @@ High-signal docs:
 
 ## Setup (local)
 
+### 0) Prerequisites
+
+- **Docker + Compose**: this project expects `docker` and `docker compose` to be available.
+  - If you see `docker: command not found`, install Docker Engine + the Compose plugin on Ubuntu: [`https://docs.docker.com/engine/install/ubuntu/`]
+
 ### 1) Environment
 
 - Ensure `.env` exists at repo root and contains:

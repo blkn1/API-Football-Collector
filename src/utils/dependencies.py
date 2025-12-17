@@ -10,7 +10,7 @@ try:
     from transforms.leagues import transform_leagues  # type: ignore
     from transforms.teams import transform_teams  # type: ignore
     from transforms.venues import transform_venues_from_teams  # type: ignore
-    from utils.db import query_scalar, upsert_core, upsert_raw  # type: ignore
+    from utils.db import get_db_connection, query_scalar, upsert_core, upsert_raw  # type: ignore
     from utils.logging import get_logger  # type: ignore
 except Exception:  # pragma: no cover
     # package context
@@ -19,7 +19,7 @@ except Exception:  # pragma: no cover
     from src.transforms.leagues import transform_leagues
     from src.transforms.teams import transform_teams
     from src.transforms.venues import transform_venues_from_teams
-    from src.utils.db import query_scalar, upsert_core, upsert_raw
+    from src.utils.db import get_db_connection, query_scalar, upsert_core, upsert_raw
     from src.utils.logging import get_logger
 
 
@@ -100,6 +100,35 @@ def _extract_team_ids_from_standings_envelope(envelope: dict[str, Any]) -> set[i
                 except Exception:
                     continue
     return ids
+
+
+def get_missing_team_ids_in_core(team_ids: set[int]) -> set[int]:
+    """
+    Return team IDs that are NOT present in core.teams.
+    This is used as a safety check before writing FK-constrained tables (e.g. core.standings).
+    """
+    if not team_ids:
+        return set()
+
+    ids = sorted({int(x) for x in team_ids if x is not None})
+    if not ids:
+        return set()
+
+    placeholders = ", ".join(["%s"] * len(ids))
+    q = f"SELECT id FROM core.teams WHERE id IN ({placeholders})"
+
+    existing: set[int] = set()
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(q, tuple(ids))
+            for (tid,) in cur.fetchall() or []:
+                try:
+                    existing.add(int(tid))
+                except Exception:
+                    continue
+        conn.commit()
+
+    return set(ids) - existing
 
 
 def _extract_venue_rows_from_fixtures_envelope(envelope: dict[str, Any]) -> list[dict[str, Any]]:
@@ -201,7 +230,33 @@ async def ensure_teams_exist_for_league(
         (int(league_id), int(season)),
     )
     if cached is True:
-        return
+        missing = get_missing_team_ids_in_core(team_ids)
+        if not missing:
+            return
+        logger.warning(
+            "teams_bootstrap_cache_incomplete_refreshing",
+            league_id=int(league_id),
+            season=int(season),
+            missing_team_ids_count=len(missing),
+            missing_team_ids_sample=sorted(list(missing))[:25],
+        )
+        # Flip cache to incomplete before attempting refresh, for observability.
+        try:
+            upsert_core(
+                full_table_name="core.team_bootstrap_progress",
+                rows=[
+                    {
+                        "league_id": int(league_id),
+                        "season": int(season),
+                        "completed": False,
+                        "last_error": f"cache_incomplete_missing_teams:{len(missing)}",
+                    }
+                ],
+                conflict_cols=["league_id", "season"],
+                update_cols=["completed", "last_error"],
+            )
+        except Exception:
+            pass
 
     # Create progress row if missing (idempotent).
     try:
@@ -267,6 +322,7 @@ async def ensure_teams_exist_for_league(
         )
 
     # Mark completed (cache hit for future windows).
+    missing_after = get_missing_team_ids_in_core(team_ids)
     try:
         upsert_core(
             full_table_name="core.team_bootstrap_progress",
@@ -275,7 +331,11 @@ async def ensure_teams_exist_for_league(
                     "league_id": int(league_id),
                     "season": int(season),
                     "completed": True,
-                    "last_error": None,
+                    "last_error": (
+                        None
+                        if not missing_after
+                        else f"teams_still_missing_after_refresh:{len(missing_after)}"
+                    ),
                 }
             ],
             conflict_cols=["league_id", "season"],

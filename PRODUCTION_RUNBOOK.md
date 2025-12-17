@@ -190,6 +190,36 @@ LIMIT 50;
 - **-32602 Invalid request parameters**: `tools/list` için `params` object değil → `{"cursor": null}` gönder.
 - **504 Gateway Timeout**: reverse proxy upstream’e ulaşamıyor (routing/network). Prod’da Traefik path davranışı nedeniyle endpoint doğru olmalı: `/mcp`.
 
+### 5.5 Postgres log gürültüsü: `invalid startup packet` / `unsupported frontend protocol`
+- Belirti: Postgres loglarında şu tip mesajlar:
+  - `invalid length of startup packet`
+  - `incomplete startup packet`
+  - `unsupported frontend protocol ...`
+  - `no PostgreSQL user name specified in startup packet`
+- Kök neden (en sık): **5432 portu public expose** edilmiş ve internetten random scanner/healthcheck’ler Postgres’e HTTP/garbage gönderiyor.
+- Risk:
+  - Güvenlik yüzeyi büyür (DB brute-force / scan)
+  - Log gürültüsü gerçek incident’leri gömer
+- Aksiyon:
+  - Prod’da **Postgres portunu public’e açma**:
+    - Coolify/Traefik: DB service’i sadece internal network’te kalsın
+    - Eğer host port mapping varsa kaldır / firewall ile sadece allowlist IP’lere aç
+  - DB erişimi ops/backup için gerekiyorsa:
+    - VPN üzerinden erişim veya SSH tunnel kullan
+    - DB user’ı minimum yetkilerle sınırla
+
+### 5.6 Postgres loglarında `docker: command not found` / `systemctl: command not found`
+- Not: **Resmi `postgres:*` image** normal şartlarda `docker`, `systemctl`, `service`, `setenforce` çalıştırmaz.
+- Kök neden (muhtemel):
+  - Coolify’de Postgres servisi yanlış image/entrypoint ile çalışıyor (bash script wrapper)
+  - Repo dışı init/sidecar script’i container içinde koşuyor
+- Aksiyon:
+  - Coolify’de **postgres service tanımı** kontrol et:
+    - Image: `postgres:15-alpine` (veya sizin seçtiğiniz resmi postgres)
+    - Custom command/entrypoint: boş olmalı (default entrypoint)
+    - Volume: sadece Postgres data + opsiyonel `/docker-entrypoint-initdb.d` (SQL) olmalı
+  - Bu satırlar devam ederse: ilgili container’ın gerçekten Postgres container’ı olduğunu doğrula (log kaynağı karışmış olabilir).
+
 ### 5.2 RAW var CORE yok (transform/upsert sorunu)
 - Belirti: `raw.api_responses` artıyor ama `core.fixtures`/diğer tablolar artmıyor.
 - Aksiyon:
