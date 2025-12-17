@@ -9,8 +9,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-api_football}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Auto-load schemas on first init
@@ -28,8 +26,6 @@ services:
     image: redis:7-alpine
     env_file:
       - ./.env
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -143,10 +139,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    ports:
-      # IMPORTANT (Coolify): host port might already be in use on the server.
-      # Override MCP_HOST_PORT in Coolify env if you see "port is already allocated".
-      - "${MCP_HOST_PORT:-8001}:${FASTMCP_PORT:-8000}"
+    # Prod (Coolify/Traefik) should route internally to the container port.
+    # Avoid publishing host ports to reduce port conflicts and redeploy fragility.
+    expose:
+      - "${FASTMCP_PORT:-8000}"
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck_mcp.py"]
       interval: 10s
