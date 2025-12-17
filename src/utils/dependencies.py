@@ -321,6 +321,56 @@ async def ensure_teams_exist_for_league(
             update_cols=["name", "code", "country", "founded", "national", "logo", "venue_id"],
         )
 
+    # Fallback: /teams?league&season may not include every team_id referenced by standings.
+    # If some team_ids are still missing in CORE, fetch them by id (small count, quota-safe).
+    missing_after = get_missing_team_ids_in_core(team_ids)
+    if missing_after:
+        for tid in sorted(missing_after):
+            try:
+                res2 = await _fetch_and_store(
+                    client=client,
+                    limiter=limiter,
+                    endpoint="/teams",
+                    params={"id": int(tid)},
+                )
+                env2 = res2.data or {}
+                if env2.get("errors"):
+                    raise RuntimeError(f"api_errors:/teams?id={tid}:{env2.get('errors')}")
+
+                venue_rows2 = transform_venues_from_teams(env2)
+                if venue_rows2:
+                    upsert_core(
+                        full_table_name="core.venues",
+                        rows=venue_rows2,
+                        conflict_cols=["id"],
+                        update_cols=["name", "address", "city", "country", "capacity", "surface", "image"],
+                    )
+
+                team_rows2 = transform_teams(env2)
+                if team_rows2:
+                    upsert_core(
+                        full_table_name="core.teams",
+                        rows=team_rows2,
+                        conflict_cols=["id"],
+                        update_cols=["name", "code", "country", "founded", "national", "logo", "venue_id"],
+                    )
+
+                logger.info(
+                    "teams_upserted_by_id_fallback",
+                    league_id=int(league_id),
+                    season=int(season),
+                    team_id=int(tid),
+                    teams_upserted=len(team_rows2),
+                )
+            except Exception as e:
+                logger.warning(
+                    "teams_fetch_by_id_failed",
+                    league_id=int(league_id),
+                    season=int(season),
+                    team_id=int(tid),
+                    err=str(e),
+                )
+
     # Mark completed (cache hit for future windows).
     missing_after = get_missing_team_ids_in_core(team_ids)
     try:

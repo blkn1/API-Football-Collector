@@ -227,6 +227,16 @@ LIMIT 50;
   - DB constraint/FK ihlalleri için Postgres logs.
   - FK bağımlılıkları: leagues/teams/venues → fixtures sırası.
 
+### 5.7 Standings backfill `missing_teams_in_core:*`
+- Belirti:
+  - MCP `get_backfill_progress()` içinde standings task’larında `last_error=missing_teams_in_core:N`
+  - Bu, `core.standings` FK koruması yüzünden “crash” yerine **skip+log** davranışıdır.
+- Kök neden (tipik):
+  - `/standings` response içindeki bazı `team_id`’ler `/teams?league&season` sonucunda gelmeyebilir.
+- Çözüm (mevcut sistem):
+  - Dependencies katmanı eksik takımlar için **fallback** uygular: `GET /teams?id=<team_id>` ve CORE `teams/venues` upsert.
+  - Bir sonraki standings backfill çalıştırmasında task otomatik tamamlanır.
+
 ### 5.3 Coverage düşmüş
 - Belirti: `mart.coverage_status.overall_coverage` düşer.
 - Aksiyon:
