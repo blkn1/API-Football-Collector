@@ -10,7 +10,7 @@ import yaml
 try:
     # scripts/ context (adds /src to sys.path)
     from utils.db import query_scalar  # type: ignore
-except Exception:  # pragma: no cover
+except ImportError:  # pragma: no cover
     # src/ package context
     from src.utils.db import query_scalar  # type: ignore
 

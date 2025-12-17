@@ -42,7 +42,7 @@ def _coerce_json_list(value: Any) -> list[Any] | None:
             return None
         try:
             obj = json.loads(s)
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             return None
         return obj if isinstance(obj, list) else None
     return None

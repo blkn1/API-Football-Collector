@@ -10,8 +10,15 @@ from dotenv import load_dotenv
 from psycopg2 import sql
 from psycopg2.pool import ThreadedConnectionPool
 
+try:
+    # scripts/ context (scripts add src/ to sys.path)
+    from utils.logging import get_logger  # type: ignore
+except Exception:  # pragma: no cover
+    from src.utils.logging import get_logger
+
 
 _POOL: ThreadedConnectionPool | None = None
+logger = get_logger(component="db")
 
 
 def _build_dsn() -> str:
@@ -95,8 +102,8 @@ def get_transaction():
     except Exception:
         try:
             conn.rollback()
-        except Exception:
-            pass
+        except Exception as e:  # rollback failure should be visible
+            logger.warning("db_rollback_failed", err=str(e))
         raise
     finally:
         _POOL.putconn(conn)

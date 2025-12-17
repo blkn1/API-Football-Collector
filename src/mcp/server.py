@@ -13,6 +13,8 @@ from typing import Any
 
 import yaml
 
+from src.utils.logging import get_logger
+
 # IMPORTANT: Our project uses directory name `src/mcp`, which collides with the external
 # library name `mcp` if `src/` is placed on sys.path (tests do this).
 # To reliably import the external library, temporarily remove local src paths.
@@ -40,6 +42,8 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.mcp import queries  # noqa: E402
 from src.utils.db import get_db_connection  # noqa: E402
 
+logger = get_logger(component="mcp_server")
+
 
 def _create_mcp_app() -> Any:
     """
@@ -57,11 +61,11 @@ def _create_mcp_app() -> Any:
     try:
         return FastMCP("api-football-mcp", host=host, port=port, log_level=log_level)
     except TypeError:
-        pass
+        logger.debug("fastmcp_ctor_signature_mismatch", variant="host+port+log_level")
     try:
         return FastMCP("api-football-mcp", host=host, port=port)
     except TypeError:
-        pass
+        logger.debug("fastmcp_ctor_signature_mismatch", variant="host+port")
     return FastMCP("api-football-mcp")
 
 
@@ -150,7 +154,8 @@ class JobConfig:
 def _load_jobs_from_yaml(path: Path) -> list[JobConfig]:
     try:
         cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
+    except Exception as e:
+        logger.warning("mcp_failed_to_read_jobs_config", path=str(path), err=str(e))
         return []
     jobs = cfg.get("jobs") or []
     out: list[JobConfig] = []
