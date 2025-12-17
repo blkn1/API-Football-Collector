@@ -162,6 +162,7 @@ MCP servisi Coolify’da ayrı service olarak çalışır. Transport genelde **S
   - **Ne**: MCP route’larının mount prefix’i.
   - **Default**: boş → `/`
   - **Etkisi**: Reverse-proxy altında path bazlı yayın yapılacaksa kullanılır.
+  - **Prod öneri**: Traefik altında `MCP_MOUNT_PATH=/mcp` kullan ve domain’i `https://<SERVICE_FQDN_MCP>/mcp` olarak yayınla.
 
 - **`FASTMCP_HOST`**
   - **Default**: `0.0.0.0`
@@ -171,11 +172,8 @@ MCP servisi Coolify’da ayrı service olarak çalışır. Transport genelde **S
   - **Default**: `8000`
   - **Etkisi**: Container içindeki MCP listen port’u.
 
-- **`MCP_HOST_PORT`**
-  - **Default**: `8001`
-  - **Neden var**: Host’ta 8000 başka servis tarafından kullanılıyor olabilir.
-  - **Etkisi**: Compose port mapping: `${MCP_HOST_PORT}:${FASTMCP_PORT}`.
-  - **Yanlışsa**: Deploy sırasında `port is already allocated` hatası alırsın.
+> Not (prod): Bu repo artık prod compose’ta MCP için host port publish etmez; Traefik/Coolify internal routing kullanılır.
+> Bu yüzden `MCP_HOST_PORT` prod’da genelde **kullanılmaz**. (Local/diagnostic host publish gerekiyorsa ayrıca eklenebilir.)
 
 - **`FASTMCP_LOG_LEVEL`**
   - **Default**: `INFO`
@@ -184,6 +182,18 @@ MCP servisi Coolify’da ayrı service olarak çalışır. Transport genelde **S
 - **`COLLECTOR_LOG_FILE`** (MCP service içinde)
   - **Default**: `/app/logs/collector.jsonl`
   - **Etkisi**: MCP, bazı tool’larda “job status / last sync” gibi gözlemler için collector logunu okur.
+
+### 9.1 Prod MCP URL ve smoke test
+- Prod URL: `https://<SERVICE_FQDN_MCP>/mcp` (ör: `https://mcp.zinalyze.pro/mcp`)
+- Streamable HTTP MCP **stateful**:
+  - `initialize` → response header’dan `mcp-session-id`
+  - Sonraki çağrılar aynı header ile
+  - Redeploy sonrası session reset olur (yeniden initialize gerekir)
+- Repo smoke test script:
+
+```bash
+SERVICE_URL_MCP="https://mcp.zinalyze.pro" bash scripts/smoke_mcp.sh
+```
 
 ---
 

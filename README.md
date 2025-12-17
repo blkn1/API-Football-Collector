@@ -69,12 +69,12 @@ MCP (Coolify / HTTP-SSE):
 - `MCP_TRANSPORT=streamable-http` (prod default)
 - `FASTMCP_HOST=0.0.0.0`
 - `FASTMCP_PORT=8000`
-- `MCP_HOST_PORT=8001` (host port conflict çözümü)
 - `MCP_MOUNT_PATH=/mcp`
 
 Notlar:
 - Streamable HTTP MCP **stateful** çalışır (session + initialize). Ayrıntılar: `MCP_USAGE_GUIDE.md`.
 - Claude Desktop prod MCP’ye bağlanırken stdio→streamable-http adapter kullanır. Ayrıntılar: `MCP_USAGE_GUIDE.md` (bölüm 4).
+- Prod smoke test: `bash scripts/smoke_mcp.sh`
 
 Enable live loop (optional):
 

@@ -139,6 +139,26 @@ Sık hata mesajları:
 - `400 Missing session ID`: `mcp-session-id` header’ı yok.
 - `-32602 Invalid request parameters`: `tools/list` için `params` object değil (örn. `{ "cursor": null }` kullan).
 
+### 5.2 Tam smoke test (initialize → tools/list → tools/call) (script)
+Prod’da “MCP bazen çalışıyor, redeploy sonrası bozuluyor” gibi durumlarda en hızlı teşhis, stateful session akışını baştan sona test etmektir.
+
+Repo script’i:
+
+```bash
+bash scripts/smoke_mcp.sh
+```
+
+Varsayılan olarak `SERVICE_URL_MCP` (Coolify env) varsa onu kullanır; yoksa `https://mcp.zinalyze.pro` kullanır.
+Gerekirse override:
+
+```bash
+MCP_BASE_URL="https://mcp.zinalyze.pro" MCP_PATH="/mcp" bash scripts/smoke_mcp.sh
+```
+
+Notlar:
+- **Redeploy sonrası** MCP server restart olur → **eski `mcp-session-id` geçersiz** olur. Script’i yeniden çalıştır.
+- `streamable-http` için request’lerde `Accept: application/json, text/event-stream` zorunlu.
+
 ---
 
 ## 6) MCP Tool kataloğu (bu projede)
@@ -200,6 +220,19 @@ PASS kriteri:
 ### 7.3 Log dosyası yok
 - `COLLECTOR_LOG_FILE` path yanlış
 - Volume mount yoksa container içinde dosya görünmez
+
+### 8.4 Redeploy sonrası “tool yok / session hatası”
+Belirti:
+- `Tool '... not found'`
+- `400 Missing session ID`
+- `406 Not Acceptable`
+
+Kök neden:
+- `streamable-http` stateful session gerektirir ve redeploy sonrası eski session devam etmez.
+
+Çözüm:
+- Client tarafında yeniden `initialize` yap.
+- `bash scripts/smoke_mcp.sh` ile uçtan uca doğrula.
 
 ---
 

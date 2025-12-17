@@ -10,6 +10,10 @@ Bu doküman, şu ana kadar yaptığımız değişikliklerin **son halini** ve wa
 - **read_api**: dış uygulamalar için read-only REST + SSE
 - **live_loop**: opsiyonel; `ENABLE_LIVE_LOOP=1` olmadıkça API çağırmaz
 
+Prod network notu:
+- Prod’da **Postgres/Redis host port publish edilmez** (güvenlik + log gürültüsü önleme).
+- MCP prod’da Traefik/Coolify üzerinden domain+path ile yayınlanır: `https://<SERVICE_FQDN_MCP>/mcp`.
+
 ## 2) Config yaklaşımı (hard-code yok)
 
 - **Tracked leagues**: `config/jobs/daily.yaml -> tracked_leagues[]`  
@@ -45,8 +49,10 @@ Bu doküman, şu ana kadar yaptığımız değişikliklerin **son halini** ve wa
   - `Accept: application/json, text/event-stream`
   - `mcp-session-id` header’ı ile devam
   - Önce `initialize`, sonra `tools/list`
+  - **Redeploy sonrası** eski session’lar geçersiz olur (yeniden initialize gerekir)
 
 Hızlı doğrulama: `MCP_USAGE_GUIDE.md` bölüm 5.
+Tam smoke: `bash scripts/smoke_mcp.sh`
 
 Claude Desktop notu:
 - Prod MCP `streamable-http` olduğu için Claude Desktop’a bağlamak için **stdio→streamable-http adapter** gerekir.
