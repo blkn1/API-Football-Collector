@@ -30,6 +30,11 @@ Bu değişkenler Coolify’nin domain routing / reverse-proxy katmanında kullan
   - **Ne**: MCP servisi için FQDN/URL (ör: `mcp.zinalyze.pro`)
   - **Etkiler**: MCP, HTTP/SSE üzerinden dışarı açıldığı için bu alanlar **aktif** kullanılır (reverse-proxy → container port mapping).
 
+- **`SERVICE_FQDN_READ_API`**, **`SERVICE_URL_READ_API`** (önerilen)
+  - **Ne**: Read API servisi için FQDN/URL (örn: `readapi.zinalyze.pro`)
+  - **Etkiler**: Read API dış tüketim (n8n, dashboard) için HTTP sunar; bu alanlar prod testlerinde base URL olarak kullanılır.
+  - **Not**: Coolify projene göre değişken isimleri farklı olabilir. Eğer otomatik env yoksa, Read API için ayrı bir domain route tanımlayın ve dokümana yazın.
+
 ---
 
 ## 2) API-Football erişimi (zorunlu)
