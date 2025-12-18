@@ -185,6 +185,11 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
   - Prod’da `ENABLE_LIVE_LOOP=1` olduğunda `/fixtures?live=all` polling’in RAW’a düştüğünü doğrular.
   - Redeploy sonrası “live loop açık mı?” sorusunun en net cevabı.
 
+### 5.5 Daily fixtures cadence gözlemi (30dk job gerçekten çalışıyor mu?)
+- `get_daily_fixtures_by_date_status(since_minutes=180)`
+  - `/fixtures?date=YYYY-MM-DD` çağrılarının RAW’a düştüğünü doğrular.
+  - `get_job_status()` log parse hatalarından bağımsızdır; doğrudan RAW üzerinden kanıt verir.
+
 ### 5.3 Veri sorguları
 - `query_fixtures(league_id=None, date=None, status=None, limit=10)`
 - `query_standings(league_id, season)`

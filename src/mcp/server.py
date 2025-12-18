@@ -524,6 +524,35 @@ async def get_live_loop_status(since_minutes: int = 5) -> dict:
 
 
 @app.tool()
+async def get_daily_fixtures_by_date_status(since_minutes: int = 180) -> dict:
+    """
+    Report whether the scheduler's daily_fixtures_by_date job is actually calling /fixtures?date=YYYY-MM-DD.
+
+    This avoids relying on log parsing; it inspects RAW request history directly.
+
+    Args:
+        since_minutes: Lookback window (default 180, capped to 1440)
+    """
+    try:
+        mins = max(1, min(int(since_minutes), 60 * 24))
+        row = await _db_fetchone_async(queries.DAILY_FIXTURES_BY_DATE_ACTIVITY_QUERY, (mins,))
+        if not row:
+            return {"ok": True, "window": {"since_minutes": mins}, "running": False, "requests": 0, "last_fetched_at_utc": None, "ts_utc": _utc_now_iso()}
+        reqs, last_dt = row
+        requests = _to_int_or_none(reqs) or 0
+        return {
+            "ok": True,
+            "window": {"since_minutes": mins},
+            "running": bool(requests > 0),
+            "requests": int(requests),
+            "last_fetched_at_utc": _to_iso_or_none(last_dt),
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_daily_fixtures_by_date_status_failed", details=str(e))
+
+
+@app.tool()
 async def get_last_sync_time(endpoint: str) -> dict:
     """
     When was the last successful RAW fetch for an endpoint?

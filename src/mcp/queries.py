@@ -135,6 +135,16 @@ LIVE_LOOP_ACTIVITY_QUERY = """
       AND (requested_params->>'live') = 'all'
 """
 
+DAILY_FIXTURES_BY_DATE_ACTIVITY_QUERY = """
+    SELECT
+      COUNT(*)::int AS requests,
+      MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND fetched_at >= NOW() - make_interval(mins => %s)
+      AND (requested_params ? 'date')
+"""
+
 LAST_QUOTA_HEADERS_QUERY = """
     SELECT
       fetched_at,
