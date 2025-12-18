@@ -125,6 +125,16 @@ LAST_SYNC_TIME_QUERY = """
     WHERE endpoint = %s
 """
 
+LIVE_LOOP_ACTIVITY_QUERY = """
+    SELECT
+      COUNT(*)::int AS requests,
+      MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND fetched_at >= NOW() - make_interval(mins => %s)
+      AND (requested_params->>'live') = 'all'
+"""
+
 LAST_QUOTA_HEADERS_QUERY = """
     SELECT
       fetched_at,

@@ -261,6 +261,14 @@ def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
                 script = str(jid)
             else:
                 script = str(obj.get("script") or obj.get("component") or "unknown")
+
+            # Alias common script-style names to scheduler job_id's (so get_job_status() can merge correctly).
+            # scripts/daily_sync.py -> scheduler job_id=daily_fixtures_by_date
+            # scripts/standings_sync.py -> scheduler job_id=daily_standings
+            if script == "daily_sync":
+                script = "daily_fixtures_by_date"
+            elif script == "standings_sync":
+                script = "daily_standings"
             if job_name and script != job_name:
                 continue
             if script in last_by_script:
@@ -280,6 +288,10 @@ def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
         if not m_job:
             continue
         script = str(m_job.group("job_id"))
+        if script == "daily_sync":
+            script = "daily_fixtures_by_date"
+        elif script == "standings_sync":
+            script = "daily_standings"
         if job_name and script != job_name:
             continue
         if script in last_by_script:
@@ -482,6 +494,33 @@ async def get_rate_limit_status() -> dict:
         }
     except Exception as e:
         return _ok_error("get_rate_limit_status_failed", details=str(e))
+
+
+@app.tool()
+async def get_live_loop_status(since_minutes: int = 5) -> dict:
+    """
+    Report whether live loop is actively polling /fixtures?live=all by inspecting RAW.
+
+    Args:
+        since_minutes: Lookback window (default 5, capped to 1440)
+    """
+    try:
+        mins = max(1, min(int(since_minutes), 60 * 24))
+        row = await _db_fetchone_async(queries.LIVE_LOOP_ACTIVITY_QUERY, (mins,))
+        if not row:
+            return {"ok": True, "window": {"since_minutes": mins}, "running": False, "requests": 0, "last_fetched_at_utc": None, "ts_utc": _utc_now_iso()}
+        reqs, last_dt = row
+        requests = _to_int_or_none(reqs) or 0
+        return {
+            "ok": True,
+            "window": {"since_minutes": mins},
+            "running": bool(requests > 0),
+            "requests": int(requests),
+            "last_fetched_at_utc": _to_iso_or_none(last_dt),
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_live_loop_status_failed", details=str(e))
 
 
 @app.tool()

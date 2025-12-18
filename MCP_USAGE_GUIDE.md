@@ -180,6 +180,11 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 - `get_raw_error_summary(since_minutes=60, endpoint=None, top_endpoints_limit=25)`
 - `get_recent_log_errors(job_name=None, limit=50)`
 
+### 5.4 Live loop gözlemi
+- `get_live_loop_status(since_minutes=5)`
+  - Prod’da `ENABLE_LIVE_LOOP=1` olduğunda `/fixtures?live=all` polling’in RAW’a düştüğünü doğrular.
+  - Redeploy sonrası “live loop açık mı?” sorusunun en net cevabı.
+
 ### 5.3 Veri sorguları
 - `query_fixtures(league_id=None, date=None, status=None, limit=10)`
 - `query_standings(league_id, season)`
