@@ -27,6 +27,17 @@ jobs:
       endpoint: "/countries"
       min_count: 100
 
+  # NOTE (prod ops):
+  # - bootstrap_leagues / bootstrap_teams are intentionally disabled by default.
+  #   Reason: they can be expensive and create unnecessary UPSERT churn if scheduled weekly.
+  # - When you DO enable them for a one-off refresh, you generally should NOT duplicate
+  #   tracked league lists here.
+  #   Config-driven inheritance: if tracked_leagues is left empty below, the scheduler will
+  #   automatically inherit league IDs from `config/jobs/daily.yaml -> tracked_leagues[*].id`.
+  # - Season: if params.season is null, scheduler will infer it ONLY when unambiguous
+  #   (top-level daily.yaml season exists, or all tracked_leagues share the same season).
+  #   If daily tracked_leagues contains mixed seasons (e.g. 2025 + 2026), set params.season explicitly.
+
   - job_id: "bootstrap_leagues"
     type: "static_bootstrap"
     enabled: false
