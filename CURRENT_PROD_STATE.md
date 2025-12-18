@@ -22,6 +22,21 @@ Prod network notu:
 - **Resolver çıktısı**: `config/resolved_tracked_leagues.yaml` (audit amaçlı)
 - **Rate limiter**: `config/rate_limiter.yaml` (soft cap + emergency stop)
 
+## 2.1 Bugün-bülten gap kapandı: global_by_date (fixtures_fetch_mode)
+
+Prod’da “bültende maç var ama sistemde yok” sorunu için `daily_fixtures_by_date` artık **global-by-date** modunda çalışır:
+- Config: `config/jobs/daily.yaml` en üst satır:
+  - `fixtures_fetch_mode: global_by_date`
+- Davranış: `GET /fixtures?date=YYYY-MM-DD` (gerekirse paging)
+- Sonuç: tracked olmayan kupalar/UEFA gibi competition’lar da “o gün” oynanıyorsa CORE’a düşer.
+
+Deterministik kanıt (örnek):
+- RAW (league filter olmayan global çağrı):
+  - `requested_params={"date":"2025-12-18","timezone":"UTC"}`
+  - `results=97`, `response_len=97`
+- CORE:
+  - `DATE(core.fixtures.date UTC)='2025-12-18'` için `COUNT(*)=96`
+
 ## 3) Backfill stratejisi (SeçenekB)
 
 - Varsayılan backfill pairs:
@@ -89,6 +104,14 @@ Wave sonrası:
 - `get_raw_error_summary(since_minutes=60)` → 429/5xx artıyor mu?
 - `get_rate_limit_status()` → minute/daily trend
 - `get_database_stats()` → core.fixtures/core.teams artıyor mu?
+
+## 7.1 Live panel doğrulaması (UECL örneği)
+
+UEFA Europa Conference League (UECL) prod live panel için league_id:
+- `core.leagues` → `UEFA Europa Conference League` = **848**
+
+DB kanıtı (live sırasında):
+- `SELECT COUNT(*) FROM mart.live_score_panel WHERE league_id=848;`
 
 ## 8) Kullanılmayan / redundant dosyalar (silme önerisi)
 

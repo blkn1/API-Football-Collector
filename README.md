@@ -52,6 +52,7 @@ This repo ships a root `Dockerfile` and a Compose stack in `docker-compose.yml` 
 - **collector**: APScheduler service that runs enabled non-live jobs from `config/jobs/*.yaml`
 - **live_loop**: optional `/fixtures?live=all` poller (15s). Controlled by `ENABLE_LIVE_LOOP=1`. Default: off.
 - **mcp**: read-only query interface (Coolify: HTTP/SSE)
+- **read_api**: dış tüketim için read-only REST + SSE (ops, n8n, dashboard)
 
 Minimal steps:
 
@@ -75,6 +76,13 @@ Notlar:
 - Streamable HTTP MCP **stateful** çalışır (session + initialize). Ayrıntılar: `MCP_USAGE_GUIDE.md`.
 - Claude Desktop prod MCP’ye bağlanırken stdio→streamable-http adapter kullanır. Ayrıntılar: `MCP_USAGE_GUIDE.md` (bölüm 4).
 - Prod smoke test: `bash scripts/smoke_mcp.sh`
+
+Read API (REST + SSE):
+- Health: `GET /v1/health`
+- Quota: `GET /v1/quota`
+- Fixtures: `GET /v1/fixtures?date=YYYY-MM-DD&limit=200`
+- Live scores (SSE): `GET /v1/sse/live-scores`
+- Prod smoke test (curl): `bash scripts/smoke_read_api.sh`
 
 Enable live loop (optional):
 

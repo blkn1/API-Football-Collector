@@ -61,9 +61,27 @@ Bu dosya prod’daki “operasyonel gerçeklik”tir:
 Kural:
 - “Yeni lig takip edilecekse” tek doğru yer: **`daily.yaml tracked_leagues`**
 
+#### 3.4.1 fixtures_fetch_mode (bülten gap çözümü)
+`config/jobs/daily.yaml` en üstünde:
+- `fixtures_fetch_mode: global_by_date`
+
+Bu ayar şunu değiştirir:
+- `per_tracked_leagues`: `/fixtures?league&season&date` → sadece tracked ligler
+- `global_by_date`: `/fixtures?date=YYYY-MM-DD` (gerekirse paging) → o gün oynanan **kupalar/UEFA dahil** tüm fixtures
+
+Prod doğrulama (MCP):
+- `get_daily_fixtures_by_date_status()` içinde `global_requests>0` ve `results_sum>0`
+
 ### 3.5 `config/jobs/live.yaml`
 - Scheduler içinde “live_loop job” tanımlı olsa bile, prod’da live loop ayrı servis olarak çalıştırılır.
 - `ENABLE_LIVE_LOOP=1` ile live loop container aktif edilir.
+
+#### 3.5.1 Live loop tracked_leagues (UECL örneği)
+Live loop yalnızca `/fixtures?live=all` çağrısı yapar; ama hangi maçların CORE’a yazılacağını `tracked_leagues` belirler.
+
+Örnek:
+- UEFA Europa Conference League = **848**
+- `config/jobs/live.yaml` → `filters.tracked_leagues` içine `- 848` eklenirse live panelde görünür.
 
 ### 3.6 `config/jobs/static.yaml`
 - Countries/timezones gibi “static bootstrap” job’ları.

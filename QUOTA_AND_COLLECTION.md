@@ -29,9 +29,12 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
 - `bootstrap_countries` → `GET /countries` (aylık)
 
 ### 3.2 Günlük/operasyonel (her gün açık)
-- `daily_fixtures_by_date` → `GET /fixtures?date=YYYY-MM-DD` (saatlik)
+- `daily_fixtures_by_date` → `GET /fixtures?date=YYYY-MM-DD` (***/30 dakikada bir***)
   - **RAW**: `/fixtures`
   - **CORE**: `core.fixtures` (+ bazı nested bloklar gelirse `core.fixture_details` JSONB)
+  - **Mod**: `config/jobs/daily.yaml -> fixtures_fetch_mode`
+    - `global_by_date`: date-only çağrı + paging (kupalar/UEFA dahil “o gün” tüm maçlar)
+    - `per_tracked_leagues`: league+season+date çağrıları (tracked list ile sınırlı)
 - `daily_standings` → `GET /standings?league&season` (**per-league season**, günlük)
   - **RAW**: `/standings`
   - **CORE**: `core.standings` (league+season bazında replace)

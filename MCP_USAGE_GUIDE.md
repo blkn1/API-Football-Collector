@@ -228,6 +228,11 @@ Claude’a şu sırayla tool çağırmasını söyle (prod ops “minimum + geni
    - Beklenen:
      - `daily_fixtures_by_date` cron’u çalışıyorsa `running=true` ve `last_fetched_at_utc` son 30–60 dk içinde güncellenir (*/30 ayarında).
    - Not: Bu tool log parse’a dayanmaz; doğrudan RAW’dan kanıtlar.
+   - Alanlar (global_by_date için kritik):
+     - `global_requests`: date-only (league filtresiz) istek sayısı
+     - `pages_fetched`: global date-only isteklerde sayfa sayısı (page paramı yoksa 1 sayılır)
+     - `max_page`: görülen en yüksek sayfa
+     - `results_sum`: global date-only isteklerde toplam results (fixture sayısı)
 7) `get_last_sync_time(endpoint="/fixtures")`
    - Beklenen: `/fixtures` için son fetch timestamp’ı güncel.
 
