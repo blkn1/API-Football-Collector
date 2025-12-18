@@ -34,6 +34,7 @@ from src.jobs.static_bootstrap import (
 )
 from src.utils.config import load_api_config, load_rate_limiter_config
 from src.utils.db import query_scalar
+from src.utils.job_config import apply_bootstrap_scope_inheritance
 from src.utils.logging import get_logger, setup_logging
 
 
@@ -74,26 +75,28 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+
 def _load_jobs_from_yaml(path: Path) -> list[Job]:
     cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw = cfg.get("jobs") or []
     out: list[Job] = []
+    jobs_dir = path.parent
     for j in raw:
         if not isinstance(j, dict):
             continue
-        out.append(
-            Job(
-                job_id=str(j.get("job_id") or ""),
-                enabled=bool(j.get("enabled", False)),
-                type=str(j.get("type") or ""),
-                endpoint=(str(j.get("endpoint")) if j.get("endpoint") is not None else None),
-                params=(j.get("params") or {}),
-                interval=(j.get("interval") or None),
-                dependencies=[str(x) for x in (j.get("dependencies") or []) if x],
-                filters=(j.get("filters") or {}),
-                mode=(j.get("mode") or {}),
-            )
+        j = apply_bootstrap_scope_inheritance(j, jobs_dir=jobs_dir)
+        job = Job(
+            job_id=str(j.get("job_id") or ""),
+            enabled=bool(j.get("enabled", False)),
+            type=str(j.get("type") or ""),
+            endpoint=(str(j.get("endpoint")) if j.get("endpoint") is not None else None),
+            params=(j.get("params") or {}),
+            interval=(j.get("interval") or None),
+            dependencies=[str(x) for x in (j.get("dependencies") or []) if x],
+            filters=(j.get("filters") or {}),
+            mode=(j.get("mode") or {}),
         )
+        out.append(job)
     return [x for x in out if x.job_id and x.type]
 
 
