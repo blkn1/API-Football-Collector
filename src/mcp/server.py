@@ -4,6 +4,7 @@ import asyncio
 import importlib
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import date as date_type
@@ -222,43 +223,80 @@ def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
     except Exception as e:
         return {"log_file": str(log_path), "jobs": [], "error": f"failed_to_read_logs: {e}"}
 
+    # We want "most recent event" per job_id.
+    # The log file can contain a mix of:
+    # - structlog JSON lines (preferred)
+    # - plain-text APScheduler lines (Coolify/docker logs sometimes mirror into the same file)
+    #
+    # Strategy:
+    # - iterate from newest -> oldest (reverse)
+    # - record the FIRST event we can attribute to each job_id
     last_by_script: dict[str, dict[str, Any]] = {}
-    for ln in lines:
+
+    # Plain text patterns (best-effort)
+    # Example:
+    #   2025-12-18 04:19:51 [info     ] job_scheduled component=collector_scheduler job_id=daily_fixtures_by_date ...
+    _re_plain_job_id = re.compile(r"\bjob_id=(?P<job_id>[A-Za-z0-9_\-]+)\b")
+    _re_plain_event = re.compile(r"\]\s+(?P<event>[A-Za-z0-9_]+)\b")
+    _re_plain_ts = re.compile(r"^(?P<ts>\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")
+    # APScheduler:
+    #   Job "fixtures_backfill_league_season (trigger: ...)" executed successfully
+    _re_aps_job = re.compile(r'^Job "(?P<job_id>[A-Za-z0-9_\-]+)\s+\(trigger:')
+    _re_aps_running = re.compile(r'^Running job "(?P<job_id>[A-Za-z0-9_\-]+)\s+\(trigger:')
+
+    for ln in reversed(lines):
         ln = ln.strip()
         if not ln:
             continue
-        if not ln.startswith("{"):
-            # ignore non-JSON noise (e.g. httpx request logs)
-            continue
-        try:
-            obj = json.loads(ln)
-        except Exception:
-            continue
 
-        # Prefer job_id when available so scheduler events map to configured job_id's.
-        # This avoids grouping all scheduler events under component=collector_scheduler.
-        jid = obj.get("job_id")
-        if jid is not None and str(jid).strip():
-            script = str(jid)
-        else:
-            script = str(obj.get("script") or obj.get("component") or "unknown")
-        if job_name and script != job_name:
-            continue
+        # JSON path
+        if ln.startswith("{"):
+            try:
+                obj = json.loads(ln)
+            except Exception:
+                continue
 
-        ts = obj.get("timestamp")
-        event = obj.get("event")
-        level = obj.get("level")
+            jid = obj.get("job_id")
+            if jid is not None and str(jid).strip():
+                script = str(jid)
+            else:
+                script = str(obj.get("script") or obj.get("component") or "unknown")
+            if job_name and script != job_name:
+                continue
+            if script in last_by_script:
+                continue
 
-        # Track "last event" per script
-        prev = last_by_script.get(script)
-        if prev is None or (ts and prev.get("timestamp") and ts >= prev.get("timestamp")) or prev is None:
             last_by_script[script] = {
                 "job_name": script,
-                "timestamp": ts,
-                "event": event,
-                "level": level,
+                "timestamp": obj.get("timestamp"),
+                "event": obj.get("event"),
+                "level": obj.get("level"),
                 "raw": obj,
             }
+            continue
+
+        # Plain-text fallback
+        m_job = _re_plain_job_id.search(ln) or _re_aps_job.search(ln) or _re_aps_running.search(ln)
+        if not m_job:
+            continue
+        script = str(m_job.group("job_id"))
+        if job_name and script != job_name:
+            continue
+        if script in last_by_script:
+            continue
+
+        m_ev = _re_plain_event.search(ln)
+        event = m_ev.group("event") if m_ev else None
+        m_ts = _re_plain_ts.search(ln)
+        ts = m_ts.group("ts") if m_ts else None
+
+        last_by_script[script] = {
+            "job_name": script,
+            "timestamp": ts,
+            "event": event,
+            "level": None,
+            "raw": {"line": ln},
+        }
 
     jobs: list[dict[str, Any]] = []
     for script, info in sorted(last_by_script.items(), key=lambda kv: (kv[0])):
