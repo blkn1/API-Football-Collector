@@ -205,15 +205,53 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 
 ## 7) Claude Desktop test senaryosu (minimum acceptance)
 
-Claude’a şu sırayla tool çağırmasını söyle:
-1) `get_database_stats()` → DB bağlantısı ve sayımlar geliyor mu?
-2) `get_rate_limit_status()` → daily/minute remaining doluyor mu?
-3) `get_job_status()` → job listesi + log bilgisi geliyor mu?
-4) `get_backfill_progress()` → backfill state görülebiliyor mu?
-5) `get_raw_error_summary(since_minutes=60)` → son 60 dk health summary
+Claude’a şu sırayla tool çağırmasını söyle (prod ops “minimum + genişletilmiş”):
+
+### 7.1 Minimum (deploy sonrası smoke / acceptance)
+1) `get_database_stats()`
+   - DB bağlantısı OK mi?
+   - RAW/CORE sayımlar geliyor mu?
+2) `get_rate_limit_status()`
+   - `daily_remaining` geliyor mu?
+   - `minute_remaining` None olabilir (header her zaman gelmeyebilir) → bu tek başına FAIL değildir.
+3) `get_raw_error_summary(since_minutes=60)`
+   - Son 60 dk: `err_4xx/err_5xx/envelope_errors` artıyor mu?
+4) `get_backfill_progress()`
+   - `pending_tasks` düşüyor mu? (backfill bitmişse 0 kalır)
+
+### 7.2 Prod “sürekli çalışma” doğrulamaları (live + daily cadence)
+5) `get_live_loop_status(since_minutes=5)`
+   - Beklenen:
+     - `ENABLE_LIVE_LOOP=1` ise `running=true` ve `requests>0`
+     - `ENABLE_LIVE_LOOP=0` ise `running=false`
+6) `get_daily_fixtures_by_date_status(since_minutes=180)`
+   - Beklenen:
+     - `daily_fixtures_by_date` cron’u çalışıyorsa `running=true` ve `last_fetched_at_utc` son 30–60 dk içinde güncellenir (*/30 ayarında).
+   - Not: Bu tool log parse’a dayanmaz; doğrudan RAW’dan kanıtlar.
+7) `get_last_sync_time(endpoint="/fixtures")`
+   - Beklenen: `/fixtures` için son fetch timestamp’ı güncel.
+
+### 7.3 Job gözlemi (opsiyonel ama önerilir)
+8) `get_job_status()`
+   - Job listesi ve son event’ler (best-effort).
+   - Not: Log formatı/volume’a göre bazı job’lar “unknown” görünebilir; bu durumda 7.2’deki RAW tabanlı tool’lar esas alınır.
+
+### 7.4 Coverage gözlemi (opsiyonel)
+9) `get_coverage_summary(season=<CURRENT>)`
+10) `get_coverage_status(league_id=<LID>, season=<CURRENT>)`
+   - Beklenen: overall coverage yüksek; `lag_minutes` scheduler cadence ile uyumlu.
 
 PASS kriteri:
-- İlk 3 tool `ok=true` dönüyor ve exception yok.
+- 7.1 minimum set’te tool’lar exception üretmeden dönüyor (`ok=true`).
+- `get_raw_error_summary()` içinde 4xx/5xx/envelope_errors anormal yükselmiyor.
+- Live loop açık ise `get_live_loop_status().running=true`.
+- Daily fixtures cron ayarlı ise `get_daily_fixtures_by_date_status().running=true`.
+
+FAIL kriteri:
+- `get_database_stats()` DB error / exception
+- `get_raw_error_summary()` 429/5xx/envelope_errors yükseliyor
+- Live loop açık olmasına rağmen `get_live_loop_status().running=false` (deploy/env sorunu)
+- Daily fixtures cron ayarlı olmasına rağmen `get_daily_fixtures_by_date_status().running=false` (scheduler veya config sorunu)
 
 ---
 
