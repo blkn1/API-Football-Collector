@@ -163,6 +163,9 @@ Bu repo Read API için sabit bir domain hard-code etmez. Prod’da Read API base
 READ_API_BASE="https://<SERVICE_FQDN_READ_API>"
 ```
 
+Bizim prod örneği:
+- `https://readapi.zinalyze.pro`
+
 ---
 
 ## 4) Günlük operasyon checklist

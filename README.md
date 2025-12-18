@@ -84,6 +84,9 @@ Read API (REST + SSE):
 - Live scores (SSE): `GET /v1/sse/live-scores`
 - Prod smoke test (curl): `bash scripts/smoke_read_api.sh`
 
+Prod domain (örnek):
+- `https://readapi.zinalyze.pro`
+
 Enable live loop (optional):
 
 ```bash
