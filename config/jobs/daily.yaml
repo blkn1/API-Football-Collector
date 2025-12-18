@@ -1,3 +1,5 @@
+fixtures_fetch_mode: global_by_date  # global_by_date | per_tracked_leagues
+
 jobs:
 - job_id: daily_standings
   type: incremental_daily

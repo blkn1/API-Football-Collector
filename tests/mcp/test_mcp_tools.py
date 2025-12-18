@@ -164,9 +164,9 @@ async def test_get_job_status_merges_logs_and_config(monkeypatch, tmp_path: Path
 
     out = await server.get_job_status()
     assert out["ok"] is True
-    # Should include config job + log-derived script.
+    # Should include config job. Log scripts may be aliased to job_id for better observability.
     ids = sorted([(x.get("job_id") or x.get("job_name")) for x in out["jobs"]])
     assert "daily_fixtures_by_date" in ids
-    assert "daily_sync" in ids
+    assert "daily_sync" not in ids
 
 

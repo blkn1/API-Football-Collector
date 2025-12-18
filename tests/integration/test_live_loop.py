@@ -24,7 +24,19 @@ from utils.db import init_pool, query_scalar, reset_pool, upsert_core, upsert_ra
 
 
 def _docker_available() -> bool:
-    return shutil.which("docker") is not None
+    if shutil.which("docker") is None:
+        return False
+    # Ensure the docker daemon is reachable (CI/prod hosts often have docker client but no daemon access).
+    try:
+        subprocess.run(
+            ["docker", "info"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except Exception:
+        return False
 
 
 class _FakeClientSeq:

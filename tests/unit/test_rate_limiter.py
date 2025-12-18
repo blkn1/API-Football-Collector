@@ -32,7 +32,9 @@ def test_refill_mechanism():
 def test_thread_safety():
     # Keep refill effectively disabled to make the assertion deterministic.
     # (Refill is tested separately in test_refill_mechanism.)
-    limiter = RateLimiter(max_tokens=50, refill_rate=0.0001)
+    # NOTE: RateLimiter defaults to initial_tokens=0 to avoid a startup burst in production.
+    # For this unit test we want a full bucket so threads do not block.
+    limiter = RateLimiter(max_tokens=50, refill_rate=0.0001, initial_tokens=50)
 
     start_barrier = threading.Barrier(11)
 

@@ -51,8 +51,12 @@ def _utc_today_str() -> str:
     return datetime.now(timezone.utc).date().isoformat()
 
 
-def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
+def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague], str]:
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+    fetch_mode = str(cfg.get("fixtures_fetch_mode") or "per_tracked_leagues").strip()
+    if fetch_mode not in ("per_tracked_leagues", "global_by_date"):
+        raise ValueError(f"Invalid fixtures_fetch_mode in {config_path}: {fetch_mode} (expected per_tracked_leagues|global_by_date)")
 
     # Preferred config shape (Phase 3):
     # season: 2024
@@ -98,7 +102,23 @@ def _load_daily_config(config_path: Path) -> tuple[int, list[TrackedLeague]]:
             f"No tracked leagues configured in {config_path}. Add 'tracked_leagues:' list or fill fixtures jobs with params.league."
         )
 
-    return int(season), leagues
+    return int(season), leagues, fetch_mode
+
+
+def _fixture_group_key(item: dict[str, Any]) -> tuple[int, int] | None:
+    """
+    Determine (league_id, season) from a /fixtures response item.
+    Returns None if the shape is unexpected.
+    """
+    try:
+        league = (item or {}).get("league") or {}
+        lid = league.get("id")
+        season = league.get("season")
+        if lid is None or season is None:
+            return None
+        return (int(lid), int(season))
+    except Exception:
+        return None
 
 
 def _refresh_mart_views(conn) -> None:
@@ -135,7 +155,7 @@ async def sync_daily_fixtures(
     - Refreshes MART coverage/dashboard views
     """
     cfg_path = config_path or (PROJECT_ROOT / "config" / "jobs" / "daily.yaml")
-    season, tracked = _load_daily_config(cfg_path)
+    season, tracked, fetch_mode = _load_daily_config(cfg_path)
 
     leagues = tracked
     if league_filter is not None:
@@ -145,12 +165,19 @@ async def sync_daily_fixtures(
 
     # Dry-run must NOT consume quota and must NOT require API key / DB.
     if dry_run:
+        planned_requests: list[dict[str, Any]] = []
+        if league_filter is not None or fetch_mode == "per_tracked_leagues":
+            planned_requests = [{"endpoint": "/fixtures", "params": {"league": l.id, "season": season, "date": target_date_utc}} for l in leagues]
+        else:
+            planned_requests = [{"endpoint": "/fixtures", "params": {"date": target_date_utc, "page": 1}, "note": "global_by_date_paging"}]
+
         logger.info(
             "daily_sync_dry_run_planned",
             date=target_date_utc,
             season=season,
+            fixtures_fetch_mode=fetch_mode,
             leagues=[l.id for l in leagues],
-            requests=[{"endpoint": "/fixtures", "params": {"league": l.id, "season": season, "date": target_date_utc}} for l in leagues],
+            requests=planned_requests,
         )
         return DailySyncSummary(
             date_utc=target_date_utc,
@@ -177,156 +204,360 @@ async def sync_daily_fixtures(
     api_requests = 0
     total_fixtures = 0
 
-    logger.info("daily_sync_started", date=target_date_utc, season=season, dry_run=dry_run, leagues=[l.id for l in leagues])
+    logger.info(
+        "daily_sync_started",
+        date=target_date_utc,
+        season=season,
+        dry_run=dry_run,
+        fixtures_fetch_mode=fetch_mode,
+        leagues=[l.id for l in leagues],
+    )
 
     try:
-        for l in leagues:
-            league_id = l.id
-            league_name = l.name or f"League {league_id}"
-            logger.info("league_sync_started", league_id=league_id, league_name=league_name, date=target_date_utc, season=season)
+        # If a specific league is requested, force per-tracked-leagues behavior for determinism/tests.
+        effective_mode = "per_tracked_leagues" if league_filter is not None else fetch_mode
 
-            league_season = int(l.season) if l.season is not None else int(season)
-            params = {"league": league_id, "season": league_season, "date": target_date_utc}
+        if effective_mode == "per_tracked_leagues":
+            for l in leagues:
+                league_id = l.id
+                league_name = l.name or f"League {league_id}"
+                logger.info("league_sync_started", league_id=league_id, league_name=league_name, date=target_date_utc, season=season)
 
-            try:
-                limiter2.acquire_token()
-                result: APIResult = await client2.get("/fixtures", params=params)
-                api_requests += 1
-                limiter2.update_from_headers(result.headers)
-            except EmergencyStopError as e:
-                logger.error("emergency_stop_daily_quota_low", league_id=league_id, err=str(e))
-                break
-            except RateLimitError as e:
-                # Respect rate limits: wait a bit, then continue to next league.
-                logger.warning("api_rate_limited", league_id=league_id, err=str(e), sleep_seconds=5)
-                await asyncio.sleep(5)
-                continue
-            except APIClientError as e:
-                logger.error("api_call_failed", league_id=league_id, err=str(e))
-                continue
-            except Exception as e:
-                logger.error("api_call_unexpected_error", league_id=league_id, err=str(e))
-                continue
+                league_season = int(l.season) if l.season is not None else int(season)
+                params = {"league": league_id, "season": league_season, "date": target_date_utc}
 
-            envelope = result.data or {}
-            resp_count = len(envelope.get("response") or [])
-            total_fixtures += resp_count
+                try:
+                    limiter2.acquire_token()
+                    result: APIResult = await client2.get("/fixtures", params=params)
+                    api_requests += 1
+                    limiter2.update_from_headers(result.headers)
+                except EmergencyStopError as e:
+                    logger.error("emergency_stop_daily_quota_low", league_id=league_id, err=str(e))
+                    break
+                except RateLimitError as e:
+                    # Respect rate limits: wait a bit, then continue to next league.
+                    logger.warning("api_rate_limited", league_id=league_id, err=str(e), sleep_seconds=5)
+                    await asyncio.sleep(5)
+                    continue
+                except APIClientError as e:
+                    logger.error("api_call_failed", league_id=league_id, err=str(e))
+                    continue
+                except Exception as e:
+                    logger.error("api_call_unexpected_error", league_id=league_id, err=str(e))
+                    continue
 
-            # RAW insert (always, unless dry-run)
-            upsert_raw(
-                endpoint="/fixtures",
-                requested_params=params,
-                status_code=result.status_code,
-                response_headers=result.headers,
-                body=envelope,
-            )
-            logger.info("raw_stored", league_id=league_id, fixtures=resp_count)
+                envelope = result.data or {}
+                resp_count = len(envelope.get("response") or [])
+                total_fixtures += resp_count
 
-            # Ensure CORE dependency order (leagues + teams must exist before fixtures insert; avoids FK violations).
-            try:
-                await ensure_fixtures_dependencies(
-                    league_id=league_id,
-                    season=league_season,
-                    fixtures_envelope=envelope,
-                    client=client2,
-                    limiter=limiter2,
+                # RAW insert
+                upsert_raw(
+                    endpoint="/fixtures",
+                    requested_params=params,
+                    status_code=result.status_code,
+                    response_headers=result.headers,
+                    body=envelope,
                 )
-            except Exception as e:
-                logger.error("dependency_bootstrap_failed", league_id=league_id, err=str(e))
-                continue
+                logger.info("raw_stored", league_id=league_id, fixtures=resp_count)
 
-            # Transform
-            fixtures_rows, details_rows = transform_fixtures(envelope)
-            fixture_ids = [int(r["id"]) for r in fixtures_rows]
-            details_ids = [int(r["fixture_id"]) for r in details_rows]
-            venue_ids = [int(r["venue_id"]) for r in fixtures_rows if r.get("venue_id") is not None]
-
-            # Ensure referenced venues exist before inserting fixtures (prevents FK violations).
-            # Best-effort: if this fails, the fixture upsert may still fail; we log and continue.
-            try:
-                # IMPORTANT: Venue backfill can be extremely expensive (per-venue API calls).
-                # Keep it disabled by default; enable explicitly via env if you want it.
-                max_venues = int(os.getenv("VENUES_BACKFILL_MAX_PER_RUN", "0"))
-                if max_venues <= 0:
-                    upserted_venues = 0
-                else:
-                    upserted_venues = await backfill_missing_venues_for_fixtures(
-                        venue_ids=venue_ids,
+                # Dependencies
+                try:
+                    await ensure_fixtures_dependencies(
+                        league_id=league_id,
+                        season=league_season,
+                        fixtures_envelope=envelope,
                         client=client2,
                         limiter=limiter2,
-                        dry_run=False,
-                        max_to_fetch=max_venues,
                     )
-                if upserted_venues:
-                    logger.info("venues_backfilled", league_id=league_id, upserted=upserted_venues)
-            except Exception as e:
-                logger.warning("venues_backfill_failed", league_id=league_id, err=str(e))
+                except Exception as e:
+                    logger.error("dependency_bootstrap_failed", league_id=league_id, err=str(e))
+                    continue
 
-            # CORE UPSERT atomically (fixtures + details)
-            try:
-                with get_transaction() as conn:
-                    existing_f = _count_existing(conn, "core.fixtures", "id", fixture_ids)
-                    existing_d = _count_existing(conn, "core.fixture_details", "fixture_id", details_ids)
+                # Transform
+                fixtures_rows, details_rows = transform_fixtures(envelope)
+                fixture_ids = [int(r["id"]) for r in fixtures_rows]
+                details_ids = [int(r["fixture_id"]) for r in details_rows]
+                venue_ids = [int(r["venue_id"]) for r in fixtures_rows if r.get("venue_id") is not None]
 
-                    upsert_core(
-                        full_table_name="core.fixtures",
-                        rows=fixtures_rows,
-                        conflict_cols=["id"],
-                        update_cols=[
-                            "league_id",
-                            "season",
-                            "round",
-                            "date",
-                            "api_timestamp",
-                            "referee",
-                            "timezone",
-                            "venue_id",
-                            "home_team_id",
-                            "away_team_id",
-                            "status_short",
-                            "status_long",
-                            "elapsed",
-                            "goals_home",
-                            "goals_away",
-                            "score",
-                        ],
-                        conn=conn,
-                    )
+                # Optional expensive venue backfill
+                try:
+                    max_venues = int(os.getenv("VENUES_BACKFILL_MAX_PER_RUN", "0"))
+                    if max_venues <= 0:
+                        upserted_venues = 0
+                    else:
+                        upserted_venues = await backfill_missing_venues_for_fixtures(
+                            venue_ids=venue_ids,
+                            client=client2,
+                            limiter=limiter2,
+                            dry_run=False,
+                            max_to_fetch=max_venues,
+                        )
+                    if upserted_venues:
+                        logger.info("venues_backfilled", league_id=league_id, upserted=upserted_venues)
+                except Exception as e:
+                    logger.warning("venues_backfill_failed", league_id=league_id, err=str(e))
 
-                    if details_rows:
+                # CORE UPSERT atomically
+                try:
+                    with get_transaction() as conn:
+                        existing_f = _count_existing(conn, "core.fixtures", "id", fixture_ids)
+                        existing_d = _count_existing(conn, "core.fixture_details", "fixture_id", details_ids)
+
                         upsert_core(
-                            full_table_name="core.fixture_details",
-                            rows=details_rows,
-                            conflict_cols=["fixture_id"],
-                            update_cols=["events", "lineups", "statistics", "players"],
+                            full_table_name="core.fixtures",
+                            rows=fixtures_rows,
+                            conflict_cols=["id"],
+                            update_cols=[
+                                "league_id",
+                                "season",
+                                "round",
+                                "date",
+                                "api_timestamp",
+                                "referee",
+                                "timezone",
+                                "venue_id",
+                                "home_team_id",
+                                "away_team_id",
+                                "status_short",
+                                "status_long",
+                                "elapsed",
+                                "goals_home",
+                                "goals_away",
+                                "score",
+                            ],
                             conn=conn,
                         )
 
-                new_f = max(0, len(fixture_ids) - existing_f)
-                upd_f = existing_f
-                new_d = max(0, len(details_ids) - existing_d)
-                upd_d = existing_d
+                        if details_rows:
+                            upsert_core(
+                                full_table_name="core.fixture_details",
+                                rows=details_rows,
+                                conflict_cols=["fixture_id"],
+                                update_cols=["events", "lineups", "statistics", "players"],
+                                conn=conn,
+                            )
+
+                    new_f = max(0, len(fixture_ids) - existing_f)
+                    upd_f = existing_f
+                    new_d = max(0, len(details_ids) - existing_d)
+                    upd_d = existing_d
+
+                    logger.info(
+                        "core_upserted",
+                        league_id=league_id,
+                        fixtures_total=len(fixture_ids),
+                        fixtures_new=new_f,
+                        fixtures_updated=upd_f,
+                        fixture_details_total=len(details_ids),
+                        fixture_details_new=new_d,
+                        fixture_details_updated=upd_d,
+                    )
+                except Exception as e:
+                    logger.error("db_upsert_failed", league_id=league_id, err=str(e))
+                    continue
+
+                q = limiter2.quota
+                logger.info(
+                    "quota_snapshot",
+                    league_id=league_id,
+                    daily_remaining=q.daily_remaining,
+                    minute_remaining=q.minute_remaining,
+                )
+        else:
+            # Global-by-date mode: fetch ALL fixtures for the date (paging) then group by (league_id, season).
+            logger.info("global_date_sync_started", date=target_date_utc)
+
+            max_pages = int(os.getenv("DAILY_FIXTURES_GLOBAL_MAX_PAGES", "250"))
+            page = 1
+            total_pages: int | None = None
+            dedup_by_fixture_id: dict[int, dict[str, Any]] = {}
+
+            while True:
+                params = {"date": target_date_utc, "page": int(page)}
+                try:
+                    limiter2.acquire_token()
+                    result: APIResult = await client2.get("/fixtures", params=params)
+                    api_requests += 1
+                    limiter2.update_from_headers(result.headers)
+                except EmergencyStopError as e:
+                    logger.error("emergency_stop_daily_quota_low", mode="global_by_date", err=str(e))
+                    break
+                except RateLimitError as e:
+                    logger.warning("api_rate_limited", mode="global_by_date", err=str(e), sleep_seconds=5)
+                    await asyncio.sleep(5)
+                    continue
+                except APIClientError as e:
+                    logger.error("api_call_failed", mode="global_by_date", page=page, err=str(e))
+                    break
+                except Exception as e:
+                    logger.error("api_call_unexpected_error", mode="global_by_date", page=page, err=str(e))
+                    break
+
+                envelope = result.data or {}
+                items = envelope.get("response") or []
+
+                # RAW insert per page
+                upsert_raw(
+                    endpoint="/fixtures",
+                    requested_params=params,
+                    status_code=result.status_code,
+                    response_headers=result.headers,
+                    body=envelope,
+                )
+
+                # Dedup by fixture id across pages (keep last seen)
+                for it in items:
+                    try:
+                        fid = int(((it or {}).get("fixture") or {}).get("id"))
+                    except Exception:
+                        continue
+                    dedup_by_fixture_id[fid] = it
+
+                if total_pages is None:
+                    try:
+                        total_pages = int(((envelope.get("paging") or {}).get("total")) or 1)
+                    except Exception:
+                        total_pages = 1
 
                 logger.info(
-                    "core_upserted",
-                    league_id=league_id,
-                    fixtures_total=len(fixture_ids),
-                    fixtures_new=new_f,
-                    fixtures_updated=upd_f,
-                    fixture_details_total=len(details_ids),
-                    fixture_details_new=new_d,
-                    fixture_details_updated=upd_d,
+                    "global_page_stored",
+                    page=page,
+                    total_pages=total_pages,
+                    fixtures_in_page=len(items),
+                    fixtures_dedup_total=len(dedup_by_fixture_id),
                 )
-            except Exception as e:
-                # get_transaction already rolls back; continue to next league.
-                logger.error("db_upsert_failed", league_id=league_id, err=str(e))
-                continue
 
-            # Quota snapshot after this league
+                if page >= (total_pages or 1):
+                    break
+                if page >= max_pages:
+                    logger.warning("global_by_date_page_cap_reached", max_pages=max_pages, observed_total_pages=total_pages)
+                    break
+
+                page += 1
+
+            total_fixtures += len(dedup_by_fixture_id)
+
+            # Group response items by (league_id, season) to preserve dependency order and FK safety.
+            grouped_items: dict[tuple[int, int], list[dict[str, Any]]] = {}
+            for it in dedup_by_fixture_id.values():
+                k = _fixture_group_key(it)
+                if k is None:
+                    continue
+                grouped_items.setdefault(k, []).append(it)
+
+            logger.info("global_grouping_complete", groups=len(grouped_items), fixtures=len(dedup_by_fixture_id))
+
+            # Process each group (dependencies -> transform -> upsert)
+            for (league_id, league_season), items in sorted(grouped_items.items(), key=lambda x: (x[0][0], x[0][1])):
+                league_name = f"League {league_id}"
+                logger.info(
+                    "league_sync_started",
+                    league_id=league_id,
+                    league_name=league_name,
+                    date=target_date_utc,
+                    season=league_season,
+                    mode="global_by_date",
+                    fixtures=len(items),
+                )
+
+                group_env = {"response": items}
+
+                try:
+                    await ensure_fixtures_dependencies(
+                        league_id=league_id,
+                        season=league_season,
+                        fixtures_envelope=group_env,
+                        client=client2,
+                        limiter=limiter2,
+                    )
+                except Exception as e:
+                    logger.error("dependency_bootstrap_failed", league_id=league_id, season=league_season, err=str(e))
+                    continue
+
+                fixtures_rows, details_rows = transform_fixtures(group_env)
+                fixture_ids = [int(r["id"]) for r in fixtures_rows]
+                details_ids = [int(r["fixture_id"]) for r in details_rows]
+                venue_ids = [int(r["venue_id"]) for r in fixtures_rows if r.get("venue_id") is not None]
+
+                try:
+                    max_venues = int(os.getenv("VENUES_BACKFILL_MAX_PER_RUN", "0"))
+                    if max_venues <= 0:
+                        upserted_venues = 0
+                    else:
+                        upserted_venues = await backfill_missing_venues_for_fixtures(
+                            venue_ids=venue_ids,
+                            client=client2,
+                            limiter=limiter2,
+                            dry_run=False,
+                            max_to_fetch=max_venues,
+                        )
+                    if upserted_venues:
+                        logger.info("venues_backfilled", league_id=league_id, upserted=upserted_venues)
+                except Exception as e:
+                    logger.warning("venues_backfill_failed", league_id=league_id, err=str(e))
+
+                try:
+                    with get_transaction() as conn:
+                        existing_f = _count_existing(conn, "core.fixtures", "id", fixture_ids)
+                        existing_d = _count_existing(conn, "core.fixture_details", "fixture_id", details_ids)
+
+                        upsert_core(
+                            full_table_name="core.fixtures",
+                            rows=fixtures_rows,
+                            conflict_cols=["id"],
+                            update_cols=[
+                                "league_id",
+                                "season",
+                                "round",
+                                "date",
+                                "api_timestamp",
+                                "referee",
+                                "timezone",
+                                "venue_id",
+                                "home_team_id",
+                                "away_team_id",
+                                "status_short",
+                                "status_long",
+                                "elapsed",
+                                "goals_home",
+                                "goals_away",
+                                "score",
+                            ],
+                            conn=conn,
+                        )
+
+                        if details_rows:
+                            upsert_core(
+                                full_table_name="core.fixture_details",
+                                rows=details_rows,
+                                conflict_cols=["fixture_id"],
+                                update_cols=["events", "lineups", "statistics", "players"],
+                                conn=conn,
+                            )
+
+                    new_f = max(0, len(fixture_ids) - existing_f)
+                    upd_f = existing_f
+                    new_d = max(0, len(details_ids) - existing_d)
+                    upd_d = existing_d
+
+                    logger.info(
+                        "core_upserted",
+                        league_id=league_id,
+                        fixtures_total=len(fixture_ids),
+                        fixtures_new=new_f,
+                        fixtures_updated=upd_f,
+                        fixture_details_total=len(details_ids),
+                        fixture_details_new=new_d,
+                        fixture_details_updated=upd_d,
+                    )
+                except Exception as e:
+                    logger.error("db_upsert_failed", league_id=league_id, err=str(e))
+                    continue
+
             q = limiter2.quota
             logger.info(
                 "quota_snapshot",
-                league_id=league_id,
+                mode="global_by_date",
                 daily_remaining=q.daily_remaining,
                 minute_remaining=q.minute_remaining,
             )
@@ -342,7 +573,10 @@ async def sync_daily_fixtures(
         # Coverage calculator (Phase 3): write per-league coverage rows into mart.coverage_status
         try:
             calc = CoverageCalculator()
-            for l in leagues:
+            # Keep existing coverage behavior: compute coverage for configured tracked leagues.
+            # In global_by_date mode we also ingest cups/UEFA etc, but we intentionally do not
+            # expand coverage rows for every competition to avoid unbounded mart growth.
+            for l in tracked:
                 cov_season = int(l.season) if l.season is not None else int(season)
                 cov = calc.calculate_fixtures_coverage(l.id, cov_season)
                 upsert_mart_coverage(coverage_data=cov)

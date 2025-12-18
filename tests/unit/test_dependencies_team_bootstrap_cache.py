@@ -20,8 +20,14 @@ async def test_ensure_teams_exist_for_league_cache_completed_but_missing_trigger
     # First check: missing teams exist in CORE -> should trigger refresh.
     calls = {"fetch": 0}
 
+    # Simulate "missing before refresh" then "resolved after refresh".
+    missing_seq = iter([{18270}, set()])
+
     def fake_missing(_team_ids: set[int]) -> set[int]:
-        return {18270}
+        try:
+            return next(missing_seq)
+        except StopIteration:
+            return set()
 
     async def fake_fetch_and_store(*, client, limiter, endpoint: str, params: dict):
         calls["fetch"] += 1

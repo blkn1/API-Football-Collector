@@ -530,6 +530,11 @@ async def get_daily_fixtures_by_date_status(since_minutes: int = 180) -> dict:
 
     This avoids relying on log parsing; it inspects RAW request history directly.
 
+    Notes:
+      - Works for both modes:
+        - per-tracked-leagues: requested_params includes {league, season, date}
+        - global_by_date paging: requested_params includes {date, page}
+
     Args:
         since_minutes: Lookback window (default 180, capped to 1440)
     """
