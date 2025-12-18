@@ -153,6 +153,16 @@ LIMIT 50;
 - IP allowlist (ops):
   - `READ_API_IP_ALLOWLIST` (comma-separated)
 
+### 3.4 Prod Read API URL (Coolify)
+Bu repo Read API için sabit bir domain hard-code etmez. Prod’da Read API base URL’ini şu şekilde belirleyin:
+- Coolify’de Read API servisine bir domain route atayın (örn: `https://readapi.<domain>`).
+- Varsa Coolify otomatik ENV’leri: `SERVICE_URL_READ_API` / `SERVICE_FQDN_READ_API` (bkz. `env_info.md`).
+
+Örnek (placeholder):
+```bash
+READ_API_BASE="https://<SERVICE_FQDN_READ_API>"
+```
+
 ---
 
 ## 4) Günlük operasyon checklist
