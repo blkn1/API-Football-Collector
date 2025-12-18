@@ -401,6 +401,44 @@ async def sync_daily_fixtures(
 
                 envelope = result.data or {}
                 items = envelope.get("response") or []
+                # Some API stacks behave unexpectedly with timezone filters on date-only fixture requests.
+                # If we get an empty page-1 response (and no API-reported errors), retry once without timezone.
+                if (
+                    page == 1
+                    and not items
+                    and not envelope.get("errors")
+                    and isinstance(params.get("timezone"), str)
+                    and params.get("timezone")
+                ):
+                    retry_params: dict[str, Any] = {"date": target_date_utc}
+                    try:
+                        limiter2.acquire_token()
+                        retry_result: APIResult = await client2.get("/fixtures", params=retry_params)
+                        api_requests += 1
+                        limiter2.update_from_headers(retry_result.headers)
+                        retry_env = retry_result.data or {}
+                        retry_items = retry_env.get("response") or []
+                        if retry_env.get("errors"):
+                            logger.warning(
+                                "global_by_date_retry_api_errors",
+                                date=target_date_utc,
+                                errors=retry_env.get("errors"),
+                            )
+                        logger.info(
+                            "global_by_date_retry_without_timezone",
+                            date=target_date_utc,
+                            prev_timezone=params.get("timezone"),
+                            prev_results=(envelope.get("results") or 0),
+                            retry_results=(retry_env.get("results") or 0),
+                            retry_fixtures_in_page=len(retry_items),
+                        )
+                        # Prefer retry response if it yields data
+                        if retry_items:
+                            params = retry_params
+                            envelope = retry_env
+                            items = retry_items
+                    except (EmergencyStopError, RateLimitError, APIClientError) as e:
+                        logger.warning("global_by_date_retry_failed", date=target_date_utc, err=str(e))
                 if envelope.get("errors"):
                     logger.warning(
                         "global_by_date_api_errors",
