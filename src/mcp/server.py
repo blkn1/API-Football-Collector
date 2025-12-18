@@ -553,18 +553,18 @@ async def get_daily_fixtures_by_date_status(since_minutes: int = 180) -> dict:
                 "last_fetched_at_utc": None,
                 "ts_utc": _utc_now_iso(),
             }
-        reqs, last_dt, pages_distinct, max_page, results_sum = row
+        reqs, last_dt, global_reqs, global_pages_distinct, global_max_page, global_results_sum = row
         requests = _to_int_or_none(reqs) or 0
         return {
             "ok": True,
             "window": {"since_minutes": mins},
             "running": bool(requests > 0),
             "requests": int(requests),
-            # pages_* are meaningful mainly for global_by_date mode. In per-tracked-leagues mode
-            # "page" is usually absent; we still return best-effort metrics.
-            "pages_fetched": int(_to_int_or_none(pages_distinct) or 0),
-            "max_page": _to_int_or_none(max_page),
-            "results_sum": int(_to_int_or_none(results_sum) or 0),
+            # Global-by-date metrics (date-only calls, no league filter)
+            "global_requests": int(_to_int_or_none(global_reqs) or 0),
+            "pages_fetched": int(_to_int_or_none(global_pages_distinct) or 0),
+            "max_page": _to_int_or_none(global_max_page),
+            "results_sum": int(_to_int_or_none(global_results_sum) or 0),
             "last_fetched_at_utc": _to_iso_or_none(last_dt),
             "ts_utc": _utc_now_iso(),
         }

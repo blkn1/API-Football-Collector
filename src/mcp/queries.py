@@ -148,11 +148,17 @@ DAILY_FIXTURES_BY_DATE_ACTIVITY_QUERY = """
 # Extra observability for global_by_date mode (/fixtures?date=...&page=N)
 DAILY_FIXTURES_BY_DATE_PAGING_METRICS_QUERY = """
     SELECT
+      -- All /fixtures calls that include requested_params.date (includes both per-league and global-by-date)
       COUNT(*)::int AS requests,
       MAX(fetched_at) AS last_fetched_at,
-      COUNT(DISTINCT (requested_params->>'page'))::int AS pages_distinct,
-      MAX(NULLIF((requested_params->>'page'), '')::int) AS max_page,
-      SUM(COALESCE(results, 0))::bigint AS results_sum
+
+      -- Global-by-date requests: date present, but no league filter
+      COUNT(*) FILTER (WHERE NOT (requested_params ? 'league'))::int AS global_requests,
+      COUNT(DISTINCT COALESCE(NULLIF(requested_params->>'page', ''), '1'))
+        FILTER (WHERE NOT (requested_params ? 'league'))::int AS global_pages_distinct,
+      MAX(COALESCE(NULLIF(requested_params->>'page', ''), '1')::int)
+        FILTER (WHERE NOT (requested_params ? 'league')) AS global_max_page,
+      SUM(COALESCE(results, 0)) FILTER (WHERE NOT (requested_params ? 'league'))::bigint AS global_results_sum
     FROM raw.api_responses
     WHERE endpoint = '/fixtures'
       AND fetched_at >= NOW() - make_interval(mins => %s)

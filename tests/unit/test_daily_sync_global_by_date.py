@@ -165,8 +165,8 @@ async def test_daily_sync_global_by_date_paging_groups_and_dedups(tmp_path: Path
 
     # RAW stored per page with (date,page)
     assert [c["requested_params"] for c in raw_calls] == [
-        {"date": "2025-12-18", "page": 1},
-        {"date": "2025-12-18", "page": 2},
+        {"date": "2025-12-18", "timezone": "UTC"},
+        {"date": "2025-12-18", "timezone": "UTC", "page": 2},
     ]
 
     # Dedup across pages: 3 unique fixture ids

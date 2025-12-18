@@ -373,7 +373,13 @@ async def sync_daily_fixtures(
             dedup_by_fixture_id: dict[int, dict[str, Any]] = {}
 
             while True:
-                params = {"date": target_date_utc, "page": int(page)}
+                # NOTE:
+                # - Use config-driven default timezone to avoid date boundary ambiguity.
+                # - Do NOT pass page=1 explicitly; some API stacks behave differently when page is provided.
+                #   We call page 1 without the param, then page>=2 with explicit paging if needed.
+                params: dict[str, Any] = {"date": target_date_utc, "timezone": getattr(api_cfg, "default_timezone", "UTC")}
+                if page > 1:
+                    params["page"] = int(page)
                 try:
                     limiter2.acquire_token()
                     result: APIResult = await client2.get("/fixtures", params=params)
@@ -395,6 +401,13 @@ async def sync_daily_fixtures(
 
                 envelope = result.data or {}
                 items = envelope.get("response") or []
+                if envelope.get("errors"):
+                    logger.warning(
+                        "global_by_date_api_errors",
+                        date=target_date_utc,
+                        page=page,
+                        errors=envelope.get("errors"),
+                    )
 
                 # RAW insert per page
                 upsert_raw(
@@ -425,6 +438,7 @@ async def sync_daily_fixtures(
                     total_pages=total_pages,
                     fixtures_in_page=len(items),
                     fixtures_dedup_total=len(dedup_by_fixture_id),
+                    results=(envelope.get("results") or 0),
                 )
 
                 if page >= (total_pages or 1):
