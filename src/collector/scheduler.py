@@ -26,6 +26,7 @@ from src.jobs.backfill import (
     run_fixtures_backfill_league_season,
     run_standings_backfill_league_season,
 )
+from src.jobs.season_rollover import run_season_rollover_watch
 from src.jobs.static_bootstrap import (
     run_bootstrap_countries,
     run_bootstrap_leagues,
@@ -209,6 +210,12 @@ def _build_runner(
                 )
             elif job.job_id == "standings_backfill_league_season":
                 await run_standings_backfill_league_season(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "season_rollover_watch":
+                await run_season_rollover_watch(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",

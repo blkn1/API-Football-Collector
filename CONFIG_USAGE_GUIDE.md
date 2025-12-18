@@ -130,6 +130,34 @@ Not:
 
 ---
 
+## 5.1 Sezon geçişi (2025 → 2026) nasıl yönetilir?
+
+Kural: `tracked_leagues[*].season` değerlerini topluca güncellemezsin. Liglerin sezon takvimi farklıdır.
+
+### Ne zaman 2026’ya geçeceğini nasıl anlarsın?
+Bu projede “tahmin” yok; kanıt var:
+- Scheduler içindeki `season_rollover_watch` job’ı her gün `/leagues?season=<NEXT>` çağırır (1–3 request/day).
+- Eğer tracked listendeki bir lig `next season` içinde görünmeye başlarsa log basar:
+  - event: `season_rollover_available`
+  - `league_id`, `current_season`, `next_season`
+  - `action_file`: `config/jobs/daily.yaml`
+  - `action_yaml_snippet`: kopyala-yapıştır YAML satırı
+
+### Sen ne yapacaksın? (exact syntax)
+`config/jobs/daily.yaml` içinde ilgili lig entry’sinde sadece season değişir:
+
+```yaml
+- id: 39
+  name: Premier League
+  season: 2026
+```
+
+Not:
+- Bazı ligler 2026’ya geçtiğinde bile bazıları 2025 kalabilir (mix season normaldir).
+- Eğer “eski sezonu da bir süre takip edeyim” ihtiyacın olursa, bunu tek entry ile değil, geçiş planı ile yönet (önce 2025’i stabilize et, sonra season bump).
+
+---
+
 ## 6) Job cadence kuralları (prod modeli)
 
 ### 6.1 Live loop vs Daily fixtures

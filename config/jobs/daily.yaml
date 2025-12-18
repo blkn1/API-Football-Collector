@@ -108,6 +108,19 @@ jobs:
     endpoint: /standings_backfill
     min_records: 1
     max_lag_minutes: 1440
+
+# Ops monitor: Detect when tracked leagues roll into the next season (e.g. 2025 -> 2026)
+# and emit an actionable log telling exactly what to change in this file.
+- job_id: season_rollover_watch
+  type: incremental_daily
+  enabled: true
+  priority: LOW
+  endpoint: /leagues
+  params: {}
+  interval:
+    type: cron
+    cron: '5 1 * * *'  # daily 01:05 UTC
+  target_layer: raw
 tracked_leagues:
 - id: 39
   name: Premier League
