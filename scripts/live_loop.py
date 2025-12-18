@@ -100,7 +100,7 @@ async def run_iteration(
     client: APIClient,
     limiter: RateLimiter,
     detector: DeltaDetector,
-    tracked_leagues: set[int],
+    tracked_leagues: set[int] | None,
     dry_run: bool,
 ) -> IterationStats:
     """
@@ -129,18 +129,25 @@ async def run_iteration(
             continue
         league_counts[lid] = league_counts.get(lid, 0) + 1
 
-    tracked_items = [x for x in all_items if int((x.get("league") or {}).get("id") or -1) in tracked_leagues]
+    track_all = tracked_leagues is None or len(tracked_leagues) == 0
+    if track_all:
+        tracked_items = list(all_items)
+    else:
+        tracked_items = [x for x in all_items if int((x.get("league") or {}).get("id") or -1) in tracked_leagues]
 
     fixtures_live = len(all_items)
     fixtures_tracked = len(tracked_items)
 
     if fixtures_live > 0:
         live_league_ids = sorted(league_counts.keys())
-        intersect = sorted(set(live_league_ids).intersection(tracked_leagues))
+        if track_all:
+            intersect = live_league_ids
+        else:
+            intersect = sorted(set(live_league_ids).intersection(tracked_leagues or set()))
         logger.info(
             "live_leagues_snapshot",
             live_league_ids=live_league_ids,
-            tracked_league_ids=sorted(tracked_leagues),
+            tracked_league_ids=("ALL" if track_all else sorted(tracked_leagues or set())),
             tracked_live_league_ids=intersect,
             counts_by_league=league_counts,
         )
@@ -214,14 +221,23 @@ async def run_iteration(
             if lid > 0 and s > 0:
                 seasons_by_league[lid] = s
 
-        for lid in sorted({int((x.get("league") or {}).get("id") or -1) for x in changed_items}):
-            if lid <= 0:
+        # IMPORTANT: ensure_fixtures_dependencies must be called with a per-league envelope.
+        # Passing a mixed-league envelope can cause incorrect team bootstrap attempts.
+        grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+        for it in changed_items:
+            try:
+                lid = int((it.get("league") or {}).get("id") or -1)
+                s = int((it.get("league") or {}).get("season") or 0)
+            except Exception:
                 continue
-            season = seasons_by_league.get(lid)
+            if lid > 0 and s > 0:
+                grouped.setdefault((lid, s), []).append(it)
+
+        for (lid, s), items in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
             await ensure_fixtures_dependencies(
                 league_id=lid,
-                season=season,
-                fixtures_envelope=changed_envelope,
+                season=s,
+                fixtures_envelope={**envelope, "response": items},
                 client=client,
                 limiter=limiter,
             )
@@ -308,11 +324,12 @@ async def run_iteration(
 
 async def run_live_loop(*, interval_seconds: int, once: bool, dry_run: bool) -> int:
     tracked = _load_tracked_leagues_from_config()
+    # If tracked leagues are missing/empty, fall back to tracking ALL live fixtures.
+    # This is production-safe because the API call is still a single /fixtures?live=all request;
+    # it only affects which returned fixtures we write to CORE and show in live panels.
     if not tracked:
-        raise ValueError(
-            "Missing tracked leagues for live loop. Set config/jobs/live.yaml -> jobs[].filters.tracked_leagues "
-            "for the /fixtures?live=all job, or pass --tracked-leagues."
-        )
+        logger.warning("live_loop_tracking_all_leagues_no_filter_configured")
+        tracked = set()
 
     rl_cfg = load_rate_limiter_config()
     api_cfg = load_api_config()
