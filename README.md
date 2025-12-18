@@ -6,6 +6,7 @@ High-signal docs:
 - `production-v3.md` (Production v3.0 architecture + Coolify deploy)
 - `QUOTA_AND_COLLECTION.md` (quota math + job cadence + throughput knobs)
 - `env_info.md` (Coolify ENV reference: what/where/impact)
+- `LEAGUE_TRACKING_GUIDE.md` (lig ekleme, live vs daily, takım farklı ligde oynarsa ne olur?)
 
 ## What This Repo Contains (Production v3.0)
 

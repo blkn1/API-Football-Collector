@@ -94,6 +94,23 @@ Her 30 dakikada bir:
 Bu sayede:
 - “tracked league değil” diye kaçan **kupa/UEFA** maçları bile o gün için CORE’a girer.
 
+#### 3.1.1 Global-by-date neyi garanti eder, neyi etmez?
+
+**Garanti ettiği şey (scope):**
+- Sistem çalıştığı sürece, her 30 dakikada bir “bugünün UTC tarihi” için `/fixtures?date=YYYY-MM-DD` çekilir.
+- O gün oynanan maçların fixtures’ı (API döndürdüğü kadar) **RAW+CORE’a girer**.
+
+**Garanti etmediği şeyler (neden yine de “o maç hiç çekilmemiş” olabilir?):**
+- **Geçmiş günler**: global_by_date sadece çalıştığı günleri kapsar. Sistem 10 gün kapalı kalırsa, o 10 günün fixtures’ı otomatik gelmez.\n
+  - Çözüm: Backfill veya “kaçırılan günler” için manuel global date backfill (ileride ops).\n
+- **UTC gün sınırı**: Bülten “TR günü” ise, TR 18 Aralık’ın bazı maçları UTC 17 Aralık’a düşebilir. Sen `date=2025-12-18` (UTC) sorgularsan o maç görünmez.\n
+- **API’nin döndürmediği veriler**: API-Football o gün için bir competition’ı döndürmezse (nadir ama mümkündür), biz de çekemeyiz.\n
+- **Kayıt anı**: Maç ileri tarihteyse, o günün date fetch’inde doğal olarak yoktur.\n
+
+Özet:
+- “Global-by-date açık → hiç eksik kalmaz” **sadece çalıştığın günler için** doğru bir hedeftir.
+- “Tüm sezon %100” için backfill + izleme (MCP/coverage) gerekir.
+
 ### 3.2 Standings/Injuries gibi işler
 
 Bu işler “lig+sezon” bazlıdır:
