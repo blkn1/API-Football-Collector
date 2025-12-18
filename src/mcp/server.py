@@ -540,16 +540,31 @@ async def get_daily_fixtures_by_date_status(since_minutes: int = 180) -> dict:
     """
     try:
         mins = max(1, min(int(since_minutes), 60 * 24))
-        row = await _db_fetchone_async(queries.DAILY_FIXTURES_BY_DATE_ACTIVITY_QUERY, (mins,))
+        row = await _db_fetchone_async(queries.DAILY_FIXTURES_BY_DATE_PAGING_METRICS_QUERY, (mins,))
         if not row:
-            return {"ok": True, "window": {"since_minutes": mins}, "running": False, "requests": 0, "last_fetched_at_utc": None, "ts_utc": _utc_now_iso()}
-        reqs, last_dt = row
+            return {
+                "ok": True,
+                "window": {"since_minutes": mins},
+                "running": False,
+                "requests": 0,
+                "pages_fetched": 0,
+                "max_page": None,
+                "results_sum": 0,
+                "last_fetched_at_utc": None,
+                "ts_utc": _utc_now_iso(),
+            }
+        reqs, last_dt, pages_distinct, max_page, results_sum = row
         requests = _to_int_or_none(reqs) or 0
         return {
             "ok": True,
             "window": {"since_minutes": mins},
             "running": bool(requests > 0),
             "requests": int(requests),
+            # pages_* are meaningful mainly for global_by_date mode. In per-tracked-leagues mode
+            # "page" is usually absent; we still return best-effort metrics.
+            "pages_fetched": int(_to_int_or_none(pages_distinct) or 0),
+            "max_page": _to_int_or_none(max_page),
+            "results_sum": int(_to_int_or_none(results_sum) or 0),
             "last_fetched_at_utc": _to_iso_or_none(last_dt),
             "ts_utc": _utc_now_iso(),
         }

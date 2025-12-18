@@ -145,6 +145,20 @@ DAILY_FIXTURES_BY_DATE_ACTIVITY_QUERY = """
       AND (requested_params ? 'date')
 """
 
+# Extra observability for global_by_date mode (/fixtures?date=...&page=N)
+DAILY_FIXTURES_BY_DATE_PAGING_METRICS_QUERY = """
+    SELECT
+      COUNT(*)::int AS requests,
+      MAX(fetched_at) AS last_fetched_at,
+      COUNT(DISTINCT (requested_params->>'page'))::int AS pages_distinct,
+      MAX(NULLIF((requested_params->>'page'), '')::int) AS max_page,
+      SUM(COALESCE(results, 0))::bigint AS results_sum
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND fetched_at >= NOW() - make_interval(mins => %s)
+      AND (requested_params ? 'date')
+"""
+
 LAST_QUOTA_HEADERS_QUERY = """
     SELECT
       fetched_at,
