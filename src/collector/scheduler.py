@@ -199,9 +199,17 @@ def _build_runner(
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
                 )
             elif job.job_id == "fixture_details_recent_finalize":
-                await run_fixture_details_recent_finalize(client=client, limiter=limiter)
+                await run_fixture_details_recent_finalize(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
             elif job.job_id == "fixture_details_backfill_90d":
-                await run_fixture_details_backfill_90d(client=client, limiter=limiter)
+                await run_fixture_details_backfill_90d(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
             elif job.job_id == "fixtures_backfill_league_season":
                 await run_fixtures_backfill_league_season(
                     client=client,

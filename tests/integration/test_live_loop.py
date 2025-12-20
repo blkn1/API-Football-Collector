@@ -94,13 +94,17 @@ def test_live_loop_once_delta_detection_prevents_second_write(tmp_path: Path):
 
     try:
         dsn = f"postgresql://postgres:postgres@localhost:{port}/api_football"
+        ready = False
         for _ in range(60):
             try:
                 conn = psycopg2.connect(dsn)
                 conn.close()
+                ready = True
                 break
             except Exception:
                 time.sleep(1)
+        if not ready:
+            pytest.skip("postgres container started but TCP port is not reachable on host; skipping integration test")
 
         os.environ["DATABASE_URL"] = dsn
         os.environ["POSTGRES_HOST"] = "localhost"

@@ -79,13 +79,17 @@ def test_bootstrap_with_mock_responses_and_postgres(tmp_path: Path):
     try:
         # wait until host TCP is reachable (not just unix socket inside container)
         dsn = f"postgresql://postgres:postgres@localhost:{port}/api_football"
+        ready = False
         for _ in range(60):
             try:
                 conn = psycopg2.connect(dsn)
                 conn.close()
+                ready = True
                 break
             except Exception:
                 time.sleep(1)
+        if not ready:
+            pytest.skip("postgres container started but TCP port is not reachable on host; skipping integration test")
 
         os.environ["POSTGRES_HOST"] = "localhost"
         os.environ["POSTGRES_PORT"] = port

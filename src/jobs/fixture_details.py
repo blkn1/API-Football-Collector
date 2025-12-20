@@ -38,6 +38,34 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _daily_config_path_default() -> Path:
+    """
+    Resolve the daily config path in a config-driven way.
+    - prod can override via API_FOOTBALL_DAILY_CONFIG
+    - default matches scheduler convention: config/jobs/daily.yaml
+    """
+    return Path(os.getenv("API_FOOTBALL_DAILY_CONFIG", "config/jobs/daily.yaml"))
+
+
+def _load_tracked_league_ids(*, config_path: Path) -> set[int]:
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    tracked = cfg.get("tracked_leagues") or []
+    out: set[int] = set()
+    if isinstance(tracked, list):
+        for x in tracked:
+            if not isinstance(x, dict):
+                continue
+            if x.get("id") is None:
+                continue
+            try:
+                out.add(int(x["id"]))
+            except Exception:
+                continue
+    if not out:
+        raise ValueError(f"Missing tracked_leagues in {config_path}")
+    return out
+
+
 async def _safe_get_envelope(
     *,
     client: APIClient,
@@ -67,7 +95,7 @@ async def _safe_get_envelope(
     raise RuntimeError(f"api_errors:{label}:max_retries_exceeded")
 
 
-def _select_backfill_fixtures(*, days: int, limit: int) -> list[FixtureWorkItem]:
+def _select_backfill_fixtures(*, days: int, limit: int, config_path: Path) -> list[FixtureWorkItem]:
     """
     Choose fixtures within the last N days that are completed and missing /fixtures/players RAW records.
     We use RAW existence as the work marker to avoid extra schema/state.
@@ -77,6 +105,7 @@ def _select_backfill_fixtures(*, days: int, limit: int) -> list[FixtureWorkItem]
     FROM core.fixtures f
     WHERE f.date >= NOW() - (%s::text || ' days')::interval
       AND f.status_short = ANY(%s)
+      AND f.league_id = ANY(%s)
       AND NOT EXISTS (
         SELECT 1
         FROM raw.api_responses r
@@ -89,19 +118,21 @@ def _select_backfill_fixtures(*, days: int, limit: int) -> list[FixtureWorkItem]
     out: list[FixtureWorkItem] = []
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (int(days), list(FINAL_STATUSES), int(limit)))
+            tracked = sorted(_load_tracked_league_ids(config_path=config_path))
+            cur.execute(sql, (int(days), list(FINAL_STATUSES), tracked, int(limit)))
             for fid, dt, st in cur.fetchall():
                 out.append(FixtureWorkItem(fixture_id=int(fid), date_utc=dt, status_short=st))
         conn.commit()
     return out
 
 
-def _select_recent_finalize_fixtures(*, hours: int, limit: int) -> list[FixtureWorkItem]:
+def _select_recent_finalize_fixtures(*, hours: int, limit: int, config_path: Path) -> list[FixtureWorkItem]:
     sql = """
     SELECT f.id, f.date, f.status_short
     FROM core.fixtures f
     WHERE f.date >= NOW() - (%s::text || ' hours')::interval
       AND f.status_short = ANY(%s)
+      AND f.league_id = ANY(%s)
       AND NOT EXISTS (
         SELECT 1
         FROM raw.api_responses r
@@ -114,14 +145,15 @@ def _select_recent_finalize_fixtures(*, hours: int, limit: int) -> list[FixtureW
     out: list[FixtureWorkItem] = []
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (int(hours), list(FINAL_STATUSES), int(limit)))
+            tracked = sorted(_load_tracked_league_ids(config_path=config_path))
+            cur.execute(sql, (int(hours), list(FINAL_STATUSES), tracked, int(limit)))
             for fid, dt, st in cur.fetchall():
                 out.append(FixtureWorkItem(fixture_id=int(fid), date_utc=dt, status_short=st))
         conn.commit()
     return out
 
 
-def _select_today_lineups_window(*, lookback_hours: int, lookahead_hours: int, limit: int) -> list[FixtureWorkItem]:
+def _select_today_lineups_window(*, lookback_hours: int, lookahead_hours: int, limit: int, config_path: Path) -> list[FixtureWorkItem]:
     """
     Fetch lineups in a short window around kickoff:
     - from kickoff - lookback_hours
@@ -133,6 +165,7 @@ def _select_today_lineups_window(*, lookback_hours: int, lookahead_hours: int, l
     FROM core.fixtures f
     WHERE f.date BETWEEN NOW() - (%s::text || ' hours')::interval AND NOW() + (%s::text || ' hours')::interval
       AND (f.status_short IS NULL OR f.status_short <> ALL(%s))
+      AND f.league_id = ANY(%s)
       AND NOT EXISTS (
         SELECT 1
         FROM raw.api_responses r
@@ -145,7 +178,8 @@ def _select_today_lineups_window(*, lookback_hours: int, lookahead_hours: int, l
     out: list[FixtureWorkItem] = []
     with get_db_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute(sql, (int(lookback_hours), int(lookahead_hours), list(FINAL_STATUSES), int(limit)))
+            tracked = sorted(_load_tracked_league_ids(config_path=config_path))
+            cur.execute(sql, (int(lookback_hours), int(lookahead_hours), list(FINAL_STATUSES), tracked, int(limit)))
             for fid, dt, st in cur.fetchall():
                 out.append(FixtureWorkItem(fixture_id=int(fid), date_utc=dt, status_short=st))
         conn.commit()
@@ -200,14 +234,16 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
             )
 
 
-async def run_fixture_details_backfill_90d(*, client: APIClient, limiter: RateLimiter) -> None:
+async def run_fixture_details_backfill_90d(*, client: APIClient, limiter: RateLimiter, config_path: Path | None = None) -> None:
     """
     Rolling backfill for the last 90 days, completed fixtures only (quota-safe).
     Bounded by env:
       - FIXTURE_DETAILS_BACKFILL_BATCH (default 25 fixtures/run)
     """
+    if config_path is None:
+        config_path = _daily_config_path_default()
     batch = int(os.getenv("FIXTURE_DETAILS_BACKFILL_BATCH", "25"))
-    items = _select_backfill_fixtures(days=90, limit=batch)
+    items = _select_backfill_fixtures(days=90, limit=batch, config_path=config_path)
     if not items:
         logger.info("fixture_details_backfill_no_work")
         return
@@ -230,12 +266,13 @@ async def run_fixture_details_backfill_90d(*, client: APIClient, limiter: RateLi
         "fixture_details_backfill_90d_complete",
         fixtures_selected=len(items),
         fixtures_processed=ok,
+        tracked_leagues_only=True,
         daily_remaining=limiter.quota.daily_remaining,
         minute_remaining=limiter.quota.minute_remaining,
     )
 
 
-async def run_fixture_details_recent_finalize(*, client: APIClient, limiter: RateLimiter) -> None:
+async def run_fixture_details_recent_finalize(*, client: APIClient, limiter: RateLimiter, config_path: Path | None = None) -> None:
     """
     Operational job:
     - Finalize fixtures that completed in the last 24h (fetch all 4 endpoints once)
@@ -244,11 +281,13 @@ async def run_fixture_details_recent_finalize(*, client: APIClient, limiter: Rat
       - FIXTURE_DETAILS_FINALIZE_BATCH (default 50)
       - FIXTURE_LINEUPS_WINDOW_BATCH (default 50)
     """
+    if config_path is None:
+        config_path = _daily_config_path_default()
     finalize_batch = int(os.getenv("FIXTURE_DETAILS_FINALIZE_BATCH", "50"))
     lineups_batch = int(os.getenv("FIXTURE_LINEUPS_WINDOW_BATCH", "50"))
 
-    finalized = _select_recent_finalize_fixtures(hours=24, limit=finalize_batch)
-    lineup_items = _select_today_lineups_window(lookback_hours=2, lookahead_hours=1, limit=lineups_batch)
+    finalized = _select_recent_finalize_fixtures(hours=24, limit=finalize_batch, config_path=config_path)
+    lineup_items = _select_today_lineups_window(lookback_hours=2, lookahead_hours=1, limit=lineups_batch, config_path=config_path)
 
     ok_finalize = 0
     processed_finalize: list[int] = []
@@ -301,6 +340,7 @@ async def run_fixture_details_recent_finalize(*, client: APIClient, limiter: Rat
         finalize_processed=ok_finalize,
         lineups_selected=len(lineup_items),
         lineups_processed=ok_lineups,
+        tracked_leagues_only=True,
         daily_remaining=limiter.quota.daily_remaining,
         minute_remaining=limiter.quota.minute_remaining,
     )

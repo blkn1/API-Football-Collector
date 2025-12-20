@@ -245,6 +245,8 @@ Claude’a şu sırayla tool çağırmasını söyle (prod ops “minimum + geni
 9) `get_coverage_summary(season=<CURRENT>)`
 10) `get_coverage_status(league_id=<LID>, season=<CURRENT>)`
    - Beklenen: overall coverage yüksek; `lag_minutes` scheduler cadence ile uyumlu.
+   - Not: `get_coverage_*` tool’ları **varsayılan olarak tracked leagues** ( `config/jobs/daily.yaml -> tracked_leagues` ) ile sınırlıdır.
+     Tüm ligleri görmek istersen: `tracked_only=false`
 
 PASS kriteri:
 - 7.1 minimum set’te tool’lar exception üretmeden dönüyor (`ok=true`).

@@ -9,6 +9,33 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _stable_synthetic_player_id(*, fixture_id: int, team_id: int | None, player_name: str | None, jersey_number: Any, position: Any) -> int:
+    """
+    API-Football sometimes returns players with missing/invalid player.id (None or 0).
+    Our CORE schema keys fixture players by (fixture_id, team_id, player_id). When multiple
+    players share a missing id within the same fixture/team, a bulk UPSERT fails with:
+      "ON CONFLICT DO UPDATE command cannot affect row a second time"
+
+    Fix: generate a deterministic synthetic (negative) int64 based on stable attributes,
+    so the same logical row always maps to the same key, and cannot collide with real API ids.
+    """
+    seed = "|".join(
+        [
+            str(int(fixture_id)),
+            str(int(team_id)) if team_id is not None else "",
+            str(player_name or "").strip().lower(),
+            str(jersey_number) if jersey_number is not None else "",
+            str(position) if position is not None else "",
+        ]
+    )
+    # 64-bit stable hash (use first 8 bytes). Mask to signed int63 range then make negative.
+    h = hashlib.sha1(seed.encode("utf-8", errors="ignore")).digest()[:8]
+    n = int.from_bytes(h, "big", signed=False) & ((1 << 63) - 1)
+    if n == 0:
+        n = 1
+    return -int(n)
+
+
 def transform_fixture_players(*, envelope: dict[str, Any], fixture_id: int) -> list[dict[str, Any]]:
     """
     GET /fixtures/players?fixture=<id> -> core.fixture_players rows
@@ -35,6 +62,26 @@ def transform_fixture_players(*, envelope: dict[str, Any], fixture_id: int) -> l
                 player_id = int(player.get("id")) if player.get("id") is not None else None
             except Exception:
                 player_id = None
+
+            # Normalize missing/invalid ids to deterministic synthetic ids (negative).
+            if player_id in (None, 0):
+                # Try to incorporate jersey number/position if available (usually in statistics[0].games).
+                jersey_number = None
+                position = None
+                if isinstance(stats, list) and stats:
+                    s0 = stats[0] if isinstance(stats[0], dict) else {}
+                    games = s0.get("games") if isinstance(s0, dict) else None
+                    if isinstance(games, dict):
+                        jersey_number = games.get("number")
+                        position = games.get("position")
+                player_id = _stable_synthetic_player_id(
+                    fixture_id=int(fixture_id),
+                    team_id=team_id,
+                    player_name=player.get("name"),
+                    jersey_number=jersey_number,
+                    position=position,
+                )
+
             rows.append(
                 {
                     "fixture_id": int(fixture_id),
@@ -47,7 +94,17 @@ def transform_fixture_players(*, envelope: dict[str, Any], fixture_id: int) -> l
                     "updated_at": now,
                 }
             )
-    return rows
+
+    # Defensive dedup: ensure each (fixture_id, team_id, player_id) appears at most once per batch.
+    # (Even with synthetic ids, this avoids any edge-case duplication from the source payload.)
+    dedup: dict[tuple[int, int | None, int], dict[str, Any]] = {}
+    for r in rows:
+        try:
+            key = (int(r["fixture_id"]), (int(r["team_id"]) if r.get("team_id") is not None else None), int(r["player_id"]))
+        except Exception:
+            continue
+        dedup[key] = r
+    return list(dedup.values())
 
 
 def transform_fixture_statistics(*, envelope: dict[str, Any], fixture_id: int) -> list[dict[str, Any]]:

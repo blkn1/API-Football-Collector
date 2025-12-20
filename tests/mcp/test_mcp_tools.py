@@ -84,7 +84,7 @@ async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
     # Make season come from config (config-driven) for deterministic test.
     cfg_dir = tmp_path / "config" / "jobs"
     cfg_dir.mkdir(parents=True)
-    (cfg_dir / "daily.yaml").write_text("season: 2024\ntracked_leagues: []\n", encoding="utf-8")
+    (cfg_dir / "daily.yaml").write_text("season: 2024\ntracked_leagues:\n  - id: 78\n    name: Bundesliga\n", encoding="utf-8")
     monkeypatch.setattr(server, "PROJECT_ROOT", tmp_path)
 
     captured = {}
@@ -106,6 +106,36 @@ async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
     assert out["coverage"][0]["league_id"] == 78
     assert "AND c.league_id = %s" in captured["sql"]
     assert captured["params"] == (2024, 78)
+
+
+@pytest.mark.asyncio
+async def test_get_coverage_status_tracked_only_filters(monkeypatch, tmp_path: Path):
+    from src.mcp import server
+
+    cfg_dir = tmp_path / "config" / "jobs"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "daily.yaml").write_text(
+        "season: 2024\ntracked_leagues:\n  - id: 78\n    name: Bundesliga\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "PROJECT_ROOT", tmp_path)
+
+    async def _fake_fetchall(sql_text: str, params: tuple):
+        from datetime import datetime, timezone
+
+        # With tracked_only=True, SQL should be using ANY(tracked_ids) and the DB would only return tracked rows.
+        assert "ANY(%s)" in sql_text
+        assert params[0] == 2024
+        assert params[1] == [78]
+        return [
+            ("Bundesliga", 78, 2024, "/fixtures", 90.0, 80.0, 100.0, 90.0, None, 0, datetime(2025, 12, 12, tzinfo=timezone.utc)),
+        ]
+
+    monkeypatch.setattr(server, "_db_fetchall_async", _fake_fetchall)
+
+    out = await server.get_coverage_status()
+    assert out["ok"] is True
+    assert [x["league_id"] for x in out["coverage"]] == [78]
 
 
 @pytest.mark.asyncio

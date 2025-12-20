@@ -376,13 +376,14 @@ def _load_league_overrides() -> list[dict[str, Any]]:
     return [x for x in out if x.get("source")]
 
 @app.tool()
-async def get_coverage_status(league_id: int | None = None, season: int | None = None) -> dict:
+async def get_coverage_status(league_id: int | None = None, season: int | None = None, tracked_only: bool = True) -> dict:
     """
     Get coverage metrics (mart.coverage_status) for all leagues or a specific league.
 
     Args:
         league_id: League ID (None = all)
         season: Season year (if omitted, uses config/jobs/daily.yaml season). If missing in config, request is rejected.
+        tracked_only: When league_id is omitted, restrict results to config/jobs/daily.yaml -> tracked_leagues (default True).
     """
     try:
         # Default season from config/jobs/daily.yaml when available (keeps config-driven behavior).
@@ -397,11 +398,22 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
 
         sql_text = queries.COVERAGE_STATUS
         if league_id is not None:
+            # Explicit league_id always allowed (even if not tracked) for debugging.
             sql_text = sql_text.format(league_filter="AND c.league_id = %s")
             rows = await _db_fetchall_async(sql_text, (int(season), int(league_id)))
         else:
-            sql_text = sql_text.format(league_filter="")
-            rows = await _db_fetchall_async(sql_text, (int(season),))
+            if tracked_only:
+                tracked_ids = [int(x["id"]) for x in _tracked_leagues_from_daily_config()]
+                if not tracked_ids:
+                    return _ok_error(
+                        "tracked_leagues_required",
+                        details="tracked_only=true requires tracked_leagues in daily config. Set tracked_leagues or call with tracked_only=false.",
+                    )
+                sql_text = sql_text.format(league_filter="AND c.league_id = ANY(%s)")
+                rows = await _db_fetchall_async(sql_text, (int(season), tracked_ids))
+            else:
+                sql_text = sql_text.format(league_filter="")
+                rows = await _db_fetchall_async(sql_text, (int(season),))
 
         out: list[dict[str, Any]] = []
         for r in rows:
@@ -427,12 +439,13 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
 
 
 @app.tool()
-async def get_coverage_summary(season: int | None = None) -> dict:
+async def get_coverage_summary(season: int | None = None, tracked_only: bool = True) -> dict:
     """
     Quick overview of coverage for a season.
 
     Args:
         season: Season year (defaults like get_coverage_status)
+        tracked_only: Restrict summary to tracked_leagues (default True).
     """
     try:
         if season is None:
@@ -444,7 +457,31 @@ async def get_coverage_summary(season: int | None = None) -> dict:
                 )
             season = int(season_cfg)
 
-        row = await _db_fetchone_async(queries.COVERAGE_SUMMARY, (int(season),))
+        if tracked_only:
+            tracked_ids = [int(x["id"]) for x in _tracked_leagues_from_daily_config()]
+            if not tracked_ids:
+                return _ok_error(
+                    "tracked_leagues_required",
+                    details="tracked_only=true requires tracked_leagues in daily config. Set tracked_leagues or call with tracked_only=false.",
+                )
+            row = await _db_fetchone_async(
+                """
+                SELECT
+                  c.season,
+                  COUNT(*) AS rows,
+                  COUNT(DISTINCT c.league_id) AS leagues,
+                  COUNT(DISTINCT c.endpoint) AS endpoints,
+                  ROUND(AVG(c.overall_coverage)::numeric, 2) AS avg_overall_coverage,
+                  MAX(c.calculated_at) AS last_calculated_at
+                FROM mart.coverage_status c
+                WHERE c.season = %s
+                  AND c.league_id = ANY(%s)
+                GROUP BY c.season
+                """,
+                (int(season), tracked_ids),
+            )
+        else:
+            row = await _db_fetchone_async(queries.COVERAGE_SUMMARY, (int(season),))
         if not row:
             return {"ok": True, "season": int(season), "summary": None, "ts_utc": _utc_now_iso()}
         return {
