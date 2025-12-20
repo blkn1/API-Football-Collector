@@ -66,7 +66,10 @@ class CoverageCalculator:
         freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
 
         raw_count = int(self._query_raw_count_24h(league_id, season) or 0)
-        pipeline_cov = (actual / raw_count * 100.0) if raw_count > 0 else 0.0
+        # Pipeline coverage for /fixtures:
+        # - "raw_count" is a proxy for whether the fixtures ingestion pipeline is active in the last 24h.
+        # - ratio actual/raw_count can exceed 100 (actual = fixtures rows; raw_count = request count), so cap to 100.
+        pipeline_cov = min(100.0, (actual / raw_count * 100.0)) if raw_count > 0 else 0.0
 
         w = self.config.weights
         w_count = float(w["count_coverage"])
@@ -336,8 +339,12 @@ class CoverageCalculator:
                 FROM raw.api_responses
                 WHERE endpoint = '/fixtures'
                   AND fetched_at > NOW() - INTERVAL '24 hours'
-                  AND requested_params->>'league' = %s
-                  AND requested_params->>'season' = %s
+                  AND (
+                    -- Per-league requests (league+season)
+                    (requested_params->>'league' = %s AND requested_params->>'season' = %s)
+                    -- Or date-based daily sync (global_by_date/per-league-by-date); indicates pipeline activity
+                    OR (requested_params ? 'date')
+                  )
                 """,
                 (str(int(league_id)), str(int(season))),
             )
