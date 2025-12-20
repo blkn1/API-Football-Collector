@@ -198,6 +198,77 @@ curl -sS -u "naneci:nanecigeliyor1." \
 "https://readapi.zinalyze.pro/v1/fixtures?date=$(date -u +%F)&limit=50"
 ```
 
+---
+
+## 7) Yeni lig ekleme (tek başına yapılacak checklist)
+
+Bu bölüm “yeni lig ekleyeceğim, nerelere dokunacağım?” sorusunun **tek kaynaktan** cevabı.
+
+### 7.1 Hedefi seç (fixtures mı, live mı, details mı?)
+
+- **Sadece fixtures (maç listesi) görünür olsun**:
+  - `fixtures_fetch_mode: global_by_date` zaten açıksa, “o gün” oynanan maçlar CORE’a girer (lig eklemesen bile).
+  - Ama **geçmiş günler** ve **detay endpoint’ler** için yine config gerekir.
+
+- **Canlı panel/SSE’de görünsün**:
+  - Live loop filtresi (aşağıdaki `config/jobs/live.yaml`) o ligi kapsamalı.
+
+- **Maç detayları (players/events/statistics/lineups) gelsin + coverage düzgün olsun**:
+  - Lig **tracked_leagues** içinde olmalı (fixture_details job’ları tracked-only çalışır).
+
+### 7.2 Daily (tracked scope) → `config/jobs/daily.yaml`
+
+Bu dosya “bizim takip ettiğimiz ligler”in ana kaynağıdır:
+
+- `tracked_leagues` listesine ekle:
+  - `id`: league_id
+  - `name`: okunabilir isim
+  - `season`: o lig için aktif sezon (örn. 2025)
+
+Notlar:
+- Bu liste **standings/injuries** gibi league+season job’larını da scope’lar.
+- `fixture_details_recent_finalize` ve `fixture_details_backfill_90d` artık **sadece bu listeden** fixture seçer.
+
+### 7.3 Live (canlı filtre) → `config/jobs/live.yaml`
+
+Canlı tarafta iki mod var:
+
+- **Filtreli (önerilen, quota-safe)**:
+  - `filters.tracked_leagues` içine league_id ekle.
+  - Böylece `/fixtures?live=all` çağrısı yapılır ama CORE’a sadece bu ligler yazılır.
+
+- **Filtresiz (track all)**:
+  - `filters.tracked_leagues` boş bırakılırsa code “hepsini işle” anlamına gelir.
+  - Bu **çok daha fazla CORE update** demektir; sadece gerçekten istiyorsan kullan.
+
+### 7.4 Coverage /fixtures neden bazen “0%” görünür? → `config/coverage.yaml`
+
+`/fixtures` coverage’ında iki seviye var:
+
+- **Freshness + pipeline**: her ligde çalışır (beklenen fixture sayısı olmasa da).
+- **Count coverage (sezon toplamı)**: sadece `expected_fixtures` içinde tanımlı liglerde anlamlıdır.
+
+Yeni bir lig için sezon toplam fixture sayısını biliyorsan `config/coverage.yaml -> expected_fixtures` altına ekleyebilirsin.
+Bilmiyorsan eklemek zorunda değilsin; sistem artık “beklenen yok → 0%” diye cezalandırmaz.
+
+### 7.5 Static bootstrap (leagues/teams) → `config/jobs/static.yaml`
+
+`bootstrap_leagues` ve `bootstrap_teams` job’ları kapalı olabilir.
+Yeni lig ekledikten sonra şu senaryolarda açman gerekebilir:
+
+- Yeni lig/teams henüz CORE’da yoksa (FK/dependency için)
+- Yeni sezon rollover sonrası “ilk kez” takımlar/ligler güncellenecekse
+
+Not: Bu projede bootstrap job’ları scope’u boşsa **daily.yaml tracked_leagues** üzerinden devralacak şekilde tasarlandı.
+
+### 7.6 Deploy sonrası doğrulama (MCP)
+
+- `get_fixture_detail_status(fixture_id=<tracked league + son 7 gün FT>)`
+  - `has_players/events/statistics/lineups` true olmalı
+- `get_coverage_status(league_id=<LID>, season=<SEASON>)`
+  - `/fixtures/players|events|statistics|lineups` satırları gelmeli
+  - `/fixtures` satırı freshness/pipeline ile anlamlı olmalı
+
 ### 6.2 Live scores (SSE)
 
 ```bash

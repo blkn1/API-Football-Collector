@@ -57,7 +57,9 @@ def test_coverage_edge_cases_no_expected_or_raw(tmp_path: Path) -> None:
     calc = _Calc(cfg, actual=0, raw=0, last_update=None, league_name="L")
     cov = calc.calculate_fixtures_coverage(39, 2024)
 
-    assert cov["count_coverage"] == 0.0
+    # expected_count=0 is treated as "unknown"; we don't emit a misleading 0% count coverage.
+    assert cov["expected_count"] is None
+    assert cov["count_coverage"] is None
     assert cov["pipeline_coverage"] == 0.0
     assert cov["lag_minutes"] == 9999
 

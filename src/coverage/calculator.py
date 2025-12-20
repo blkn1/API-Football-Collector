@@ -51,10 +51,13 @@ class CoverageCalculator:
         )
 
     def calculate_fixtures_coverage(self, league_id: int, season: int) -> dict[str, Any]:
-        expected = int(self.config.expected_fixtures.get(int(league_id), 0))
+        league_id_i = int(league_id)
+        expected_cfg = self.config.expected_fixtures
+        expected_known = league_id_i in expected_cfg and int(expected_cfg.get(league_id_i) or 0) > 0
+        expected = int(expected_cfg.get(league_id_i, 0))
         actual = int(self._query_actual_fixtures(league_id, season) or 0)
 
-        count_cov = (actual / expected * 100.0) if expected > 0 else 0.0
+        count_cov: float | None = (actual / expected * 100.0) if expected_known else None
 
         last_update = self._query_last_update(league_id, season)
         lag_minutes = self._calculate_lag_minutes(last_update)
@@ -66,23 +69,28 @@ class CoverageCalculator:
         pipeline_cov = (actual / raw_count * 100.0) if raw_count > 0 else 0.0
 
         w = self.config.weights
-        overall = (
-            count_cov * float(w["count_coverage"])
-            + freshness_cov * float(w["freshness_coverage"])
-            + pipeline_cov * float(w["pipeline_coverage"])
-        )
+        w_count = float(w["count_coverage"])
+        w_fresh = float(w["freshness_coverage"])
+        w_pipe = float(w["pipeline_coverage"])
+        if expected_known and count_cov is not None:
+            overall = count_cov * w_count + freshness_cov * w_fresh + pipeline_cov * w_pipe
+        else:
+            # If expected fixture count isn't configured, don't punish leagues with a bogus 0% count_coverage.
+            # Instead, compute overall from freshness + pipeline only (renormalized to 0..100).
+            denom = (w_fresh + w_pipe) or 1.0
+            overall = (freshness_cov * w_fresh + pipeline_cov * w_pipe) / denom
 
         league_name = self._query_league_name(league_id)
         last_update_iso = last_update.isoformat().replace("+00:00", "Z") if last_update else None
 
         return {
-            "league_id": int(league_id),
+            "league_id": league_id_i,
             "league_name": league_name,
             "season": int(season),
             "endpoint": "/fixtures",
-            "expected_count": expected,
+            "expected_count": (expected if expected_known else None),
             "actual_count": actual,
-            "count_coverage": round(count_cov, 2),
+            "count_coverage": (round(float(count_cov), 2) if count_cov is not None else None),
             "last_update": last_update_iso,
             "lag_minutes": int(lag_minutes),
             "freshness_coverage": round(freshness_cov, 2),
