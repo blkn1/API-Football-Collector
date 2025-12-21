@@ -10,6 +10,8 @@ Kapsam:
 Kural:
 - Tüm zamanlar **UTC** (frontend TR saatine çevirebilir).
 - Read API **read-only**’dir; API-Football quota tüketmez.
+- Read API `/v1/fixtures` çıktısı **izlenen liglere göre filtrelenmez**. “İddaa benzeri” bir UI için frontend tarafında **tracked leagues whitelist** kuralı uygulanmalıdır.
+- Frontend **secret tutmaz**: Basic Auth kullanıcı/şifre veya başka gizli değerler repo içine / Docker image içine gömülmez.
 
 ---
 
@@ -24,6 +26,44 @@ UI kullanımı:
   - **Live**: `status in {1H,2H,HT,ET,BT,P,LIVE,SUSP,INT}`
   - **Upcoming**: `status=NS` ve `date_utc > now()`
   - **Finished**: `status in {FT,AET,PEN}` + diğer final durumları
+
+#### 1.1.1 Tracked leagues (whitelist) kuralı (frontend)
+`/v1/fixtures` (ve `/v1/sse/live-scores`) DB’de bulunan tüm ligleri kapsayabilir (youth/alt ligler dahil). “İddaa benzeri” bir liste için frontend tarafında **league_id whitelist** uygulanır.
+
+- Önerilen ENV:
+  - `VITE_TRACKED_LEAGUES="203,39,140,78,135,2"` (CSV)
+- Kural:
+  - `fixture.league_id` whitelist’te değilse UI’de gösterme.
+
+```ts
+export function parseTrackedLeagues(raw: string | undefined) {
+  const s = (raw || "").trim();
+  if (!s) return new Set<number>();
+  const ids = s
+    .split(",")
+    .map(x => Number(x.trim()))
+    .filter(n => Number.isFinite(n));
+  return new Set<number>(ids);
+}
+```
+
+#### 1.1.2 Lig adı gösterimi (league_id → league_name)
+Read API v1’de `/v1/leagues` endpoint’i yoktur. Bu yüzden UI’de lig adını göstermek için tracked leagues ile sınırlı **statik bir map** kullanılır.
+
+```ts
+export const LEAGUE_NAMES: Record<number, string> = {
+  203: "Trendyol Süper Lig",
+  39: "Premier League",
+  140: "La Liga",
+  78: "Bundesliga",
+  135: "Serie A",
+  2: "UEFA Şampiyonlar Ligi",
+};
+
+export function leagueName(leagueId: number) {
+  return LEAGUE_NAMES[leagueId] || `League ${leagueId}`;
+}
+```
 
 ### 1.2 Frontend örnek akış (Today + Tomorrow + Status bucket)
 
@@ -88,6 +128,9 @@ export async function fetchTodayAndTomorrow(baseUrl: string) {
 }
 ```
 
+> Öneri: `fetchFixturesByDate()` dönüşünü UI’de `trackedLeagues` ile filtrele:
+> `fixtures.filter(f => trackedLeagues.has(f.league_id))`
+
 #### 4) Bugün 15:30 sonrası “başlamamış” liste (upcoming + kickoff>now)
 
 ```ts
@@ -119,6 +162,29 @@ Frontend “birden fazla gün” gösterecekse en basit yaklaşım:
 
 - Source: `mart.live_score_panel`
 - Not: Bu panel yalnızca canlı statüleri tutar; FT maçlar burada görünmez.
+
+#### 2.1.1 SSE + tracked leagues filtreleme (frontend)
+SSE stream’i de league scope açısından “geniş” olabilir. UI’de **tracked leagues** filtresi burada da uygulanır.
+
+```ts
+const trackedLeagues = parseTrackedLeagues(import.meta.env.VITE_TRACKED_LEAGUES);
+const es = new EventSource(`/v1/sse/live-scores?interval_seconds=3&limit=300`);
+
+es.onmessage = (evt) => {
+  const all = JSON.parse(evt.data) as Array<{ league_id: number }>;
+  const filtered = trackedLeagues.size ? all.filter(x => trackedLeagues.has(x.league_id)) : all;
+  // update state
+};
+```
+
+---
+
+## 7) Güvenlik ve erişim (frontend perspektifi)
+Bu repo Read API’yi prod’da Basic Auth ve/veya IP allowlist ile koruyabilir.
+
+- **Frontend secret tutmaz**: Basic Auth user/password, API key vb. değerler **frontend repo / image** içine gömülmez.
+- **Önerilen (prod)**: `READ_API_IP_ALLOWLIST` ile yalnızca frontend/gateway IP’lerini allowlist’e al.
+- **Basic Auth gerekiyorsa**: Browser’dan credential taşımak yerine platform/gateway katmanında çöz (örn. ayrı bir reverse-proxy “gateway” servisi). Frontend yalnızca “same-origin /api” çağırır.
 
 ---
 

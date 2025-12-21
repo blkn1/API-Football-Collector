@@ -38,6 +38,12 @@ Basic Auth varsa curl örneği:
 curl -sS -u "USER:PASSWORD" "${READ_API_BASE}/v1/health"
 ```
 
+Önemli (frontend):
+- Tarayıcı tabanlı bir SPA için **Basic Auth credential** taşımak pratikte güvenli değildir (credential client’a sızar).
+- “İddaa benzeri frontend” için önerilen model:
+  - Read API → `READ_API_IP_ALLOWLIST` ile sadece gateway/frontend sunucusu IP’lerine izin ver
+  - Frontend → same-origin `/api/...` üzerinden reverse-proxy’ye konuşur (CORS yoksa da sorun olmaz)
+
 ---
 
 ## 3) REST endpoint’leri (read-only)
@@ -72,6 +78,10 @@ Filtreler:
 - `date` (YYYY-MM-DD, UTC)
 - `status` (ör: `NS`, `1H`, `HT`, `2H`, `FT`)
 - `limit` (max 200)
+
+Not (iddaa benzeri UI):
+- `/v1/fixtures` default davranışta **tüm liglerden** fixture döndürebilir (youth/alt lig dahil).
+- Frontend’de `league_id` whitelist (tracked leagues) uygulayın. Referans: `READ_API_FRONTEND_CONTRACT.md`.
 
 ### 3.3.1 Team Fixtures (tüm turnuvalar)
 
@@ -155,6 +165,7 @@ curl -sS "${READ_API_BASE}/v1/sse/live-scores?interval_seconds=3&limit=300"
 Notlar:
 - `mart.live_score_panel` bir **VIEW**’dur; live loop CORE’a yazdıkça burası güncellenir.
 - View filtresi: `status_short` live statüler + `updated_at > now()-10 minutes`.
+ - Frontend tarafında live stream’i de `league_id` whitelist ile filtrelemek önerilir (tracked leagues).
 
 UEFA Europa Conference League (UECL) doğrulaması:
 - UECL league_id = **848**
@@ -196,5 +207,17 @@ Kontrol sırası:
 2) `mart.live_score_panel` satır var mı?\n
 3) Live loop `tracked_leagues` filtreli mi?\n
 - UECL için `config/jobs/live.yaml` listesinde **848** olmalı (veya filter intentionally kaldırılmalı).
+
+### 6.4 Browser’dan “Failed to fetch” (CORS)
+- Belirti: Frontend tarayıcıdan `https://readapi...` domain’ine direkt fetch atınca hata.
+- Kök neden: Read API CORS header’ları kapalı olabilir (prod güvenliği için yaygın).
+- Çözüm: Frontend’i same-origin `/api` path’i üzerinden reverse-proxy ile konuştur (örn. Nginx/Traefik).
+
+### 6.5 SSE donuyor / hiç mesaj gelmiyor
+- Belirti: `/v1/sse/live-scores` bağlanıyor ama event akmıyor / hemen kopuyor.
+- Kontrol:
+  - `curl -N "${READ_API_BASE}/v1/sse/live-scores?interval_seconds=3&limit=300"` ile stream akıyor mu?
+  - Reverse proxy varsa: buffering kapalı mı? (örn. Nginx: `proxy_buffering off`)
+  - `ENABLE_LIVE_LOOP=1` açık mı? Live loop kapalıysa panel uzun süre boş kalabilir.
 
 
