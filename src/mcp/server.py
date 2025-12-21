@@ -691,6 +691,8 @@ async def query_fixtures(
 async def get_stale_live_fixtures_status(
     threshold_minutes: int = 30,
     tracked_only: bool = True,
+    scope_source: str = "daily",
+    live_config_path: str = "config/jobs/live.yaml",
     limit: int = 50,
 ) -> dict:
     """
@@ -698,7 +700,11 @@ async def get_stale_live_fixtures_status(
 
     Args:
         threshold_minutes: Consider a fixture stale if updated_at < now - threshold (default 30)
-        tracked_only: If true, only count/return fixtures whose league_id is in daily tracked_leagues
+        tracked_only: If true, only count/return fixtures whose league_id is in the chosen scope.
+        scope_source: Which "tracked" definition to use when tracked_only=true:
+            - "daily": config/jobs/daily.yaml -> tracked_leagues
+            - "live":  config/jobs/live.yaml -> jobs[live_fixtures_all].filters.tracked_leagues
+        live_config_path: Path to live config (only used when scope_source="live")
         limit: Max fixtures to return (default 50, capped at 200)
     """
     try:
@@ -709,9 +715,35 @@ async def get_stale_live_fixtures_status(
 
         tracked_set: set[int] = set()
         if tracked_only:
-            tracked_set = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
-            if not tracked_set:
-                return _ok_error("tracked_leagues_required", details="tracked_only=true requires tracked_leagues in daily config.")
+            src = (scope_source or "daily").strip().lower()
+            if src not in {"daily", "live"}:
+                return _ok_error("invalid_scope_source", details="scope_source must be 'daily' or 'live'")
+            if src == "live":
+                # NOTE: live.yaml uses a plain list of ints under filters.tracked_leagues
+                try:
+                    p = Path(str(live_config_path))
+                    live_cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+                    jobs = live_cfg.get("jobs") or []
+                    for j in jobs:
+                        if not isinstance(j, dict):
+                            continue
+                        if str(j.get("job_id") or "") != "live_fixtures_all":
+                            continue
+                        filters = j.get("filters") or {}
+                        tl = (filters or {}).get("tracked_leagues") or []
+                        tracked_set = {int(x) for x in tl}
+                        break
+                except Exception as e:
+                    return _ok_error("live_config_parse_failed", details=str(e))
+                if not tracked_set:
+                    return _ok_error(
+                        "tracked_leagues_required",
+                        details="tracked_only=true scope_source=live requires live_fixtures_all.filters.tracked_leagues in live config",
+                    )
+            else:
+                tracked_set = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
+                if not tracked_set:
+                    return _ok_error("tracked_leagues_required", details="tracked_only=true requires tracked_leagues in daily config.")
 
         out: list[dict[str, Any]] = []
         ignored_untracked = 0
@@ -739,6 +771,7 @@ async def get_stale_live_fixtures_status(
             "ok": True,
             "threshold_minutes": int(mins),
             "tracked_only": bool(tracked_only),
+            "scope_source": (scope_source or "daily").strip().lower(),
             "stale_count": len(out),
             "ignored_untracked": int(ignored_untracked),
             "fixtures": out,

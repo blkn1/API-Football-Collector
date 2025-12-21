@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,8 @@ LIVE_STATUSES = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT")
 class StaleRefreshConfig:
     threshold_minutes: int
     batch_size: int
-    tracked_league_ids: set[int]
+    scoped_league_ids: set[int]
+    scope_source: str  # "daily" | "live"
 
 
 def _chunk(ids: list[int], *, size: int) -> list[list[int]]:
@@ -33,10 +35,7 @@ def _chunk(ids: list[int], *, size: int) -> list[list[int]]:
         return [ids]
     return [ids[i : i + size] for i in range(0, len(ids), size)]
 
-
-def _load_config(config_path: Path) -> StaleRefreshConfig:
-    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-
+def _load_daily_tracked_league_ids(cfg: dict[str, Any], *, config_path: Path) -> set[int]:
     tracked_raw = cfg.get("tracked_leagues") or []
     tracked: set[int] = set()
     if isinstance(tracked_raw, list):
@@ -49,10 +48,46 @@ def _load_config(config_path: Path) -> StaleRefreshConfig:
                 continue
     if not tracked:
         raise ValueError(f"Missing tracked_leagues in {config_path}")
+    return tracked
+
+
+def _load_live_tracked_league_ids(*, live_config_path: Path) -> set[int]:
+    cfg = yaml.safe_load(live_config_path.read_text(encoding="utf-8")) or {}
+    jobs = cfg.get("jobs") or []
+    for j in jobs:
+        if not isinstance(j, dict):
+            continue
+        if str(j.get("job_id") or "") != "live_fixtures_all":
+            continue
+        filters = j.get("filters") or {}
+        if not isinstance(filters, dict):
+            break
+        tl = filters.get("tracked_leagues") or []
+        if not isinstance(tl, list):
+            break
+        out: set[int] = set()
+        for x in tl:
+            try:
+                out.add(int(x))
+            except Exception:
+                continue
+        if not out:
+            # In live_loop, empty means "track all", but for stale refresh that would be unbounded and quota-risky.
+            raise ValueError(
+                f"live.yaml filters.tracked_leagues is empty in {live_config_path}; stale_live_refresh scope=live requires an explicit list"
+            )
+        return out
+    raise ValueError(f"Missing live_fixtures_all.filters.tracked_leagues in {live_config_path}")
+
+
+def _load_config(config_path: Path) -> StaleRefreshConfig:
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
     # Find job-specific params (config-driven).
     threshold = 30
     batch = 20
+    scope_source = "daily"
+    live_cfg_path = Path(os.getenv("API_FOOTBALL_LIVE_CONFIG", "config/jobs/live.yaml"))
     for j in cfg.get("jobs") or []:
         if not isinstance(j, dict):
             continue
@@ -70,13 +105,36 @@ def _load_config(config_path: Path) -> StaleRefreshConfig:
                     batch = int(params.get("batch_size"))
             except Exception:
                 pass
+            try:
+                if params.get("scope_source") is not None:
+                    scope_source = str(params.get("scope_source") or "").strip().lower() or "daily"
+            except Exception:
+                pass
+            try:
+                if params.get("live_config_path") is not None:
+                    live_cfg_path = Path(str(params.get("live_config_path")))
+            except Exception:
+                pass
         break
 
     # Guardrails
     threshold = max(5, min(int(threshold), 24 * 60))  # 5m .. 24h
     batch = max(1, min(int(batch), 20))  # API-Football /fixtures ids max 20
 
-    return StaleRefreshConfig(threshold_minutes=threshold, batch_size=batch, tracked_league_ids=tracked)
+    if scope_source not in {"daily", "live"}:
+        raise ValueError(f"Invalid stale_live_refresh scope_source={scope_source!r} (expected 'daily' or 'live')")
+
+    if scope_source == "live":
+        scoped = _load_live_tracked_league_ids(live_config_path=live_cfg_path)
+    else:
+        scoped = _load_daily_tracked_league_ids(cfg, config_path=config_path)
+
+    return StaleRefreshConfig(
+        threshold_minutes=threshold,
+        batch_size=batch,
+        scoped_league_ids=scoped,
+        scope_source=str(scope_source),
+    )
 
 
 def _select_stale_fixture_ids(*, threshold_minutes: int, batch_size: int, tracked_league_ids: set[int]) -> list[int]:
@@ -141,10 +199,15 @@ async def run_stale_live_refresh(*, client: APIClient, limiter: RateLimiter, con
     stale_ids = _select_stale_fixture_ids(
         threshold_minutes=cfg.threshold_minutes,
         batch_size=cfg.batch_size,
-        tracked_league_ids=cfg.tracked_league_ids,
+        tracked_league_ids=cfg.scoped_league_ids,
     )
     if not stale_ids:
-        logger.info("stale_live_refresh_no_work", threshold_minutes=cfg.threshold_minutes, tracked_leagues=len(cfg.tracked_league_ids))
+        logger.info(
+            "stale_live_refresh_no_work",
+            threshold_minutes=cfg.threshold_minutes,
+            scope_source=cfg.scope_source,
+            scoped_leagues=len(cfg.scoped_league_ids),
+        )
         return
 
     total_requests = 0
@@ -247,6 +310,7 @@ async def run_stale_live_refresh(*, client: APIClient, limiter: RateLimiter, con
     logger.info(
         "stale_live_refresh_complete",
         threshold_minutes=cfg.threshold_minutes,
+        scope_source=cfg.scope_source,
         selected=len(stale_ids),
         api_requests=total_requests,
         fixtures_upserted=fixtures_upserted,
