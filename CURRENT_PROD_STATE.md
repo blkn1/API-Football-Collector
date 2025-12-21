@@ -22,11 +22,11 @@ Prod network notu:
 - **Resolver çıktısı**: `config/resolved_tracked_leagues.yaml` (audit amaçlı)
 - **Rate limiter**: `config/rate_limiter.yaml` (soft cap + emergency stop)
 
-## 2.1 Bugün-bülten gap kapandı: global_by_date (fixtures_fetch_mode)
+## 2.1 Günlük fixtures modeli: per_tracked_leagues (fixtures_fetch_mode)
 
 Prod’da “bültende maç var ama sistemde yok” sorunu için `daily_fixtures_by_date` artık **global-by-date** modunda çalışır:
 - Config: `config/jobs/daily.yaml` en üst satır:
-  - `fixtures_fetch_mode: global_by_date`
+  - `fixtures_fetch_mode: per_tracked_leagues`
 - Davranış: `GET /fixtures?date=YYYY-MM-DD` (gerekirse paging)
 - Sonuç: tracked olmayan kupalar/UEFA gibi competition’lar da “o gün” oynanıyorsa CORE’a düşer.
 

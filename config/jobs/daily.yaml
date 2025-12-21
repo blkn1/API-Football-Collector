@@ -1,4 +1,4 @@
-fixtures_fetch_mode: global_by_date  # global_by_date | per_tracked_leagues
+fixtures_fetch_mode: per_tracked_leagues  # global_by_date | per_tracked_leagues
 
 jobs:
 - job_id: daily_standings
@@ -11,7 +11,7 @@ jobs:
     season: null
   interval:
     type: cron
-    cron: 45 6 * * *
+    cron: "10 6 * * *"
   target_layer: raw+core
   dependencies:
   - bootstrap_leagues
@@ -31,7 +31,7 @@ jobs:
     date: null
   interval:
     type: cron
-    cron: '*/30 * * * *'
+    cron: "0 6 * * *"
   target_layer: raw+core+mart
 - job_id: injuries_hourly
   type: incremental_daily
@@ -41,7 +41,7 @@ jobs:
   params: {}
   interval:
     type: cron
-    cron: 0 * * * *
+    cron: "2 * * * *"
   target_layer: raw+core
   dependencies:
   - bootstrap_leagues
@@ -58,7 +58,7 @@ jobs:
   params: {}
   interval:
     type: cron
-    cron: '*/15 * * * *'
+    cron: "30 6 * * *"
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
@@ -68,13 +68,13 @@ jobs:
     max_lag_minutes: 240
 - job_id: fixture_details_backfill_90d
   type: incremental_daily
-  enabled: true
+  enabled: false
   priority: MEDIUM
   endpoint: /fixtures/*
   params: {}
   interval:
     type: cron
-    cron: '*/10 * * * *'
+    cron: "*/10 * * * *"
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
@@ -83,11 +83,29 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
+- job_id: fixture_details_backfill_season
+  type: incremental_daily
+  enabled: true
+  priority: MEDIUM
+  endpoint: /fixtures/*
+  params: {}
+  interval:
+    type: cron
+    # Stagger with fixtures_backfill_league_season to spread load across the hour
+    cron: "5-59/10 * * * *"
+  target_layer: raw+core
+  dependencies:
+  - daily_fixtures_by_date
+  coverage_target:
+    endpoint: /fixtures/details_backfill_season
+    min_records: 1
+    max_lag_minutes: 1440
+
 # Maintenance: refresh stale "live" fixtures that haven't updated in a while.
 # This prevents "stale live status" from polluting live dashboards and MCP live scans.
 - job_id: stale_live_refresh
   type: incremental_daily
-  enabled: true
+  enabled: false
   priority: LOW
   endpoint: /fixtures
   params:
@@ -100,7 +118,7 @@ jobs:
     live_config_path: config/jobs/live.yaml
   interval:
     type: cron
-    cron: '*/10 * * * *'
+    cron: "*/10 * * * *"
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
@@ -112,7 +130,8 @@ jobs:
   params: {}
   interval:
     type: cron
-    cron: '* * * * *'
+    # Runs every 10 minutes, aligned on :00, :10, :20 ... (details backfill runs on :05, :15, ...)
+    cron: "0-59/10 * * * *"
   target_layer: raw+core
   coverage_target:
     endpoint: /fixtures_backfill
@@ -120,13 +139,13 @@ jobs:
     max_lag_minutes: 1440
 - job_id: standings_backfill_league_season
   type: incremental_daily
-  enabled: true
+  enabled: false
   priority: LOW
   endpoint: /standings
   params: {}
   interval:
     type: cron
-    cron: '*/10 * * * *'
+    cron: "*/10 * * * *"
   target_layer: raw+core
   coverage_target:
     endpoint: /standings_backfill

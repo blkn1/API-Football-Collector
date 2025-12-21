@@ -177,6 +177,62 @@ Bizim prod örneği:
 
 ---
 
+## 4.1 Daily-only (TR 06:00) acceptance checklist
+
+Bu checklist, canlı + global-by-date kapalıyken (tracked lig + backfill modeli) deploy sonrası doğrulamayı standardize eder.
+
+### 4.1.1 Config doğrulama (redeploy öncesi)
+- `config/jobs/daily.yaml`:\n
+  - `fixtures_fetch_mode: per_tracked_leagues`\n
+  - `tracked_leagues[*].id` ve `tracked_leagues[*].season` dolu\n
+- ENV:\n
+  - `SCHEDULER_TIMEZONE=Europe/Istanbul` (cron TR saatine göre)\n
+
+### 4.1.2 MCP doğrulama (redeploy sonrası)
+- `get_job_status()`:\n
+  - `daily_fixtures_by_date` enabled ve cron `0 6 * * *`\n
+  - `fixtures_backfill_league_season` enabled ve cron `0-59/10 * * * *`\n
+  - `fixture_details_backfill_season` enabled ve cron `5-59/10 * * * *`\n
+  - `stale_live_refresh` disabled\n
+- `get_daily_fixtures_by_date_status(since_minutes=240)`:\n
+  - `running=true` (06:00–08:00 arası)\n
+  - `requests>0`\n
+- `get_backfill_progress(job_id="fixtures_backfill_league_season")`:\n
+  - `completed_tasks` zamanla artmalı (her gün kademeli)\n
+- `get_rate_limit_status()`:\n
+  - `minute_remaining` ve `daily_remaining` anormal düşmemeli\n
+- `get_raw_error_summary(since_minutes=60)`:\n
+  - `err_4xx/err_5xx/envelope_errors` yükselmiyorsa OK\n
+
+### 4.1.3 DB hızlı doğrulama (ops, read-only)
+```sql
+SELECT COUNT(*) FROM core.fixtures;
+SELECT job_id, COUNT(*) AS total, SUM(CASE WHEN completed THEN 1 ELSE 0 END) AS completed
+FROM core.backfill_progress
+GROUP BY job_id
+ORDER BY job_id;
+```
+
+### 4.1.4 Test doğrulama (pytest + idempotency)
+Minimum unit set (hızlı, quota-safe):
+```bash
+pytest -q tests/unit/test_rate_limiter.py
+pytest -q tests/unit/test_api_client.py
+pytest -q tests/unit/test_daily_sync_dry_run.py
+```
+
+Opsiyonel integration set (docker gerekir; RAW+CORE yazımını doğrular):
+```bash
+pytest -q -m integration tests/integration/test_bootstrap.py
+pytest -q -m integration tests/integration/test_daily_sync.py
+```
+
+Idempotency kontrolü (DB):\n
+- Aynı fixture’ı tekrar tekrar ingest etmek **CORE’da satır sayısını şişirmez** (UPSERT).\n
+- Pratik doğrulama: `core.fixtures` içinde belirli bir `id` için tek satır olduğundan emin olun.
+
+---
+
 ## 5) Incident runbooks
 
 ### 5.1 Quota low / emergency stop

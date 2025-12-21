@@ -21,6 +21,7 @@ from src.jobs.injuries import run_injuries_hourly
 from src.jobs.fixture_details import (
     run_fixture_details_backfill_90d,
     run_fixture_details_recent_finalize,
+    run_fixture_details_backfill_season,
 )
 from src.jobs.stale_live_refresh import run_stale_live_refresh
 from src.jobs.backfill import (
@@ -207,6 +208,12 @@ def _build_runner(
                 )
             elif job.job_id == "fixture_details_backfill_90d":
                 await run_fixture_details_backfill_90d(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "fixture_details_backfill_season":
+                await run_fixture_details_backfill_season(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",

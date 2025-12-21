@@ -99,7 +99,7 @@ Parametreler:
 
 ### 3.3.2 Fixture Details (tek maç detay paketi)
 
-Fixture detail tablolarını (events/statistics/lineups/players) tek çağrıda döner.\n
+Fixture detail tablolarını (events/statistics/lineups/players) tek çağrıda döner.
 Not: Önce `core.fixture_details` JSONB snapshot tercih edilir; yoksa `core.fixture_*` normalize tablolardan fallback yapılır.
 
 ```bash
@@ -108,7 +108,7 @@ curl -sS "${READ_API_BASE}/v1/fixtures/1379134/details" | head -c 2000 && echo
 
 ### 3.3.3 Team Metrics (last-N=20) — tahmin feature set
 
-Takımın son N tamamlanmış maçından (FT/AET/PEN) özet metrikleri hesaplar.\n
+Takımın son N tamamlanmış maçından (FT/AET/PEN) özet metrikleri hesaplar.
 Frontend chart’ları için “hazır” ortalama/rate alanları içerir.
 
 ```bash
@@ -165,7 +165,7 @@ curl -sS "${READ_API_BASE}/v1/sse/live-scores?interval_seconds=3&limit=300"
 Notlar:
 - `mart.live_score_panel` bir **VIEW**’dur; live loop CORE’a yazdıkça burası güncellenir.
 - View filtresi: `status_short` live statüler + `updated_at > now()-10 minutes`.
- - Frontend tarafında live stream’i de `league_id` whitelist ile filtrelemek önerilir (tracked leagues).
+- Frontend tarafında live stream’i de `league_id` whitelist ile filtrelemek önerilir (tracked leagues).
 
 UEFA Europa Conference League (UECL) doğrulaması:
 - UECL league_id = **848**
@@ -203,9 +203,9 @@ bash scripts/smoke_read_api.sh
 
 ### 6.3 “Canlı yok” ama aslında var
 Kontrol sırası:
-1) RAW: `/fixtures?live=all` sonuç dönüyor mu?\n
-2) `mart.live_score_panel` satır var mı?\n
-3) Live loop `tracked_leagues` filtreli mi?\n
+1) RAW: `/fixtures?live=all` sonuç dönüyor mu?
+2) `mart.live_score_panel` satır var mı?
+3) Live loop `tracked_leagues` filtreli mi?
 - UECL için `config/jobs/live.yaml` listesinde **848** olmalı (veya filter intentionally kaldırılmalı).
 
 ### 6.4 Browser’dan “Failed to fetch” (CORS)

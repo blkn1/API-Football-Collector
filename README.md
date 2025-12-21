@@ -20,8 +20,8 @@ High-signal docs:
 - **Tests**: `tests/unit/`, `tests/integration/`, `tests/mcp/`
 
 Operational safety nets (prod):
-- **Global by date fixtures** (`fixtures_fetch_mode: global_by_date`): fixes “today bulletin gap” by ingesting all fixtures for a UTC date (cups/UEFA included).
-- **Stale live refresh** (`stale_live_refresh`): periodically refetches fixtures stuck in a live status; scope is config-driven (recommended: live.yaml `filters.tracked_leagues`).
+- **Per-league daily fixtures** (`fixtures_fetch_mode: per_tracked_leagues`): ingests fixtures only for `config/jobs/daily.yaml -> tracked_leagues`.
+- **Resumeable fixtures backfill** (`fixtures_backfill_league_season`): fills current season history over time using `core.backfill_progress` (quota-safe).
 
 ## Setup (local)
 
@@ -68,7 +68,7 @@ docker compose up -d --build
 Required environment:
 - `API_FOOTBALL_KEY`
 - `DATABASE_URL` (recommended) or `POSTGRES_*`
-- `SCHEDULER_TIMEZONE` (recommended)
+- `SCHEDULER_TIMEZONE` (recommended, e.g. `Europe/Istanbul` for TR cron evaluation)
 - `REDIS_URL` (only needed if `ENABLE_LIVE_LOOP=1`)
 
 MCP (Coolify / HTTP-SSE):

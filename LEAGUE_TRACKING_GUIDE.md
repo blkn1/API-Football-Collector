@@ -3,7 +3,7 @@
 Bu doküman şunu netleştirir:
 
 - “Lig eklemek” ne demek?
-- **Canlı (live_loop)** ve **günlük (daily / global_by_date)** veri toplama ne kaydeder?
+- **Canlı (live_loop)** ve **günlük (daily / per_tracked_leagues)** veri toplama ne kaydeder?
 - “Maç bittiğinde” ne olur?
 - Bir takım (örn. **Galatasaray**) kendi ligi dışında maç yaparsa ve o ligi eklemediysek **görebilir miyiz?**
 - Nasıl doğrularız? (SQL + curl)
@@ -28,15 +28,15 @@ Bu projede “lig eklemek” iki farklı yerde anlamlıdır:
 
 ### 1.1 Günlük/fixtures toplama için (fixtures + bülten)
 
-- **Amaç**: Maçlar “bültende var ama sistemde yok” olmasın.
+- **Amaç**: Takip edilen liglerdeki maçlar “bültende var ama sistemde yok” olmasın.
 - **Kaynak config**: `config/jobs/daily.yaml`
-- **Kritik ayar**: `fixtures_fetch_mode: global_by_date`
+- **Kritik ayar**: `fixtures_fetch_mode: per_tracked_leagues`
 
 Bu mod açıkken:
-- Sistem `GET /fixtures?date=YYYY-MM-DD` ile **o gün oynanan tüm maçları** (kupalar/UEFA dahil) CORE’a alır.
-- Yani “lig eklemedik → hiç göremeyiz” problemi **fixtures seviyesinde büyük ölçüde kalkar** (o gün kapsanır).
+- Sistem `GET /fixtures?league=<id>&season=<season>&date=YYYY-MM-DD` ile **sadece tracked liglerin** o günkü fixtures’ını CORE’a alır.
+- “Tracked değil” bir competition (kupa/UEFA vb) için fixtures görmek istiyorsanız **o competition da tracked** olmalı (veya ayrı bir global mod kullanılmalı).
 
-> Not: Bu, “sezonun tamamını” otomatik getirir demek değildir. Sadece **çektiğin günlerin** fixtures’ını getirir.
+> Not: Bu, “sezonun tamamını” otomatik getirir demek değildir. Sezonun tamamı için backfill gerekir (aşağıda).
 
 ### 1.2 Canlı maçları ekranda göstermek için (live loop)
 
@@ -82,34 +82,33 @@ Maç “FT” olduğunda:
 
 ---
 
-## 3) Daily / global_by_date ne kaydeder?
+## 3) Daily / per_tracked_leagues ne kaydeder?
 
-### 3.1 Global-by-date (fixtures_fetch_mode = global_by_date)
+### 3.1 Per-league-by-date (fixtures_fetch_mode = per_tracked_leagues)
 
-Her 30 dakikada bir:
-- `GET /fixtures?date=YYYY-MM-DD` çağrısı
-- RAW’a sayfa sayfa arşiv
+Günlük (TR 06:00 civarı, cron ile):
+- `GET /fixtures?league=&season=&date=YYYY-MM-DD` çağrıları (tracked ligler için)
+- RAW’a arşiv
 - CORE’a `core.fixtures` UPSERT
 
-Bu sayede:
-- “tracked league değil” diye kaçan **kupa/UEFA** maçları bile o gün için CORE’a girer.
-
-#### 3.1.1 Global-by-date neyi garanti eder, neyi etmez?
+#### 3.1.1 Bu mod neyi garanti eder, neyi etmez?
 
 **Garanti ettiği şey (scope):**
-- Sistem çalıştığı sürece, her 30 dakikada bir “bugünün UTC tarihi” için `/fixtures?date=YYYY-MM-DD` çekilir.
-- O gün oynanan maçların fixtures’ı (API döndürdüğü kadar) **RAW+CORE’a girer**.
+- Tracked ligler için, günlük çalıştığı günün fixtures’ı **RAW+CORE’a girer**.
 
-**Garanti etmediği şeyler (neden yine de “o maç hiç çekilmemiş” olabilir?):**
-- **Geçmiş günler**: global_by_date sadece çalıştığı günleri kapsar. Sistem 10 gün kapalı kalırsa, o 10 günün fixtures’ı otomatik gelmez.\n
-  - Çözüm: Backfill veya “kaçırılan günler” için manuel global date backfill (ileride ops).\n
-- **UTC gün sınırı**: Bülten “TR günü” ise, TR 18 Aralık’ın bazı maçları UTC 17 Aralık’a düşebilir. Sen `date=2025-12-18` (UTC) sorgularsan o maç görünmez.\n
-- **API’nin döndürmediği veriler**: API-Football o gün için bir competition’ı döndürmezse (nadir ama mümkündür), biz de çekemeyiz.\n
-- **Kayıt anı**: Maç ileri tarihteyse, o günün date fetch’inde doğal olarak yoktur.\n
+**Garanti etmediği şeyler:**
+- Tracked olmayan competition’lar (kupa/UEFA vb) otomatik girmez.
+- Sezonun tüm geçmişi otomatik girmez → **backfill** gerekir.
 
-Özet:
-- “Global-by-date açık → hiç eksik kalmaz” **sadece çalıştığın günler için** doğru bir hedeftir.
-- “Tüm sezon %100” için backfill + izleme (MCP/coverage) gerekir.
+### 3.2 Backfill (sezonu geriye dönük tamamlama)
+
+Bu repo, tracked ligler için **resumeable backfill** içerir:
+- Job: `fixtures_backfill_league_season`
+- İlerleme tablosu: `core.backfill_progress` (kaldığı yerden devam)
+- Strateji: `/fixtures?league&season&from&to` ile 30 günlük pencereler (quota-safe)
+
+Bu sayede:
+- Yeni lig eklediğinizde, o ligin **current season** fixtures’ı gün gün tamamlanır.
 
 ### 3.2 Standings/Injuries gibi işler
 
@@ -125,25 +124,22 @@ Yani fixtures gibi “global date” kapsama yoktur. Eğer bir competition için
 
 ### 4.1 Fixtures (maç listesi) açısından
 
-**Eğer global_by_date aktifse**:
-- Galatasaray’ın “o gün” oynadığı maç (kupa/UEFA dahil) **CORE’a girer**.
-- Bu maçta Galatasaray takım id’si `home_team_id/away_team_id` olarak yer alır.
-
-**Eğer global_by_date kapalı ve per_tracked_leagues ise**:
-- O competition `tracked_leagues` listende yoksa, o maç **hiç çekilmeyebilir** → CORE’da görünmez.
+Bu repo “tracked lig + backfill” modeliyle çalışıyorsa:
+- O competition `tracked_leagues` listende yoksa, o maç **çekilmez** → CORE’da görünmez.
+- Çözüm: ilgili competition’ı `tracked_leagues` listesine eklemek (sonra daily + backfill doldurur).
 
 ### 4.2 “Takım istatistikleri” açısından (genel kural)
 
 Takımın “tüm sezon tüm maçları”nı görebilmek için iki şart gerekir:
 
-1) O maçların fixtures’ının CORE’a alınmış olması (daily/global veya backfill)\n
+1) O maçların fixtures’ının CORE’a alınmış olması (daily veya backfill)\n
 2) İlgili detay endpoint’lerinin (events/players/statistics/lineups vb) işlenmiş olması (fixture_details job’ları)
 
 Yani “lig eklemedik ama takım istatistikleri var mı?” sorusunun cevabı:
 - **Maç CORE’a girdiyse**: evet, takımın o maçı görünür.\n
 - **Maç CORE’a hiç girmediyse**: hayır.
 
-> Bu yüzden fixtures tarafında global_by_date “kapsam” problemine kalıcı çözüm getirir.
+> Bu yüzden bu modelde “kapsam” kontrolü `tracked_leagues` listesindedir (bilerek dar kapsam) ve “tüm sezon” için backfill kullanılır.
 
 ---
 
@@ -207,8 +203,8 @@ Bu bölüm “yeni lig ekleyeceğim, nerelere dokunacağım?” sorusunun **tek 
 ### 7.1 Hedefi seç (fixtures mı, live mı, details mı?)
 
 - **Sadece fixtures (maç listesi) görünür olsun**:
-  - `fixtures_fetch_mode: global_by_date` zaten açıksa, “o gün” oynanan maçlar CORE’a girer (lig eklemesen bile).
-  - Ama **geçmiş günler** ve **detay endpoint’ler** için yine config gerekir.
+  - Bu repoda fixtures ingest sadece **tracked ligler** içindir (`fixtures_fetch_mode: per_tracked_leagues`).
+  - Sezon geçmişi için backfill gerekir (otomatik, resumeable).
 
 - **Canlı panel/SSE’de görünsün**:
   - Live loop filtresi (aşağıdaki `config/jobs/live.yaml`) o ligi kapsamalı.
@@ -228,6 +224,24 @@ Bu dosya “bizim takip ettiğimiz ligler”in ana kaynağıdır:
 Notlar:
 - Bu liste **standings/injuries** gibi league+season job’larını da scope’lar.
 - `fixture_details_recent_finalize` ve `fixture_details_backfill_90d` artık **sadece bu listeden** fixture seçer.
+
+### 7.2.1 Bu repoda varsayılan cadence (daily-only, TR)
+- Cron timezone: `SCHEDULER_TIMEZONE=Europe/Istanbul`
+- `daily_fixtures_by_date`: TR 06:00
+- `daily_standings`: TR 06:10
+- `fixture_details_recent_finalize`: TR 06:30
+- Backfill (gün içine yayılmış):\n
+  - `fixtures_backfill_league_season`: her 10 dk (dakika 0/10/20/…)\n
+  - `fixture_details_backfill_season`: her 10 dk (dakika 5/15/25/…) \n
+
+### 7.2.2 Yeni lig ekleme prosedürü (prod-safe, minimum)
+1) `config/jobs/daily.yaml -> tracked_leagues` listesine `{id, name, season}` ekle.\n
+2) Deploy/redeploy.\n
+3) Aynı gün tek seferlik (önerilen): `bootstrap_leagues` + `bootstrap_teams` çalıştır (seasons metadata + FK).\n
+4) MCP ile izle:\n
+   - `get_backfill_progress(job_id=\"fixtures_backfill_league_season\")` → completed oranı artmalı\n
+   - `get_raw_error_summary(since_minutes=60)` → 429/5xx trendi olmamalı\n
+   - `get_rate_limit_status()` → quota düşüşü kontrollü\n
 
 ### 7.3 Live (canlı filtre) → `config/jobs/live.yaml`
 
@@ -289,32 +303,9 @@ bash scripts/smoke_read_api.sh
 
 ---
 
-## 7) “Lig ekleme” pratik prosedürü (prod-safe)
+## 8) Not: “Lig ekleme” için tek prosedür
 
-### 7.1 Fixtures kapsamı (bülten gap)
-- `config/jobs/daily.yaml`:
-  - `fixtures_fetch_mode: global_by_date` (önerilen)
-
-### 7.2 Live panel kapsamı (canlı göstermek)
-- İlgili competition `league_id` bul:
-
-```sql
-SELECT id, name
-FROM core.leagues
-WHERE name ILIKE '%conference%' OR name ILIKE '%uefa%'
-ORDER BY name;
-```
-
-- Sonra `config/jobs/live.yaml` içine ekle:
-  - `filters.tracked_leagues: - <LEAGUE_ID>`
-
-Örnek:
-- UECL = **848**
-
-### 7.3 Redeploy sonrası doğrulama
-- DB:
-  - `SELECT COUNT(*) FROM mart.live_score_panel WHERE league_id=<LEAGUE_ID>;`
-- Read API:
-  - `/v1/sse/live-scores`
+Bu dokümanda “yeni lig ekleme” için güncel, prod-safe tek prosedür: **7.2.2**.\n
+Live (opsiyonel) tarafı için: **7.3**.
 
 

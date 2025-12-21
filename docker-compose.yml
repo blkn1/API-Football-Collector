@@ -49,15 +49,23 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-api_football}
       API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
       LOG_FILE: /app/logs/collector.jsonl
+      # Cron evaluation timezone (DB timestamps remain UTC)
+      SCHEDULER_TIMEZONE: ${SCHEDULER_TIMEZONE:-Europe/Istanbul}
       # Aşama 1: fill empty static tables on startup (idempotent)
       BOOTSTRAP_STATIC_ON_START: ${BOOTSTRAP_STATIC_ON_START:-1}
 
       # Aşama 4: rollout throttles (override in Coolify env)
-      BACKFILL_FIXTURES_MAX_TASKS_PER_RUN: ${BACKFILL_FIXTURES_MAX_TASKS_PER_RUN:-6}
-      BACKFILL_FIXTURES_MAX_PAGES_PER_TASK: ${BACKFILL_FIXTURES_MAX_PAGES_PER_TASK:-6}
+      BACKFILL_FIXTURES_MAX_TASKS_PER_RUN: ${BACKFILL_FIXTURES_MAX_TASKS_PER_RUN:-20}
+      # 60k/day target: reduce windows per task to keep total request volume ~55-60k/day (incl. overhead)
+      BACKFILL_FIXTURES_MAX_PAGES_PER_TASK: ${BACKFILL_FIXTURES_MAX_PAGES_PER_TASK:-8}
       BACKFILL_FIXTURES_WINDOW_DAYS: ${BACKFILL_FIXTURES_WINDOW_DAYS:-30}
       BACKFILL_STANDINGS_MAX_TASKS_PER_RUN: ${BACKFILL_STANDINGS_MAX_TASKS_PER_RUN:-2}
       FIXTURE_DETAILS_BACKFILL_BATCH: ${FIXTURE_DETAILS_BACKFILL_BATCH:-25}
+      # Season-wide fixture details backfill (events/players/statistics/lineups) - quota-safe growth knob
+      FIXTURE_DETAILS_SEASON_BACKFILL_BATCH: ${FIXTURE_DETAILS_SEASON_BACKFILL_BATCH:-30}
+      # Operational finalize + lineup window knobs
+      FIXTURE_DETAILS_FINALIZE_BATCH: ${FIXTURE_DETAILS_FINALIZE_BATCH:-200}
+      FIXTURE_LINEUPS_WINDOW_BATCH: ${FIXTURE_LINEUPS_WINDOW_BATCH:-200}
     depends_on:
       postgres:
         condition: service_healthy

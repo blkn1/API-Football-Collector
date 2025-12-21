@@ -56,6 +56,4 @@ docker-compose.override.yml
 phase_1_2.md
 phase_3.md
 
-/docs
-
-
+# NOTE: docs/ directory is tracked (project documentation)

@@ -63,14 +63,14 @@ Kural:
 
 #### 3.4.1 fixtures_fetch_mode (bülten gap çözümü)
 `config/jobs/daily.yaml` en üstünde:
-- `fixtures_fetch_mode: global_by_date`
+- `fixtures_fetch_mode: per_tracked_leagues` (bu repo default)
 
 Bu ayar şunu değiştirir:
 - `per_tracked_leagues`: `/fixtures?league&season&date` → sadece tracked ligler
 - `global_by_date`: `/fixtures?date=YYYY-MM-DD` (gerekirse paging) → o gün oynanan **kupalar/UEFA dahil** tüm fixtures
 
 Prod doğrulama (MCP):
-- `get_daily_fixtures_by_date_status()` içinde `global_requests>0` ve `results_sum>0`
+- `get_daily_fixtures_by_date_status()` içinde `requests>0` (per-league modda `global_requests` 0 olabilir)
 
 #### 3.4.2 stale_live_refresh (stale canlı statü temizleme)
 Amaç: CORE’da yanlışlıkla “canlı” gibi kalan (örn. `1H/2H/HT/INT/SUSP`) ama uzun süredir güncellenmeyen fixture’ları periyodik olarak tekrar çekip temizlemek.
@@ -139,6 +139,7 @@ Kural: sistem kendisi rastgele lig eklemez; kontrol sende olmalı.
    - `get_raw_error_summary(since_minutes=60)`
    - `get_daily_fixtures_by_date_status(since_minutes=180)`
    - `get_live_loop_status(since_minutes=5)` (live loop açıksa)
+   - `get_backfill_progress(job_id="fixtures_backfill_league_season")` (backfill ilerliyor mu?)
 
 4) Eğer standings tarafında “missing teams” görürsen:
    - Dependency resolver bu boşluğu doldurur (gerekirse `/teams?id` fallback).

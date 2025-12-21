@@ -25,6 +25,7 @@ logger = get_logger(component="jobs_fixture_details")
 
 
 FINAL_STATUSES = {"FT", "AET", "PEN"}
+DETAIL_ENDPOINTS = ("/fixtures/players", "/fixtures/events", "/fixtures/statistics", "/fixtures/lineups")
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,38 @@ def _load_tracked_league_ids(*, config_path: Path) -> set[int]:
     return out
 
 
+def _load_tracked_league_seasons(*, config_path: Path) -> list[tuple[int, int]]:
+    """
+    Load tracked (league_id, season) pairs from daily config.
+    Required for season-accurate backfills (do NOT cross-product league_ids x seasons).
+    """
+    cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    tracked = cfg.get("tracked_leagues") or []
+    pairs: list[tuple[int, int]] = []
+    if isinstance(tracked, list):
+        for x in tracked:
+            if not isinstance(x, dict):
+                continue
+            if x.get("id") is None or x.get("season") is None:
+                continue
+            try:
+                pairs.append((int(x["id"]), int(x["season"])))
+            except Exception:
+                continue
+    if not pairs:
+        raise ValueError(f"Missing tracked_leagues seasons in {config_path} (expected tracked_leagues[*].season)")
+    # Expand to include previous season as well (season-1), matching fixtures backfill default behavior.
+    expanded: set[tuple[int, int]] = set()
+    for lid, s in pairs:
+        expanded.add((int(lid), int(s)))
+        prev = int(s) - 1
+        if prev > 0:
+            expanded.add((int(lid), prev))
+
+    # Uniq + stable
+    return sorted(expanded, key=lambda t: (t[0], t[1]))
+
+
 async def _safe_get_envelope(
     *,
     client: APIClient,
@@ -95,6 +128,28 @@ async def _safe_get_envelope(
     raise RuntimeError(f"api_errors:{label}:max_retries_exceeded")
 
 
+def _missing_detail_endpoints_for_fixture(*, fixture_id: int) -> set[str]:
+    """
+    Return which per-fixture endpoints are missing in RAW for a fixture.
+    This lets us avoid re-calling endpoints that are already persisted.
+    """
+    sql = """
+    SELECT DISTINCT r.endpoint
+    FROM raw.api_responses r
+    WHERE r.endpoint = ANY(%s)
+      AND (r.requested_params->>'fixture')::bigint = %s
+    """
+    present: set[str] = set()
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, (list(DETAIL_ENDPOINTS), int(fixture_id)))
+            for (ep,) in cur.fetchall():
+                if ep:
+                    present.add(str(ep))
+        conn.commit()
+    return set(DETAIL_ENDPOINTS) - present
+
+
 def _select_backfill_fixtures(*, days: int, limit: int, config_path: Path) -> list[FixtureWorkItem]:
     """
     Choose fixtures within the last N days that are completed and missing /fixtures/players RAW records.
@@ -120,6 +175,70 @@ def _select_backfill_fixtures(*, days: int, limit: int, config_path: Path) -> li
         with conn.cursor() as cur:
             tracked = sorted(_load_tracked_league_ids(config_path=config_path))
             cur.execute(sql, (int(days), list(FINAL_STATUSES), tracked, int(limit)))
+            for fid, dt, st in cur.fetchall():
+                out.append(FixtureWorkItem(fixture_id=int(fid), date_utc=dt, status_short=st))
+        conn.commit()
+    return out
+
+
+def _select_season_backfill_fixtures(*, limit: int, config_path: Path) -> list[FixtureWorkItem]:
+    """
+    Season-wide backfill selector (current season per tracked league).
+
+    We select the oldest completed fixtures in tracked (league_id, season) pairs
+    that are missing ANY of the 4 per-fixture endpoints in RAW:
+      - /fixtures/players
+      - /fixtures/events
+      - /fixtures/statistics
+      - /fixtures/lineups
+    """
+    pairs = _load_tracked_league_seasons(config_path=config_path)
+    # Build a VALUES list for (league_id, season) pairs safely (ints from config).
+    values_sql = ", ".join(["(%s,%s)"] * len(pairs))
+    flat: list[Any] = []
+    for lid, s in pairs:
+        flat.extend([int(lid), int(s)])
+
+    sql = f"""
+    WITH tracked(league_id, season) AS (
+      VALUES {values_sql}
+    )
+    SELECT f.id, f.date, f.status_short
+    FROM core.fixtures f
+    JOIN tracked t
+      ON t.league_id = f.league_id
+     AND t.season = f.season
+    WHERE f.status_short = ANY(%s)
+      AND (
+        NOT EXISTS (
+          SELECT 1 FROM raw.api_responses r
+          WHERE r.endpoint = '/fixtures/players'
+            AND (r.requested_params->>'fixture')::bigint = f.id
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM raw.api_responses r
+          WHERE r.endpoint = '/fixtures/events'
+            AND (r.requested_params->>'fixture')::bigint = f.id
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM raw.api_responses r
+          WHERE r.endpoint = '/fixtures/statistics'
+            AND (r.requested_params->>'fixture')::bigint = f.id
+        )
+        OR NOT EXISTS (
+          SELECT 1 FROM raw.api_responses r
+          WHERE r.endpoint = '/fixtures/lineups'
+            AND (r.requested_params->>'fixture')::bigint = f.id
+        )
+      )
+    ORDER BY f.date ASC NULLS LAST, f.id ASC
+    LIMIT %s
+    """
+
+    out: list[FixtureWorkItem] = []
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, tuple(flat + [list(FINAL_STATUSES), int(limit)]))
             for fid, dt, st in cur.fetchall():
                 out.append(FixtureWorkItem(fixture_id=int(fid), date_utc=dt, status_short=st))
         conn.commit()
@@ -194,6 +313,10 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
     - /fixtures/statistics
     - /fixtures/lineups
     """
+    missing = _missing_detail_endpoints_for_fixture(fixture_id=int(fixture_id))
+    if not missing:
+        return
+
     endpoints = [
         ("/fixtures/players", transform_fixture_players, "core.fixture_players", ["fixture_id", "team_id", "player_id"], ["player_name", "statistics", "update_utc"]),
         ("/fixtures/events", transform_fixture_events, "core.fixture_events", ["fixture_id", "event_key"], ["time_elapsed", "time_extra", "team_id", "player_id", "assist_id", "type", "detail", "comments", "raw"]),
@@ -202,6 +325,8 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
     ]
 
     for endpoint, transform_fn, table, conflict_cols, update_cols in endpoints:
+        if endpoint not in missing:
+            continue
         params = {"fixture": int(fixture_id)}
         label = f"{endpoint}(fixture={fixture_id})"
 
@@ -264,6 +389,50 @@ async def run_fixture_details_backfill_90d(*, client: APIClient, limiter: RateLi
 
     logger.info(
         "fixture_details_backfill_90d_complete",
+        fixtures_selected=len(items),
+        fixtures_processed=ok,
+        tracked_leagues_only=True,
+        daily_remaining=limiter.quota.daily_remaining,
+        minute_remaining=limiter.quota.minute_remaining,
+    )
+
+
+async def run_fixture_details_backfill_season(*, client: APIClient, limiter: RateLimiter, config_path: Path | None = None) -> None:
+    """
+    Season-wide backfill for tracked leagues (current season per league).
+    Goal: build a rich historical dataset for prediction features:
+      - players, events, statistics, lineups
+
+    Selection is resumeable without extra state:
+    - pick oldest completed fixture missing ANY detail endpoint in RAW
+    - fetch ONLY missing endpoints (skip already-stored ones)
+
+    Bounded by env:
+      - FIXTURE_DETAILS_SEASON_BACKFILL_BATCH (default 12 fixtures/run; recommended to override in env for faster fill)
+    """
+    if config_path is None:
+        config_path = _daily_config_path_default()
+
+    batch = int(os.getenv("FIXTURE_DETAILS_SEASON_BACKFILL_BATCH", "12"))
+    items = _select_season_backfill_fixtures(limit=batch, config_path=config_path)
+    if not items:
+        logger.info("fixture_details_season_backfill_no_work")
+        return
+
+    ok = 0
+    processed: list[int] = []
+    for it in items:
+        try:
+            await _fetch_and_store_fixture_details(client=client, limiter=limiter, fixture_id=it.fixture_id)
+            ok += 1
+            processed.append(int(it.fixture_id))
+        except EmergencyStopError as e:
+            logger.error("emergency_stop_daily_quota_low", job="fixture_details_backfill_season", err=str(e))
+            break
+
+    _update_mart_coverage_for_fixtures(processed_fixture_ids=processed)
+    logger.info(
+        "fixture_details_season_backfill_complete",
         fixtures_selected=len(items),
         fixtures_processed=ok,
         tracked_leagues_only=True,
