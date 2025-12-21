@@ -35,6 +35,12 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
   - **Mod**: `config/jobs/daily.yaml -> fixtures_fetch_mode`
     - `global_by_date`: date-only çağrı + paging (kupalar/UEFA dahil “o gün” tüm maçlar)
     - `per_tracked_leagues`: league+season+date çağrıları (tracked list ile sınırlı)
+- `stale_live_refresh` → `GET /fixtures?ids=<...>` (***/10 dakikada bir***, maintenance)
+  - Amaç: “live gibi kalan ama güncellenmeyen” fixture’ları tekrar fetch ederek CORE’daki status’ü düzeltmek.
+  - **Bounded quota**: her çalışmada en fazla `batch_size` kadar fixture seçer (default 20) → API request sayısı genelde **1/run** (ids max 20).
+  - **Scope**: `config/jobs/daily.yaml -> jobs[stale_live_refresh].params.scope_source`
+    - `daily`: daily tracked leagues
+    - `live`: live.yaml `filters.tracked_leagues` (prod’da tercih edilen; “canlı panelde izlediğin ligler” ile aynı scope)
 - `daily_standings` → `GET /standings?league&season` (**per-league season**, günlük)
   - **RAW**: `/standings`
   - **CORE**: `core.standings` (league+season bazında replace)

@@ -72,6 +72,22 @@ Bu ayar şunu değiştirir:
 Prod doğrulama (MCP):
 - `get_daily_fixtures_by_date_status()` içinde `global_requests>0` ve `results_sum>0`
 
+#### 3.4.2 stale_live_refresh (stale canlı statü temizleme)
+Amaç: CORE’da yanlışlıkla “canlı” gibi kalan (örn. `1H/2H/HT/INT/SUSP`) ama uzun süredir güncellenmeyen fixture’ları periyodik olarak tekrar çekip temizlemek.
+
+Bu job:
+- DB’den **stale görünen** fixture id’lerini seçer (`threshold_minutes` ile)
+- `/fixtures?ids=...` ile (max 20) tekrar fetch eder
+- RAW’a yazar + CORE fixtures UPSERT eder
+
+Scope (hangi liglerde çalışır?) **config-driven**:
+- `params.scope_source: daily` → `config/jobs/daily.yaml -> tracked_leagues`
+- `params.scope_source: live` → `config/jobs/live.yaml -> jobs[live_fixtures_all].filters.tracked_leagues`
+
+Prod kuralı:
+- `scope_source: live` seçersen `live.yaml` içindeki `filters.tracked_leagues` **boş olamaz**.
+  - Live loop için boş liste “track all” anlamına gelebilir; ama stale refresh için bu **quota-risk** olduğu için intentionally reddedilir.
+
 ### 3.5 `config/jobs/live.yaml`
 - Scheduler içinde “live_loop job” tanımlı olsa bile, prod’da live loop ayrı servis olarak çalıştırılır.
 - `ENABLE_LIVE_LOOP=1` ile live loop container aktif edilir.

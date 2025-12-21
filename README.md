@@ -19,6 +19,10 @@ High-signal docs:
 - **Healthchecks**: `scripts/healthcheck_*.py`
 - **Tests**: `tests/unit/`, `tests/integration/`, `tests/mcp/`
 
+Operational safety nets (prod):
+- **Global by date fixtures** (`fixtures_fetch_mode: global_by_date`): fixes “today bulletin gap” by ingesting all fixtures for a UTC date (cups/UEFA included).
+- **Stale live refresh** (`stale_live_refresh`): periodically refetches fixtures stuck in a live status; scope is config-driven (recommended: live.yaml `filters.tracked_leagues`).
+
 ## Setup (local)
 
 ### 0) Prerequisites
