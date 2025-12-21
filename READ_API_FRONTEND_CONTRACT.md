@@ -25,6 +25,91 @@ UI kullanımı:
   - **Upcoming**: `status=NS` ve `date_utc > now()`
   - **Finished**: `status in {FT,AET,PEN}` + diğer final durumları
 
+### 1.2 Frontend örnek akış (Today + Tomorrow + Status bucket)
+
+Bu bölüm copy/paste amaçlıdır: React/Vite UI’de fixtures listesini nasıl çekeceğini ve nasıl böleceğini netleştirir.
+
+#### 1) Status bucket kuralları (frontend tarafında)
+
+```ts
+export const LIVE_STATUSES = new Set(["1H","2H","HT","ET","BT","P","LIVE","SUSP","INT"]);
+export const FINISHED_STATUSES = new Set(["FT","AET","PEN","AWD","WO","ABD","CANC"]);
+
+export function bucketByStatus(status: string) {
+  if (LIVE_STATUSES.has(status)) return "live";
+  if (FINISHED_STATUSES.has(status)) return "finished";
+  return "upcoming"; // NS, TBD, PST, vb.
+}
+```
+
+Not:
+- Canlı sayfa ayrı (SSE). Ama schedule sayfasında “live” bucket’ı göstermek istiyorsan bu set yeterli.
+
+#### 2) UTC tarih üretimi (bugün/yarın)
+
+```ts
+export function utcYmd(d = new Date()) {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+export const utcToday = utcYmd();
+export const utcTomorrow = utcYmd(new Date(Date.now() + 24 * 60 * 60 * 1000));
+```
+
+#### 3) Today + Tomorrow fetch pattern (2 request)
+
+```ts
+export async function fetchFixturesByDate(baseUrl: string, ymd: string) {
+  const res = await fetch(`${baseUrl}/v1/fixtures?date=${ymd}&limit=200`, { credentials: "include" });
+  if (!res.ok) throw new Error(`fixtures_fetch_failed:${res.status}`);
+  return (await res.json()) as Array<{
+    id: number;
+    league_id: number;
+    season: number | null;
+    date_utc: string | null;
+    status: string;
+    home_team: string;
+    away_team: string;
+    goals_home: number | null;
+    goals_away: number | null;
+    updated_at_utc: string | null;
+  }>;
+}
+
+export async function fetchTodayAndTomorrow(baseUrl: string) {
+  const [today, tomorrow] = await Promise.all([
+    fetchFixturesByDate(baseUrl, utcToday),
+    fetchFixturesByDate(baseUrl, utcTomorrow),
+  ]);
+  return { today, tomorrow };
+}
+```
+
+#### 4) Bugün 15:30 sonrası “başlamamış” liste (upcoming + kickoff>now)
+
+```ts
+export function upcomingLaterToday(fixtures: Array<{ status: string; date_utc: string | null }>) {
+  const now = Date.now();
+  return fixtures
+    .filter(f => bucketByStatus(f.status) === "upcoming")
+    .filter(f => f.date_utc && Date.parse(f.date_utc) > now)
+    .sort((a, b) => Date.parse(a.date_utc ?? "") - Date.parse(b.date_utc ?? ""));
+}
+```
+
+#### 5) Takvim ekranı (23/24 Aralık vb.)
+
+Takvim sayfasında her gün için aynı çağrıyı yap:
+- `GET /v1/fixtures?date=YYYY-MM-DD&limit=200`
+
+Frontend “birden fazla gün” gösterecekse en basit yaklaşım:
+- Görüntülenecek gün listesi oluştur (örn. [today..today+7])
+- `Promise.all` ile her güne ayrı request at
+- UI’de gün gün render et
+
 ---
 
 ## 2) Canlı sayfa (SSE)
