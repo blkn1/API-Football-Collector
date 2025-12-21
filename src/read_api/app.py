@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import date as Date, datetime, timedelta, timezone
 import json
 import os
+import re
 from typing import Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -66,6 +68,21 @@ def _to_iso_or_none(dt: Any) -> str | None:
         return dt.isoformat() if dt is not None else None
     except Exception:
         return None
+
+
+_YMD_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _parse_ymd(x: str) -> Date:
+    s = (x or "").strip()
+    if not _YMD_RE.match(s):
+        raise ValueError("invalid_date_format_expected_YYYY-MM-DD")
+    return Date.fromisoformat(s)
+
+
+def _utc_end_of_day(d: Date) -> datetime:
+    # inclusive end-of-day: next day 00:00 minus 1 microsecond
+    return datetime(d.year, d.month, d.day, tzinfo=timezone.utc) + timedelta(days=1) - timedelta(microseconds=1)
 
 
 def _fetchone(sql_text: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
@@ -155,6 +172,439 @@ async def fixtures(league_id: int | None = None, date: str | None = None, status
             }
         )
     return out
+
+
+@app.get("/v1/teams/{team_id}/fixtures", dependencies=[Depends(require_access)])
+async def team_fixtures(
+    team_id: int,
+    from_date: str,
+    to_date: str,
+    status: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    """
+    List fixtures for a team across ALL competitions within a UTC date range.
+    This powers team pages (history + upcoming) in the frontend.
+    """
+    safe_limit = max(1, min(int(limit), 500))
+    try:
+        d_from = _parse_ymd(from_date)
+        d_to = _parse_ymd(to_date)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if d_to < d_from:
+        raise HTTPException(status_code=400, detail="to_date_must_be_gte_from_date")
+
+    filters: list[str] = []
+    params: list[Any] = []
+
+    # Team participates as home OR away.
+    filters.append("AND (f.home_team_id = %s OR f.away_team_id = %s)")
+    params.extend([int(team_id), int(team_id)])
+
+    filters.append("AND DATE(f.date AT TIME ZONE 'UTC') >= %s")
+    params.append(d_from.isoformat())
+    filters.append("AND DATE(f.date AT TIME ZONE 'UTC') <= %s")
+    params.append(d_to.isoformat())
+
+    if status is not None:
+        filters.append("AND f.status_short = %s")
+        params.append(str(status))
+
+    sql_text = mcp_queries.TEAM_FIXTURES_QUERY.format(filters="\n    ".join(filters))
+    params.append(safe_limit)
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "id": int(r[0]),
+                "league_id": int(r[1]),
+                "season": _to_int_or_none(r[2]),
+                "date_utc": _to_iso_or_none(r[3]),
+                "status": r[4],
+                "home_team_id": _to_int_or_none(r[5]),
+                "home_team": r[6],
+                "away_team_id": _to_int_or_none(r[7]),
+                "away_team": r[8],
+                "goals_home": _to_int_or_none(r[9]),
+                "goals_away": _to_int_or_none(r[10]),
+                "updated_at_utc": _to_iso_or_none(r[11]),
+            }
+        )
+    return out
+
+
+def _normalize_stat_key(t: Any) -> str:
+    s = (str(t) if t is not None else "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s
+
+
+def _parse_intish(v: Any) -> int | None:
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        try:
+            return int(v)
+        except Exception:
+            return None
+    s = str(v).strip()
+    if not s:
+        return None
+    # handle "55%" possession-like strings
+    s = s.replace("%", "").strip()
+    if not s:
+        return None
+    try:
+        return int(float(s))
+    except Exception:
+        return None
+
+
+def _extract_team_match_stats(statistics_json: Any) -> dict[str, int | None]:
+    """
+    Convert core.fixture_statistics.statistics JSONB into a normalized dict of int-ish values.
+    Keys are normalized (e.g. 'shots_on_goal', 'corner_kicks').
+    """
+    out: dict[str, int | None] = {}
+    if not isinstance(statistics_json, list):
+        return out
+    for item in statistics_json:
+        if not isinstance(item, dict):
+            continue
+        k = _normalize_stat_key(item.get("type"))
+        if not k:
+            continue
+        out[k] = _parse_intish(item.get("value"))
+    return out
+
+
+@app.get("/v1/fixtures/{fixture_id}/details", dependencies=[Depends(require_access)])
+async def fixture_details(fixture_id: int) -> dict[str, Any]:
+    """
+    Return a merged view of fixture detail data.\n
+    - Prefer core.fixture_details snapshot JSONB when present\n
+    - Fallback to normalized core.fixture_* tables\n
+    """
+    fid = int(fixture_id)
+
+    snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (fid,))
+    snapshot: dict[str, Any] | None = None
+    if snapshot_row:
+        snapshot = {
+            "fixture_id": int(snapshot_row[0]),
+            "events": snapshot_row[1],
+            "lineups": snapshot_row[2],
+            "statistics": snapshot_row[3],
+            "players": snapshot_row[4],
+            "updated_at_utc": _to_iso_or_none(snapshot_row[5]),
+            "source": "core.fixture_details",
+        }
+
+    # Normalized fallbacks (always safe to attempt)
+    players_rows = await _fetchall_async(mcp_queries.FIXTURE_PLAYERS_QUERY.format(team_filter=""), (fid, 5000))
+    events_rows = await _fetchall_async(mcp_queries.FIXTURE_EVENTS_QUERY, (fid, 5000))
+    stats_rows = await _fetchall_async(mcp_queries.FIXTURE_STATISTICS_QUERY, (fid,))
+    lineups_rows = await _fetchall_async(mcp_queries.FIXTURE_LINEUPS_QUERY, (fid,))
+
+    players_out: list[dict[str, Any]] = []
+    for r in players_rows:
+        players_out.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "player_id": _to_int_or_none(r[2]),
+                "player_name": r[3],
+                "statistics": r[4],
+                "updated_at_utc": _to_iso_or_none(r[5]),
+            }
+        )
+
+    events_out: list[dict[str, Any]] = []
+    for r in events_rows:
+        events_out.append(
+            {
+                "fixture_id": int(r[0]),
+                "time_elapsed": _to_int_or_none(r[1]),
+                "time_extra": _to_int_or_none(r[2]),
+                "team_id": _to_int_or_none(r[3]),
+                "player_id": _to_int_or_none(r[4]),
+                "assist_id": _to_int_or_none(r[5]),
+                "type": r[6],
+                "detail": r[7],
+                "comments": r[8],
+                "updated_at_utc": _to_iso_or_none(r[9]),
+            }
+        )
+
+    stats_out: list[dict[str, Any]] = []
+    for r in stats_rows:
+        stats_out.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "statistics": r[2],
+                "updated_at_utc": _to_iso_or_none(r[3]),
+            }
+        )
+
+    lineups_out: list[dict[str, Any]] = []
+    for r in lineups_rows:
+        lineups_out.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "formation": r[2],
+                "start_xi": r[3],
+                "substitutes": r[4],
+                "coach": r[5],
+                "colors": r[6],
+                "updated_at_utc": _to_iso_or_none(r[7]),
+            }
+        )
+
+    # Merge preference: snapshot fields if present and non-null, else normalized.
+    if snapshot:
+        return {
+            "ok": True,
+            "fixture_id": fid,
+            "source": snapshot.get("source"),
+            "updated_at_utc": snapshot.get("updated_at_utc"),
+            "events": snapshot.get("events") if snapshot.get("events") is not None else events_out,
+            "lineups": snapshot.get("lineups") if snapshot.get("lineups") is not None else lineups_out,
+            "statistics": snapshot.get("statistics") if snapshot.get("statistics") is not None else stats_out,
+            "players": snapshot.get("players") if snapshot.get("players") is not None else players_out,
+        }
+
+    return {
+        "ok": True,
+        "fixture_id": fid,
+        "source": "core.fixture_*",
+        "events": events_out,
+        "lineups": lineups_out,
+        "statistics": stats_out,
+        "players": players_out,
+    }
+
+
+@app.get("/v1/h2h", dependencies=[Depends(require_access)])
+async def h2h(home_team_id: int, away_team_id: int, limit: int = 5) -> list[dict[str, Any]]:
+    safe_limit = max(1, min(int(limit), 50))
+    rows = await _fetchall_async(
+        mcp_queries.H2H_FIXTURES_QUERY,
+        (int(home_team_id), int(away_team_id), int(away_team_id), int(home_team_id), safe_limit),
+    )
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        out.append(
+            {
+                "id": int(r[0]),
+                "league_id": int(r[1]),
+                "season": _to_int_or_none(r[2]),
+                "date_utc": _to_iso_or_none(r[3]),
+                "status": r[4],
+                "home_team_id": _to_int_or_none(r[5]),
+                "home_team": r[6],
+                "away_team_id": _to_int_or_none(r[7]),
+                "away_team": r[8],
+                "goals_home": _to_int_or_none(r[9]),
+                "goals_away": _to_int_or_none(r[10]),
+                "updated_at_utc": _to_iso_or_none(r[11]),
+            }
+        )
+    return out
+
+
+@app.get("/v1/teams/{team_id}/metrics", dependencies=[Depends(require_access)])
+async def team_metrics(team_id: int, last_n: int = 20, as_of_date: str | None = None) -> dict[str, Any]:
+    """
+    Aggregated features for match prediction.\n
+    - last_n: number of completed matches to include (default 20)\n
+    - as_of_date: optional YYYY-MM-DD; only matches with fixture.date <= end-of-day are considered\n
+    """
+    n = max(1, min(int(last_n), 50))
+    if as_of_date is not None:
+        try:
+            d = _parse_ymd(as_of_date)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cutoff = _utc_end_of_day(d)
+    else:
+        cutoff = datetime.now(timezone.utc)
+
+    # Completed matches only (prediction history features).
+    final_statuses = ("FT", "AET", "PEN")
+
+    filters: list[str] = []
+    params: list[Any] = []
+    filters.append("AND (f.home_team_id = %s OR f.away_team_id = %s)")
+    params.extend([int(team_id), int(team_id)])
+    filters.append("AND f.status_short = ANY(%s)")
+    params.append(list(final_statuses))
+    filters.append("AND f.date <= %s")
+    params.append(cutoff)
+
+    sql_text = mcp_queries.TEAM_FIXTURES_QUERY.format(filters="\n    ".join(filters))
+    params.append(n)
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    fixtures: list[dict[str, Any]] = []
+    fixture_ids: list[int] = []
+    for r in rows:
+        fid = int(r[0])
+        fixture_ids.append(fid)
+        fixtures.append(
+            {
+                "id": fid,
+                "league_id": int(r[1]),
+                "season": _to_int_or_none(r[2]),
+                "date_utc": _to_iso_or_none(r[3]),
+                "status": r[4],
+                "home_team_id": _to_int_or_none(r[5]),
+                "home_team": r[6],
+                "away_team_id": _to_int_or_none(r[7]),
+                "away_team": r[8],
+                "goals_home": _to_int_or_none(r[9]),
+                "goals_away": _to_int_or_none(r[10]),
+            }
+        )
+
+    # Pull per-fixture statistics (two rows per fixture: one per team) and events for first-goal timing.
+    stats_by_fixture_team: dict[tuple[int, int], dict[str, int | None]] = {}
+    if fixture_ids:
+        # statistics
+        with get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT fixture_id, team_id, statistics
+                    FROM core.fixture_statistics
+                    WHERE fixture_id = ANY(%s)
+                    """,
+                    (fixture_ids,),
+                )
+                for fid, tid, stats_json in cur.fetchall():
+                    if fid is None or tid is None:
+                        continue
+                    stats_by_fixture_team[(int(fid), int(tid))] = _extract_team_match_stats(stats_json)
+            conn.commit()
+
+    # Aggregate
+    played = 0
+    wins = draws = losses = 0
+    gf = ga = 0
+    btts_yes = 0
+    clean_sheet = 0
+    home_played = away_played = 0
+    home_gf = home_ga = away_gf = away_ga = 0
+
+    # stats accumulators: sum + count (only where present)
+    stat_sums: dict[str, int] = {}
+    stat_counts: dict[str, int] = {}
+
+    for fx in fixtures:
+        hid = fx.get("home_team_id")
+        aid = fx.get("away_team_id")
+        gh = fx.get("goals_home")
+        ga_ = fx.get("goals_away")
+        if hid is None or aid is None or gh is None or ga_ is None:
+            continue
+
+        is_home = int(hid) == int(team_id)
+        is_away = int(aid) == int(team_id)
+        if not (is_home or is_away):
+            continue
+
+        played += 1
+        team_g = int(gh) if is_home else int(ga_)
+        opp_g = int(ga_) if is_home else int(gh)
+        gf += team_g
+        ga += opp_g
+
+        if team_g > opp_g:
+            wins += 1
+        elif team_g < opp_g:
+            losses += 1
+        else:
+            draws += 1
+
+        if team_g > 0 and opp_g > 0:
+            btts_yes += 1
+        if opp_g == 0:
+            clean_sheet += 1
+
+        if is_home:
+            home_played += 1
+            home_gf += team_g
+            home_ga += opp_g
+        else:
+            away_played += 1
+            away_gf += team_g
+            away_ga += opp_g
+
+        # collect stats if present for this team in this fixture
+        st = stats_by_fixture_team.get((int(fx["id"]), int(team_id)))
+        if st:
+            for k, v in st.items():
+                if v is None:
+                    continue
+                stat_sums[k] = stat_sums.get(k, 0) + int(v)
+                stat_counts[k] = stat_counts.get(k, 0) + 1
+
+    def _avg(key: str) -> float | None:
+        c = stat_counts.get(key, 0)
+        if c <= 0:
+            return None
+        return round(stat_sums.get(key, 0) / c, 4)
+
+    def _rate(x: int) -> float | None:
+        if played <= 0:
+            return None
+        return round((x / played) * 100.0, 4)
+
+    return {
+        "ok": True,
+        "team_id": int(team_id),
+        "window": {"last_n": int(n), "played": int(played), "as_of_utc": _to_iso_or_none(cutoff)},
+        "results": {"wins": wins, "draws": draws, "losses": losses, "win_rate_pct": _rate(wins)},
+        "goals": {
+            "gf": gf,
+            "ga": ga,
+            "gf_avg": (round(gf / played, 4) if played else None),
+            "ga_avg": (round(ga / played, 4) if played else None),
+            "btts_rate_pct": _rate(btts_yes),
+            "clean_sheet_rate_pct": _rate(clean_sheet),
+            "home": {
+                "played": home_played,
+                "gf": home_gf,
+                "ga": home_ga,
+                "gf_avg": (round(home_gf / home_played, 4) if home_played else None),
+                "ga_avg": (round(home_ga / home_played, 4) if home_played else None),
+            },
+            "away": {
+                "played": away_played,
+                "gf": away_gf,
+                "ga": away_ga,
+                "gf_avg": (round(away_gf / away_played, 4) if away_played else None),
+                "ga_avg": (round(away_ga / away_played, 4) if away_played else None),
+            },
+        },
+        "match_stats_avg": {
+            # common chart keys (may be null if league doesn't provide)
+            "total_shots": _avg("total_shots"),
+            "shots_on_goal": _avg("shots_on_goal"),
+            "corner_kicks": _avg("corner_kicks"),
+            "yellow_cards": _avg("yellow_cards"),
+            "red_cards": _avg("red_cards"),
+            "ball_possession_pct": _avg("ball_possession"),
+            "offsides": _avg("offsides"),
+        },
+        "fixtures_sample": fixtures[: min(len(fixtures), 20)],
+    }
 
 
 @app.get("/v1/standings/{league_id}/{season}", dependencies=[Depends(require_access)])

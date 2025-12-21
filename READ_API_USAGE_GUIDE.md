@@ -73,6 +73,49 @@ Filtreler:
 - `status` (ör: `NS`, `1H`, `HT`, `2H`, `FT`)
 - `limit` (max 200)
 
+### 3.3.1 Team Fixtures (tüm turnuvalar)
+
+Bir takımın maçlarını (lig/kupa/UEFA dahil) tarih aralığında getirir:
+
+```bash
+curl -sS "${READ_API_BASE}/v1/teams/645/fixtures?from_date=2025-12-01&to_date=2025-12-31&limit=200"
+```
+
+Parametreler:
+- `from_date` (YYYY-MM-DD, UTC) **zorunlu**
+- `to_date` (YYYY-MM-DD, UTC) **zorunlu**
+- `status` (opsiyonel: `NS`, `FT`, `1H` vb)
+- `limit` (max 500)
+
+### 3.3.2 Fixture Details (tek maç detay paketi)
+
+Fixture detail tablolarını (events/statistics/lineups/players) tek çağrıda döner.\n
+Not: Önce `core.fixture_details` JSONB snapshot tercih edilir; yoksa `core.fixture_*` normalize tablolardan fallback yapılır.
+
+```bash
+curl -sS "${READ_API_BASE}/v1/fixtures/1379134/details" | head -c 2000 && echo
+```
+
+### 3.3.3 Team Metrics (last-N=20) — tahmin feature set
+
+Takımın son N tamamlanmış maçından (FT/AET/PEN) özet metrikleri hesaplar.\n
+Frontend chart’ları için “hazır” ortalama/rate alanları içerir.
+
+```bash
+curl -sS "${READ_API_BASE}/v1/teams/645/metrics?last_n=20" | head -c 2000 && echo
+```
+
+Opsiyonel:
+- `as_of_date=YYYY-MM-DD` → sadece bu tarihe kadar olan maçları dikkate alır.
+
+### 3.3.4 Head-to-Head (H2H)
+
+İki takımın son N karşılaşmasını döner:
+
+```bash
+curl -sS "${READ_API_BASE}/v1/h2h?home_team_id=645&away_team_id=610&limit=5"
+```
+
 ### 3.4 Standings
 
 ```bash

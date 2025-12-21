@@ -64,6 +64,58 @@ FIXTURES_QUERY = """
     LIMIT %s
 """
 
+# Team fixtures query (includes team IDs + names for FE rendering)
+# Note: `filters` is inserted as a fixed safe fragment assembled from known clauses.
+TEAM_FIXTURES_QUERY = """
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.status_short,
+      f.home_team_id,
+      th.name as home_team_name,
+      f.away_team_id,
+      ta.name as away_team_name,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    JOIN core.teams th ON f.home_team_id = th.id
+    JOIN core.teams ta ON f.away_team_id = ta.id
+    WHERE 1=1
+    {filters}
+    ORDER BY f.date DESC
+    LIMIT %s
+"""
+
+# Head-to-head fixtures (last N meetings). Includes team IDs/names.
+H2H_FIXTURES_QUERY = """
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.status_short,
+      f.home_team_id,
+      th.name as home_team_name,
+      f.away_team_id,
+      ta.name as away_team_name,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    JOIN core.teams th ON f.home_team_id = th.id
+    JOIN core.teams ta ON f.away_team_id = ta.id
+    WHERE (
+      (f.home_team_id = %s AND f.away_team_id = %s)
+      OR
+      (f.home_team_id = %s AND f.away_team_id = %s)
+    )
+    ORDER BY f.date DESC
+    LIMIT %s
+"""
+
 STANDINGS_QUERY = """
     SELECT
       s.league_id,
@@ -295,6 +347,18 @@ FIXTURE_LINEUPS_QUERY = """
     FROM core.fixture_lineups
     WHERE fixture_id = %s
     ORDER BY team_id NULLS LAST
+"""
+
+FIXTURE_DETAILS_SNAPSHOT_QUERY = """
+    SELECT
+      fixture_id,
+      events,
+      lineups,
+      statistics,
+      players,
+      updated_at
+    FROM core.fixture_details
+    WHERE fixture_id = %s
 """
 
 
