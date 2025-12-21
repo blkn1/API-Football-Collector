@@ -120,6 +120,27 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
+- job_id: team_statistics_refresh
+  type: incremental_daily
+  enabled: true
+  priority: MEDIUM
+  endpoint: /teams/statistics
+  params: {}
+  interval:
+    type: cron
+    # Every 10 minutes, offset to spread load (uses TEAM_STATS_MAX_TASKS_PER_RUN + TEAM_STATS_REFRESH_HOURS)
+    cron: "7-59/10 * * * *"
+  target_layer: raw+core+mart
+  dependencies:
+  - bootstrap_leagues
+  - bootstrap_teams
+  coverage_target:
+    endpoint: /teams/statistics
+    league_id: null
+    season: null
+    min_records: 1
+    max_lag_minutes: 1440
+
 # Maintenance: refresh stale "live" fixtures that haven't updated in a while.
 # This prevents "stale live status" from polluting live dashboards and MCP live scans.
 - job_id: stale_live_refresh

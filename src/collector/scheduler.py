@@ -30,6 +30,7 @@ from src.jobs.backfill import (
 )
 from src.jobs.season_rollover import run_season_rollover_watch
 from src.jobs.top_scorers import run_top_scorers_daily
+from src.jobs.team_statistics import run_team_statistics_refresh
 from src.jobs.static_bootstrap import (
     run_bootstrap_countries,
     run_bootstrap_leagues,
@@ -245,6 +246,12 @@ def _build_runner(
                 )
             elif job.job_id == "top_scorers_daily":
                 await run_top_scorers_daily(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "team_statistics_refresh":
+                await run_team_statistics_refresh(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",

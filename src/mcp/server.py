@@ -918,8 +918,10 @@ async def get_database_stats() -> dict:
                 "core_fixture_statistics": int(row[9]),
                 "core_fixture_lineups": int(row[10]),
                 "core_standings": int(row[11]),
-                "raw_last_fetched_at_utc": _to_iso_or_none(row[12]),
-                "core_fixtures_last_updated_at_utc": _to_iso_or_none(row[13]),
+                "core_top_scorers": int(row[12]),
+                "core_team_statistics": int(row[13]),
+                "raw_last_fetched_at_utc": _to_iso_or_none(row[14]),
+                "core_fixtures_last_updated_at_utc": _to_iso_or_none(row[15]),
             },
             "ts_utc": _utc_now_iso(),
         }

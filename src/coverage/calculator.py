@@ -240,6 +240,89 @@ class CoverageCalculator:
             "overall_coverage": round(overall, 2),
         }
 
+    def calculate_team_statistics_coverage(self, league_id: int, season: int) -> dict[str, Any]:
+        """
+        Coverage for /teams/statistics (team-level season profile):
+        - expected_count = number of teams discovered for league+season (progress table)
+        - actual_count   = number of teams with a row in core.team_statistics
+        - pipeline_cov   = actual/expected (capped 0..100)
+        """
+        expected = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM core.team_statistics_progress
+                WHERE league_id = %s AND season = %s
+                """,
+                (int(league_id), int(season)),
+            )
+            or 0
+        )
+        actual = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM core.team_statistics
+                WHERE league_id = %s AND season = %s
+                """,
+                (int(league_id), int(season)),
+            )
+            or 0
+        )
+
+        count_cov = (actual / expected * 100.0) if expected > 0 else 0.0
+
+        last_update = self._query_last_update_generic(
+            table="core.team_statistics",
+            where="league_id = %s AND season = %s",
+            params=(int(league_id), int(season)),
+        )
+        lag_minutes = self._calculate_lag_minutes(last_update)
+        max_lag = int(self.config.max_lag_minutes_daily)
+        freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
+
+        raw_count = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM raw.api_responses
+                WHERE endpoint = '/teams/statistics'
+                  AND fetched_at > NOW() - INTERVAL '24 hours'
+                  AND requested_params->>'league' = %s
+                  AND requested_params->>'season' = %s
+                """,
+                (str(int(league_id)), str(int(season))),
+            )
+            or 0
+        )
+
+        pipeline_cov = min(100.0, (actual / expected * 100.0)) if expected > 0 else 0.0
+
+        w = self.config.weights
+        overall = (
+            count_cov * float(w["count_coverage"])
+            + freshness_cov * float(w["freshness_coverage"])
+            + pipeline_cov * float(w["pipeline_coverage"])
+        )
+
+        last_update_iso = last_update.isoformat().replace("+00:00", "Z") if last_update else None
+        return {
+            "league_id": int(league_id),
+            "league_name": self._query_league_name(league_id),
+            "season": int(season),
+            "endpoint": "/teams/statistics",
+            "expected_count": expected,
+            "actual_count": actual,
+            "count_coverage": round(float(count_cov), 2),
+            "last_update": last_update_iso,
+            "lag_minutes": int(lag_minutes),
+            "freshness_coverage": round(freshness_cov, 2),
+            "raw_count": raw_count,
+            "core_count": actual,
+            "pipeline_coverage": round(float(pipeline_cov), 2),
+            "overall_coverage": round(float(overall), 2),
+        }
+
     def calculate_fixture_endpoint_coverage(
         self,
         *,

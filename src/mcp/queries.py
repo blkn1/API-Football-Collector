@@ -243,6 +243,8 @@ DATABASE_STATS_QUERY = """
       (SELECT COUNT(*) FROM core.fixture_statistics) AS core_fixture_statistics,
       (SELECT COUNT(*) FROM core.fixture_lineups) AS core_fixture_lineups,
       (SELECT COUNT(*) FROM core.standings) AS core_standings,
+      (SELECT COUNT(*) FROM core.top_scorers) AS core_top_scorers,
+      (SELECT COUNT(*) FROM core.team_statistics) AS core_team_statistics,
       (SELECT MAX(fetched_at) FROM raw.api_responses) AS raw_last_fetched_at,
       (SELECT MAX(updated_at) FROM core.fixtures) AS core_fixtures_last_updated_at
 """
