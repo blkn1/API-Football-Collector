@@ -112,10 +112,8 @@ jobs:
     stale_threshold_minutes: 30
     batch_size: 20   # API-Football /fixtures ids max 20
     # Which league scope should "stale live cleanup" use?
-    # - daily: config/jobs/daily.yaml -> tracked_leagues (default behavior)
-    # - live:  config/jobs/live.yaml  -> jobs[live_fixtures_all].filters.tracked_leagues
-    scope_source: live
-    live_config_path: config/jobs/live.yaml
+    # - daily: config/jobs/daily.yaml -> tracked_leagues
+    scope_source: daily
   interval:
     type: cron
     cron: "*/10 * * * *"

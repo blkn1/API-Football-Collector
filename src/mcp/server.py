@@ -1183,10 +1183,11 @@ async def get_job_status(job_name: str | None = None) -> dict:
         cfg_files = [
             PROJECT_ROOT / "config" / "jobs" / "static.yaml",
             PROJECT_ROOT / "config" / "jobs" / "daily.yaml",
-            PROJECT_ROOT / "config" / "jobs" / "live.yaml",
         ]
         cfg_jobs: list[dict[str, Any]] = []
         for p in cfg_files:
+            if not p.exists():
+                continue
             for j in _load_jobs_from_yaml(p):
                 if job_name and j.job_id != job_name:
                     continue
