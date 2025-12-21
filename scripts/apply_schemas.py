@@ -226,10 +226,23 @@ def main() -> int:
     if not base_files:
         raise SystemExit(f"no_sql_files_found:{schemas_dir}")
 
-    # Ensure DB exists before attempting to connect/apply schemas.
-    _ensure_database_exists()
     dsn = _dsn()
-    conn = psycopg2.connect(dsn, connect_timeout=5)
+
+    # Prefer connecting directly to the target DB.
+    # Some managed/Coolify Postgres setups block connecting to the admin DB (often named "postgres")
+    # even when the target DB is reachable, so only attempt CREATE DATABASE when the target DB
+    # is actually missing.
+    try:
+        conn = psycopg2.connect(dsn, connect_timeout=5)
+    except psycopg2.OperationalError as e:
+        msg = str(e)
+        # Heuristic for "database does not exist" errors (psycopg2 may wrap server error strings)
+        missing_db = ("does not exist" in msg.lower()) and ("database" in msg.lower())
+        if not missing_db:
+            print(f"[ERROR] cannot_connect_target_db: {msg}")
+            raise
+        _ensure_database_exists()
+        conn = psycopg2.connect(dsn, connect_timeout=5)
     try:
         conn.autocommit = True
         with conn.cursor() as cur:

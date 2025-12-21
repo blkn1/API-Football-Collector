@@ -24,6 +24,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    profiles: ["live"]
     env_file:
       - ./.env
     healthcheck:
@@ -69,8 +70,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      redis:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "scripts/healthcheck_collector.py"]
       interval: 10s
@@ -85,6 +84,7 @@ services:
   # Optional: live polling loop (/fixtures?live=all every 15s).
   # Set ENABLE_LIVE_LOOP=1 to actually run it; otherwise the container stays idle (does NOT call API).
   live_loop:
+    profiles: ["live"]
     build:
       context: .
       dockerfile: Dockerfile
