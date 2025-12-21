@@ -938,6 +938,11 @@ async def ops_system_status() -> dict:
     job_status = await mcp_server.get_job_status()
     backfill = await mcp_server.get_backfill_progress()
     raw_errors = await mcp_server.get_raw_error_summary(since_minutes=60)
+    raw_error_samples = await mcp_server.get_raw_error_samples(
+        since_minutes=60,
+        endpoint="/fixtures",
+        limit=10,
+    )
     recent_log_errors = await mcp_server.get_recent_log_errors(limit=50)
 
     return {
@@ -948,5 +953,6 @@ async def ops_system_status() -> dict:
         "job_status": job_status,
         "backfill": backfill,
         "raw_errors": raw_errors,
+        "raw_error_samples": raw_error_samples,
         "recent_log_errors": recent_log_errors,
     }

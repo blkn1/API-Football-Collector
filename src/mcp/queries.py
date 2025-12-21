@@ -472,3 +472,24 @@ RAW_ERRORS_BY_ENDPOINT_QUERY = """
 """
 
 
+RAW_ERROR_SAMPLES_QUERY = """
+    SELECT
+      id,
+      endpoint,
+      requested_params,
+      status_code,
+      errors,
+      results,
+      fetched_at
+    FROM raw.api_responses
+    WHERE fetched_at >= NOW() - make_interval(mins => %s)
+      AND (%s::text IS NULL OR endpoint = %s::text)
+      AND (
+        (errors IS NOT NULL AND jsonb_typeof(errors) = 'array' AND jsonb_array_length(errors) > 0)
+        OR (errors IS NOT NULL AND jsonb_typeof(errors) = 'object' AND errors <> '{}'::jsonb)
+      )
+    ORDER BY fetched_at DESC
+    LIMIT %s
+"""
+
+

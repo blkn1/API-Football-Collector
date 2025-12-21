@@ -1342,6 +1342,49 @@ async def get_raw_error_summary(
         return _ok_error("get_raw_error_summary_failed", details=str(e))
 
 
+@app.tool()
+async def get_raw_error_samples(
+    since_minutes: int = 60,
+    endpoint: str | None = None,
+    limit: int = 25,
+) -> dict:
+    """
+    Return recent RAW rows where the API envelope "errors" is non-empty.
+
+    Use this to debug cases where status_code is 2xx but the envelope contains errors
+    (e.g., rateLimit, invalid params, partial failures).
+    """
+    try:
+        mins = max(1, min(int(since_minutes), 60 * 24 * 14))  # cap at 14 days
+        ep = str(endpoint) if endpoint is not None else None
+        safe_limit = max(1, min(int(limit), 200))
+
+        rows = await _db_fetchall_async(queries.RAW_ERROR_SAMPLES_QUERY, (mins, ep, ep, safe_limit))
+        samples: list[dict[str, Any]] = []
+        for r in rows:
+            samples.append(
+                {
+                    "id": _to_int_or_none(r[0]),
+                    "endpoint": r[1],
+                    "requested_params": r[2],
+                    "status_code": _to_int_or_none(r[3]),
+                    "errors": r[4],
+                    "results": _to_int_or_none(r[5]),
+                    "fetched_at_utc": _to_iso_or_none(r[6]),
+                }
+            )
+
+        return {
+            "ok": True,
+            "window": {"since_minutes": mins},
+            "filters": {"endpoint": ep, "limit": safe_limit},
+            "samples": samples,
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_raw_error_samples_failed", details=str(e))
+
+
 def _parse_recent_log_errors(*, job_name: str | None, limit: int) -> dict[str, Any]:
     log_path = Path(os.getenv("COLLECTOR_LOG_FILE", str(PROJECT_ROOT / "logs" / "collector.jsonl")))
     if not log_path.exists():
