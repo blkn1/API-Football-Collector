@@ -172,6 +172,74 @@ class CoverageCalculator:
             "overall_coverage": round(overall, 2),
         }
 
+    def calculate_top_scorers_coverage(self, league_id: int, season: int) -> dict[str, Any]:
+        """
+        Coverage for /players/topscorers (leaderboard, league+season):
+        - expected_count = 1 (we only need "present + fresh")
+        - actual_count = 1 if we have any top_scorers rows for league+season, else 0
+        """
+        core_total = int(
+            query_scalar(
+                "SELECT COUNT(*) FROM core.top_scorers WHERE league_id = %s AND season = %s",
+                (int(league_id), int(season)),
+            )
+            or 0
+        )
+        actual = 1 if core_total > 0 else 0
+        expected = 1
+        count_cov = 100.0 if actual >= expected else 0.0
+
+        last_update = self._query_last_update_generic(
+            table="core.top_scorers",
+            where="league_id = %s AND season = %s",
+            params=(int(league_id), int(season)),
+        )
+        lag_minutes = self._calculate_lag_minutes(last_update)
+        max_lag = int(self.config.max_lag_minutes_daily)
+        freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
+
+        raw_count = int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM raw.api_responses
+                WHERE endpoint = '/players/topscorers'
+                  AND fetched_at > NOW() - INTERVAL '24 hours'
+                  AND requested_params->>'league' = %s
+                  AND requested_params->>'season' = %s
+                """,
+                (str(int(league_id)), str(int(season))),
+            )
+            or 0
+        )
+
+        pipeline_cov = 100.0 if raw_count > 0 and core_total >= 0 else 0.0
+
+        w = self.config.weights
+        overall = (
+            count_cov * float(w["count_coverage"])
+            + freshness_cov * float(w["freshness_coverage"])
+            + pipeline_cov * float(w["pipeline_coverage"])
+        )
+
+        last_update_iso = last_update.isoformat().replace("+00:00", "Z") if last_update else None
+        return {
+            "league_id": int(league_id),
+            "league_name": self._query_league_name(league_id),
+            "season": int(season),
+            "endpoint": "/players/topscorers",
+            "expected_count": expected,
+            "actual_count": actual,
+            "count_coverage": round(count_cov, 2),
+            "last_update": last_update_iso,
+            "lag_minutes": int(lag_minutes),
+            "freshness_coverage": round(freshness_cov, 2),
+            "raw_count": raw_count,
+            "core_count": core_total,
+            "pipeline_coverage": round(pipeline_cov, 2),
+            "overall_coverage": round(overall, 2),
+        }
+
     def calculate_fixture_endpoint_coverage(
         self,
         *,

@@ -101,6 +101,25 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
+- job_id: top_scorers_daily
+  type: incremental_daily
+  enabled: true
+  priority: MEDIUM
+  endpoint: /players/topscorers
+  params: {}
+  interval:
+    type: cron
+    cron: "40 6 * * *"   # TR 06:40 (scheduler timezone)
+  target_layer: raw+core+mart
+  dependencies:
+  - bootstrap_leagues
+  coverage_target:
+    endpoint: /players/topscorers
+    league_id: null
+    season: null
+    min_records: 1
+    max_lag_minutes: 1440
+
 # Maintenance: refresh stale "live" fixtures that haven't updated in a while.
 # This prevents "stale live status" from polluting live dashboards and MCP live scans.
 - job_id: stale_live_refresh

@@ -29,6 +29,7 @@ from src.jobs.backfill import (
     run_standings_backfill_league_season,
 )
 from src.jobs.season_rollover import run_season_rollover_watch
+from src.jobs.top_scorers import run_top_scorers_daily
 from src.jobs.static_bootstrap import (
     run_bootstrap_countries,
     run_bootstrap_leagues,
@@ -106,7 +107,7 @@ def _load_jobs_from_yaml(path: Path) -> list[Job]:
 def _job_files() -> list[Path]:
     root = _project_root()
     jobs_dir = Path(os.getenv("API_FOOTBALL_JOBS_DIR", str(root / "config" / "jobs")))
-    files = [jobs_dir / "static.yaml", jobs_dir / "daily.yaml", jobs_dir / "live.yaml"]
+    files = [jobs_dir / "static.yaml", jobs_dir / "daily.yaml"]
     return [p for p in files if p.exists()]
 
 
@@ -238,6 +239,12 @@ def _build_runner(
                 )
             elif job.job_id == "stale_live_refresh":
                 await run_stale_live_refresh(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "top_scorers_daily":
+                await run_top_scorers_daily(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
