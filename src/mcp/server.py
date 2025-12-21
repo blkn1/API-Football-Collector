@@ -117,6 +117,9 @@ def _to_iso_or_none(dt: Any) -> str | None:
     return None
 
 
+LIVE_STATUSES = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT")
+
+
 def _db_fetchall(sql_text: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
     with get_db_connection() as conn:
         with conn.cursor() as cur:
@@ -682,6 +685,67 @@ async def query_fixtures(
         return out
     except Exception as e:
         return [_ok_error("query_fixtures_failed", details=str(e))]
+
+
+@app.tool()
+async def get_stale_live_fixtures_status(
+    threshold_minutes: int = 30,
+    tracked_only: bool = True,
+    limit: int = 50,
+) -> dict:
+    """
+    Ops tool: find fixtures that still look "live" but haven't updated recently.
+
+    Args:
+        threshold_minutes: Consider a fixture stale if updated_at < now - threshold (default 30)
+        tracked_only: If true, only count/return fixtures whose league_id is in daily tracked_leagues
+        limit: Max fixtures to return (default 50, capped at 200)
+    """
+    try:
+        mins = max(5, min(int(threshold_minutes), 24 * 60))
+        safe_limit = max(1, min(int(limit), 200))
+
+        rows = await _db_fetchall_async(queries.STALE_LIVE_FIXTURES_QUERY, (list(LIVE_STATUSES), int(mins), int(safe_limit)))
+
+        tracked_set: set[int] = set()
+        if tracked_only:
+            tracked_set = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
+            if not tracked_set:
+                return _ok_error("tracked_leagues_required", details="tracked_only=true requires tracked_leagues in daily config.")
+
+        out: list[dict[str, Any]] = []
+        ignored_untracked = 0
+        for r in rows:
+            league_id = int(r[1])
+            if tracked_only and league_id not in tracked_set:
+                ignored_untracked += 1
+                continue
+            out.append(
+                {
+                    "id": int(r[0]),
+                    "league_id": league_id,
+                    "season": _to_int_or_none(r[2]),
+                    "date_utc": _to_iso_or_none(r[3]),
+                    "status": r[4],
+                    "home_team": r[5],
+                    "away_team": r[6],
+                    "goals_home": _to_int_or_none(r[7]),
+                    "goals_away": _to_int_or_none(r[8]),
+                    "updated_at_utc": _to_iso_or_none(r[9]),
+                }
+            )
+
+        return {
+            "ok": True,
+            "threshold_minutes": int(mins),
+            "tracked_only": bool(tracked_only),
+            "stale_count": len(out),
+            "ignored_untracked": int(ignored_untracked),
+            "fixtures": out,
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_stale_live_fixtures_status_failed", details=str(e))
 
 
 @app.tool()

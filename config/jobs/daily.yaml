@@ -82,6 +82,23 @@ jobs:
     endpoint: /fixtures/details_backfill_90d
     min_records: 1
     max_lag_minutes: 1440
+
+# Maintenance: refresh stale "live" fixtures that haven't updated in a while.
+# This prevents "stale live status" from polluting live dashboards and MCP live scans.
+- job_id: stale_live_refresh
+  type: incremental_daily
+  enabled: true
+  priority: LOW
+  endpoint: /fixtures
+  params:
+    stale_threshold_minutes: 30
+    batch_size: 20   # API-Football /fixtures ids max 20
+  interval:
+    type: cron
+    cron: '*/10 * * * *'
+  target_layer: raw+core
+  dependencies:
+  - daily_fixtures_by_date
 - job_id: fixtures_backfill_league_season
   type: incremental_daily
   enabled: true
