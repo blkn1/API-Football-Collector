@@ -22,18 +22,6 @@ services:
     # Do not force a custom network here. Let the platform attach its proxy
     # to the app network so domains can reach containers.
 
-  redis:
-    image: redis:7-alpine
-    profiles: ["live"]
-    env_file:
-      - ./.env
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    # see note above (Coolify/Traefik networking)
-
   # Scheduler: runs enabled non-live jobs from config/jobs/*.yaml
   collector:
     build:
@@ -76,47 +64,6 @@ services:
       timeout: 5s
       retries: 12
     command: ["sh", "-lc", "python scripts/apply_schemas.py && python -m src.collector.scheduler"]
-    volumes:
-      - ./logs:/app/logs
-    restart: unless-stopped
-    # see note above (Coolify/Traefik networking)
-
-  # Optional: live polling loop (/fixtures?live=all every 15s).
-  # Set ENABLE_LIVE_LOOP=1 to actually run it; otherwise the container stays idle (does NOT call API).
-  live_loop:
-    profiles: ["live"]
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file:
-      - ./.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/api_football}
-      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
-      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-api_football}
-      API_FOOTBALL_KEY: ${API_FOOTBALL_KEY}
-      LOG_FILE: /app/logs/collector.jsonl
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      ENABLE_LIVE_LOOP: ${ENABLE_LIVE_LOOP:-0}
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck_live_loop.py"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-    command:
-      [
-        "sh",
-        "-lc",
-        "if [ \"${ENABLE_LIVE_LOOP:-0}\" = \"1\" ]; then python scripts/live_loop.py --interval 15; else echo 'live_loop disabled (set ENABLE_LIVE_LOOP=1)'; tail -f /dev/null; fi",
-      ]
     volumes:
       - ./logs:/app/logs
     restart: unless-stopped
