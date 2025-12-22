@@ -13,6 +13,7 @@ class _Calc(CoverageCalculator):
         self._raw = raw
         self._last_update = last_update
         self._league_name = league_name
+        self._scheduled_in_window = 1
 
     def _query_actual_fixtures(self, league_id: int, season: int) -> int:
         return self._actual
@@ -25,6 +26,11 @@ class _Calc(CoverageCalculator):
 
     def _query_league_name(self, league_id: int):
         return self._league_name
+
+    def _query_scheduled_fixtures_in_window(
+        self, *, league_id: int, season: int, lookback_days: int, lookahead_days: int
+    ) -> int:
+        return int(self._scheduled_in_window)
 
 
 def test_coverage_formula_basic(tmp_path: Path) -> None:
@@ -46,6 +52,7 @@ def test_coverage_formula_basic(tmp_path: Path) -> None:
     assert cov["lag_minutes"] >= 15
     assert cov["freshness_coverage"] > 0
     assert cov["overall_coverage"] > 0
+    assert cov["flags"]["no_matches_scheduled"] is False
 
 
 def test_coverage_edge_cases_no_expected_or_raw(tmp_path: Path) -> None:
@@ -62,5 +69,7 @@ def test_coverage_edge_cases_no_expected_or_raw(tmp_path: Path) -> None:
     assert cov["count_coverage"] is None
     assert cov["pipeline_coverage"] == 0.0
     assert cov["lag_minutes"] == 9999
+    # actual_count=0 must NOT be masked as "no_matches_scheduled"
+    assert cov["flags"]["no_matches_scheduled"] is False
 
 

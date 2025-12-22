@@ -433,6 +433,7 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
                     "last_update_utc": _to_iso_or_none(r[8]),
                     "lag_minutes": _to_int_or_none(r[9]),
                     "calculated_at_utc": _to_iso_or_none(r[10]),
+                    "flags": (r[11] if len(r) > 11 else None),
                 }
             )
 

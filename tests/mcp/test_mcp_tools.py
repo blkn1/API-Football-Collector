@@ -95,7 +95,20 @@ async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
         from datetime import datetime, timezone
 
         return [
-            ("Bundesliga", 78, 2024, "/fixtures", 90.0, 80.0, 100.0, 90.0, None, 0, datetime(2025, 12, 12, tzinfo=timezone.utc)),
+            (
+                "Bundesliga",
+                78,
+                2024,
+                "/fixtures",
+                90.0,
+                80.0,
+                100.0,
+                90.0,
+                None,
+                0,
+                datetime(2025, 12, 12, tzinfo=timezone.utc),
+                {"no_matches_scheduled": False},
+            ),
         ]
 
     monkeypatch.setattr(server, "_db_fetchall_async", _fake_fetchall)
@@ -104,6 +117,7 @@ async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
     assert out["ok"] is True
     assert out["season"] == 2024
     assert out["coverage"][0]["league_id"] == 78
+    assert out["coverage"][0]["flags"]["no_matches_scheduled"] is False
     assert "AND c.league_id = %s" in captured["sql"]
     assert captured["params"] == (2024, 78)
 
@@ -128,7 +142,20 @@ async def test_get_coverage_status_tracked_only_filters(monkeypatch, tmp_path: P
         assert params[0] == 2024
         assert params[1] == [78]
         return [
-            ("Bundesliga", 78, 2024, "/fixtures", 90.0, 80.0, 100.0, 90.0, None, 0, datetime(2025, 12, 12, tzinfo=timezone.utc)),
+            (
+                "Bundesliga",
+                78,
+                2024,
+                "/fixtures",
+                90.0,
+                80.0,
+                100.0,
+                90.0,
+                None,
+                0,
+                datetime(2025, 12, 12, tzinfo=timezone.utc),
+                {"no_matches_scheduled": False},
+            ),
         ]
 
     monkeypatch.setattr(server, "_db_fetchall_async", _fake_fetchall)

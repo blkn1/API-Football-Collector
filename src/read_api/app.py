@@ -979,7 +979,8 @@ SELECT
   c.core_count,
   c.pipeline_coverage,
   c.overall_coverage,
-  c.calculated_at
+  c.calculated_at,
+  c.flags
 FROM mart.coverage_status c
 JOIN core.leagues l ON l.id = c.league_id
 WHERE 1=1
@@ -1535,6 +1536,7 @@ async def read_coverage(
                 "pipeline_coverage": r[12],
                 "overall_coverage": r[13],
                 "calculated_at_utc": _to_iso_or_none(r[14]),
+                "flags": (r[15] if len(r) > 15 else None),
             }
         )
 

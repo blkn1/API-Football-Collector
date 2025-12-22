@@ -242,6 +242,7 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
       expected_count, actual_count,
       count_coverage, last_update, lag_minutes, freshness_coverage,
       raw_count, core_count, pipeline_coverage, overall_coverage,
+      flags,
       calculated_at
     )
     VALUES (
@@ -249,6 +250,7 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
       %s, %s,
       %s, %s, %s, %s,
       %s, %s, %s, %s,
+      %s,
       NOW()
     )
     ON CONFLICT (league_id, season, endpoint) DO UPDATE SET
@@ -262,6 +264,7 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
       core_count = EXCLUDED.core_count,
       pipeline_coverage = EXCLUDED.pipeline_coverage,
       overall_coverage = EXCLUDED.overall_coverage,
+      flags = EXCLUDED.flags,
       calculated_at = NOW()
     """
 
@@ -279,6 +282,7 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
         coverage_data.get("core_count"),
         coverage_data.get("pipeline_coverage"),
         coverage_data.get("overall_coverage"),
+        coverage_data.get("flags"),
     )
 
     if conn is None:

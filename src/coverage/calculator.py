@@ -21,6 +21,7 @@ class CoverageConfig:
     max_lag_minutes_daily: int
     max_lag_minutes_live: int
     weights: dict[str, float]
+    fixtures_freshness: dict[str, Any]
 
 
 class CoverageCalculator:
@@ -38,6 +39,7 @@ class CoverageCalculator:
 
         max_lag = cfg.get("max_lag_minutes") or {}
         weights = cfg.get("weights") or {}
+        fixtures_freshness = cfg.get("fixtures_freshness") or {}
 
         self.config = CoverageConfig(
             expected_fixtures=expected,
@@ -47,6 +49,13 @@ class CoverageCalculator:
                 "count_coverage": float(weights.get("count_coverage", 0.5)),
                 "freshness_coverage": float(weights.get("freshness_coverage", 0.3)),
                 "pipeline_coverage": float(weights.get("pipeline_coverage", 0.2)),
+            },
+            fixtures_freshness={
+                "ignore_lag_when_no_matches_scheduled": bool(
+                    fixtures_freshness.get("ignore_lag_when_no_matches_scheduled", True)
+                ),
+                "schedule_lookback_days": int(fixtures_freshness.get("schedule_lookback_days", 7)),
+                "schedule_lookahead_days": int(fixtures_freshness.get("schedule_lookahead_days", 7)),
             },
         )
 
@@ -64,6 +73,34 @@ class CoverageCalculator:
 
         max_lag = int(self.config.max_lag_minutes_daily)
         freshness_cov = max(0.0, 100.0 - (lag_minutes / max_lag * 100.0)) if max_lag > 0 else 0.0
+
+        # Off-season / break handling:
+        # If we already have fixtures for this league+season (actual_count > 0) but there are no fixtures
+        # scheduled in a lookback/lookahead window, treat the league as "no_matches_scheduled" and avoid
+        # penalizing freshness_coverage due to a lack of updates.
+        ff = self.config.fixtures_freshness
+        lookback_days = int(ff.get("schedule_lookback_days", 7))
+        lookahead_days = int(ff.get("schedule_lookahead_days", 7))
+        ignore_lag = bool(ff.get("ignore_lag_when_no_matches_scheduled", True))
+
+        scheduled_in_window = None
+        no_matches_scheduled = False
+        try:
+            scheduled_in_window = int(
+                self._query_scheduled_fixtures_in_window(
+                    league_id=league_id, season=season, lookback_days=lookback_days, lookahead_days=lookahead_days
+                )
+                or 0
+            )
+            if actual > 0 and scheduled_in_window == 0:
+                no_matches_scheduled = True
+                if ignore_lag:
+                    # Keep last_update as evidence, but do not penalize freshness for known quiet periods.
+                    freshness_cov = 100.0
+                    lag_minutes = 0
+        except Exception:
+            # Best-effort: never fail coverage calculation due to schedule window query.
+            scheduled_in_window = None
 
         raw_count = int(self._query_raw_count_24h(league_id, season) or 0)
         # Pipeline coverage for /fixtures:
@@ -101,6 +138,12 @@ class CoverageCalculator:
             "core_count": actual,
             "pipeline_coverage": round(pipeline_cov, 2),
             "overall_coverage": round(overall, 2),
+            "flags": {
+                "no_matches_scheduled": bool(no_matches_scheduled),
+                "scheduled_fixtures_in_window": scheduled_in_window,
+                "schedule_window_days": {"lookback": int(lookback_days), "lookahead": int(lookahead_days)},
+                "ignore_lag_when_no_matches_scheduled": bool(ignore_lag),
+            },
         }
 
     def calculate_injuries_coverage(self, league_id: int, season: int) -> dict[str, Any]:
@@ -498,6 +541,29 @@ class CoverageCalculator:
                   )
                 """,
                 (str(int(league_id)), str(int(season))),
+            )
+            or 0
+        )
+
+    def _query_scheduled_fixtures_in_window(
+        self, *, league_id: int, season: int, lookback_days: int, lookahead_days: int
+    ) -> int:
+        """
+        Count fixtures scheduled around "now" to detect off-season/break windows.
+        Important: this is best-effort and only used to avoid false positives when we already have fixtures.
+        """
+        lookback = max(0, int(lookback_days))
+        lookahead = max(0, int(lookahead_days))
+        return int(
+            query_scalar(
+                """
+                SELECT COUNT(*)
+                FROM core.fixtures
+                WHERE league_id = %s AND season = %s
+                  AND date >= (NOW() AT TIME ZONE 'UTC') - (%s::text || ' days')::interval
+                  AND date <= (NOW() AT TIME ZONE 'UTC') + (%s::text || ' days')::interval
+                """,
+                (int(league_id), int(season), int(lookback), int(lookahead)),
             )
             or 0
         )

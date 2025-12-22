@@ -14,6 +14,16 @@ weights:
   freshness_coverage: 0.3
   pipeline_coverage: 0.2
 
+# Fixtures freshness false-positive control:
+# Some leagues can have no matches for days/weeks (off-season / winter break).
+# When we already have fixtures for league+season (actual_count > 0) but there are
+# no fixtures scheduled in a lookback/lookahead window, treat this as "no_matches_scheduled"
+# and do not penalize freshness_coverage.
+fixtures_freshness:
+  ignore_lag_when_no_matches_scheduled: true
+  schedule_lookback_days: 7
+  schedule_lookahead_days: 7
+
 coverage_targets:
   # Safe defaults (no league/season assumptions)
   - endpoint: "/timezone"

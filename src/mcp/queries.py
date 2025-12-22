@@ -20,7 +20,8 @@ COVERAGE_STATUS = """
       c.overall_coverage,
       c.last_update,
       c.lag_minutes,
-      c.calculated_at
+      c.calculated_at,
+      c.flags
     FROM mart.coverage_status c
     JOIN core.leagues l ON c.league_id = l.id
     WHERE c.season = %s
