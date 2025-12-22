@@ -77,6 +77,31 @@ async def _run(job_id: str) -> None:
     )
     cfg = _maybe_filter_daily_config(_daily_config_path())
 
+    if job_id == "daily_standings":
+        from src.jobs.incremental_daily import run_daily_standings
+
+        await run_daily_standings(client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
+        return
+
+    if job_id == "injuries_hourly":
+        from src.jobs.injuries import run_injuries_hourly
+
+        await run_injuries_hourly(client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
+        return
+
+    if job_id == "daily_fixtures_by_date":
+        # Compute today's date in UTC at runtime (same logic as scheduler).
+        from datetime import datetime, timezone
+
+        from src.jobs.incremental_daily import run_daily_fixtures_by_date
+
+        target_date_utc = datetime.now(timezone.utc).date().isoformat()
+        await run_daily_fixtures_by_date(target_date_utc=target_date_utc, client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
+        return
+
     if job_id == "top_scorers_daily":
         from src.jobs.top_scorers import run_top_scorers_daily
 
@@ -91,7 +116,10 @@ async def _run(job_id: str) -> None:
         await client.aclose()
         return
 
-    raise SystemExit(f"Unsupported job_id: {job_id}")
+    raise SystemExit(
+        f"Unsupported job_id: {job_id}. Supported: daily_fixtures_by_date, daily_standings, injuries_hourly, "
+        "top_scorers_daily, team_statistics_refresh"
+    )
 
 
 def main() -> None:
