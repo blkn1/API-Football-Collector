@@ -18,6 +18,31 @@ Temel kullanım:
 - Backfill progress
 - RAW hata özetleri
 
+> Not: Bu projede “tek bakışta sistem” için ayrıca Read API içinde `/ops` dashboard vardır.
+> MCP ise daha geniş kapsamlı tool seti sunar.
+
+---
+
+## 1.1 Ops Panel (Read API) ile “tek bakışta sistem”
+
+Read API servisinde (Basic Auth/IP allowlist korumalı) ops dashboard:
+- `GET /ops` (HTML dashboard)
+- `GET /ops/api/system_status` (JSON; dashboard bunu poll eder)
+
+`/ops/api/system_status` tek response içinde şu gözlemleri taşır:
+- **quota** → MCP: `get_rate_limit_status()`
+- **db** → MCP: `get_database_stats()`
+- **coverage_summary** → MCP: `get_coverage_summary(season=...)`
+- **job_status** → MCP: `get_job_status()`
+- **backfill** → MCP: `get_backfill_progress()`
+- **raw_errors** → MCP: `get_raw_error_summary()`
+- **raw_error_samples** → MCP: `get_raw_error_samples()`
+- **recent_log_errors** → MCP: `get_recent_log_errors()`
+
+Kısıt:
+- `/ops` bir “dashboard”tır; MCP’deki tüm tool’ları tek tek expose etmez.
+- Prod’da “tam detay” için MCP tool’larını doğrudan çağırın (aşağıdaki bölümler).
+
 ---
 
 ## 2) Transport modları: Claude Desktop vs Prod
@@ -139,6 +164,24 @@ Sık hata mesajları:
 - `400 Missing session ID`: `mcp-session-id` header’ı yok.
 - `-32602 Invalid request parameters`: `tools/list` için `params` object değil (örn. `{ "cursor": null }` kullan).
 
+### 5.1.1 “MCP’de hangi tool’lar var?” (tam liste)
+Üretimde MCP’ye eklediğimiz her yeni izleme/test aracı **tools/list** ile görünür.
+En hızlı yol:
+- `bash scripts/smoke_mcp.sh` (initialize → tools/list → örnek tools/call)
+
+> Bu liste “MCP ile çağırabileceğimiz her şey”dir.
+
+### 5.1.2 tools/call örneği (curl)
+Örnek: `get_database_stats()` çağırmak:
+
+```bash
+curl -sS -X POST "https://mcp.zinalyze.pro/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: <PASTE_SESSION_ID>" \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_database_stats","arguments":{}}}'
+```
+
 ### 5.2 Tam smoke test (initialize → tools/list → tools/call) (script)
 Prod’da “MCP bazen çalışıyor, redeploy sonrası bozuluyor” gibi durumlarda en hızlı teşhis, stateful session akışını baştan sona test etmektir.
 
@@ -170,6 +213,7 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
   - RAW header’larından daily/minute remaining.
 - `get_database_stats()`
   - RAW/CORE tablo sayımları, son aktivite.
+  - Not: `core_top_scorers` ve `core_team_statistics` sayımları da dahildir.
 - `get_job_status(job_name=None)`
   - Job config + collector log tail merge.
 - `get_coverage_summary(season=None)`
@@ -178,6 +222,7 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 ### 5.2 Backfill + hata gözlemi
 - `get_backfill_progress(job_id=None, season=None, include_completed=False, limit=200)`
 - `get_raw_error_summary(since_minutes=60, endpoint=None, top_endpoints_limit=25)`
+- `get_raw_error_samples(since_minutes=60, endpoint=None, limit=25)`
 - `get_recent_log_errors(job_name=None, limit=50)`
 
 ### 5.4 Live loop (legacy)
@@ -206,6 +251,26 @@ Bu deployment’ta live polling **yok** (compose’ta `live_loop` servisi kaldı
 - `query_fixture_events(fixture_id, limit=300)`
 - `query_fixture_statistics(fixture_id)`
 - `query_fixture_lineups(fixture_id)`
+
+---
+
+## 6.1 “Yeni eklenen dataset’ler doluyor mu?” (top_scorers / team_statistics)
+
+MCP ile doğrulama:
+- DB sayımı: `get_database_stats()` → `core_top_scorers`, `core_team_statistics`
+- Coverage drilldown: `get_coverage_status(league_id=<LID>, season=<SEASON>)` içinde
+  - `/players/topscorers`
+  - `/teams/statistics`
+
+DB kanıtı (postgres terminal):
+- `SELECT COUNT(*) FROM core.top_scorers;`
+- `SELECT COUNT(*) FROM core.team_statistics;`
+
+Cron’u beklemeden doğrulama (collector terminal):
+- `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+- `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=team_statistics_refresh python3 scripts/run_job_once.py`
+
+> Not: MCP katmanı read-only’dur; job tetikleme MCP üzerinden yapılmaz (bilinçli güvenlik kararı).
 
 ---
 
