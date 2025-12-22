@@ -11,7 +11,10 @@ jobs:
     season: null
   interval:
     type: cron
-    cron: "10 6 * * *"
+    # Spread across the day; runs every 10 minutes at :10/:20/:30/:40/:50
+    cron: "10-59/10 * * * *"
+  mode:
+    max_leagues_per_run: 10
   target_layer: raw+core
   dependencies:
   - bootstrap_leagues
