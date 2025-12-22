@@ -1748,12 +1748,37 @@ async def ops_system_status() -> dict:
     )
     recent_log_errors = await mcp_server.get_recent_log_errors(limit=50)
 
+    # Compact job view for /ops consumers (keeps full job_status untouched).
+    jobs_compact: list[dict[str, Any]] = []
+    try:
+        for j in (job_status or {}).get("jobs") or []:
+            if not isinstance(j, dict):
+                continue
+            jobs_compact.append(
+                {
+                    "job_id": j.get("job_id") or j.get("job_name"),
+                    "enabled": j.get("enabled"),
+                    "type": j.get("type"),
+                    "endpoint": j.get("endpoint"),
+                    "interval": j.get("interval"),
+                    "status": j.get("status"),
+                    "last_seen_at_utc": j.get("last_seen_at_utc"),
+                    "last_seen_source": j.get("last_seen_source"),
+                    "last_event": j.get("last_event"),
+                    "last_event_ts_utc": j.get("last_event_ts_utc"),
+                    "last_raw_fetched_at_utc": j.get("last_raw_fetched_at_utc"),
+                }
+            )
+    except Exception:
+        jobs_compact = []
+
     return {
         "ok": True,
         "quota": quota,
         "db": db,
         "coverage_summary": coverage_summary,
         "job_status": job_status,
+        "job_status_compact": jobs_compact,
         "backfill": backfill,
         "raw_errors": raw_errors,
         "raw_error_samples": raw_error_samples,
