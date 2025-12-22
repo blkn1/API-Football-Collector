@@ -8,12 +8,12 @@ from typing import Any
 import psycopg2.extras
 import yaml
 
-from collector.api_client import APIClient, APIClientError, APIResult, RateLimitError
-from collector.rate_limiter import RateLimiter
-from transforms.standings import transform_standings
-from utils.db import get_transaction, query_scalar, upsert_raw
-from utils.logging import get_logger
-from utils.dependencies import ensure_standings_dependencies, get_missing_team_ids_in_core
+from src.collector.api_client import APIClient, APIClientError, APIResult, RateLimitError
+from src.collector.rate_limiter import RateLimiter
+from src.transforms.standings import transform_standings
+from src.utils.db import get_transaction, query_scalar, upsert_raw
+from src.utils.logging import get_logger
+from src.utils.dependencies import ensure_standings_dependencies, get_missing_team_ids_in_core
 
 
 logger = get_logger(component="standings_sync")
