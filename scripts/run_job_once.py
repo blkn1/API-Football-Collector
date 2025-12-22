@@ -8,17 +8,17 @@ from pathlib import Path
 
 import yaml
 
-from src.collector.api_client import APIClient
-from src.collector.rate_limiter import RateLimiter
-from src.utils.logging import get_logger
-
-logger = get_logger(component="run_job_once")
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     # When running as /app/scripts/run_job_once.py, sys.path[0] is /app/scripts,
     # so `import src.*` fails unless /app is on sys.path.
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from src.collector.api_client import APIClient  # noqa: E402
+from src.collector.rate_limiter import RateLimiter  # noqa: E402
+from src.utils.logging import get_logger  # noqa: E402
+
+logger = get_logger(component="run_job_once")
 
 
 def _daily_config_path() -> Path:
