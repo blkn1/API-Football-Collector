@@ -4,7 +4,7 @@ Bu doküman, React/Vite ön yüzünün kullanacağı Read API endpoint’lerini 
 
 Kapsam:
 - Bugün/yarın/tarih bazlı fixture listesi
-- Canlı sayfa (SSE)
+- Canlı sayfa (SSE) (legacy / opsiyonel)
 - Takım sayfası: maç listesi + “last-20” özet metrikler + tek maç detay paketi
 - Feature engineering (modelleme) için “curated feature store” uçları (/read/*)
 
@@ -163,6 +163,9 @@ Frontend “birden fazla gün” gösterecekse en basit yaklaşım:
 
 ## 2) Canlı sayfa (SSE)
 
+> Not: Bu deployment’ta live polling (15s `/fixtures?live=all`) kapalıdır.
+> Bu yüzden `mart.live_score_panel` çoğu zaman boş olabilir. SSE uçları **legacy/opsiyonel** kabul edilmelidir.
+
 ### 2.1 Live scores stream
 `GET /v1/sse/live-scores?interval_seconds=3&limit=300`
 
@@ -177,11 +180,18 @@ const trackedLeagues = parseTrackedLeagues(import.meta.env.VITE_TRACKED_LEAGUES)
 const es = new EventSource(`/v1/sse/live-scores?interval_seconds=3&limit=300`);
 
 es.onmessage = (evt) => {
-  const all = JSON.parse(evt.data) as Array<{ league_id: number }>;
+  // NOTE: SSE payload shape is: {items: [...]}
+  const payload = JSON.parse(evt.data) as { items: Array<{ league_id: number }> };
+  const all = payload.items || [];
   const filtered = trackedLeagues.size ? all.filter(x => trackedLeagues.has(x.league_id)) : all;
   // update state
 };
 ```
+
+### 2.2 Alternatif (önerilen): canlı listeyi /read/fixtures ile üret
+Live loop yokken bile UI “canlı gibi” bir görünüm istiyorsa en güvenli yol:
+- `GET /read/fixtures?league_id=&season=&status=1H|2H|HT|...` ile DB’de varsa canlı statüleri listelemek
+- Bu deployment’ta canlı veri gelmiyorsa bu liste doğal olarak boş döner (beklenen)
 
 ---
 
@@ -263,7 +273,7 @@ Yeni (feature engineering için, özet metrikli):
 Bu uçlar “tek tek çektiğimiz her veri için özel alan” hedefiyle tasarlanmıştır. Hepsi **read-only** ve **UTC** döner.
 
 Genel kurallar:
-- `season` çoğu uçta zorunludur. Prod’da default için `READ_API_DEFAULT_SEASON` kullanılabilir.
+- `season` çoğu uçta zorunludur. Prod’da default için `READ_API_DEFAULT_SEASON` kullanılabilir (yoksa `season_required` döner).
 - Scope: `league_id` veya `country` ile daralt.
 - Paging: `limit/offset` (limit cap uygulanır).
 
@@ -284,6 +294,14 @@ Genel kurallar:
 
 ### 6.5 Coverage (monitoring)
 `GET /read/coverage?season=&league_id=&country=&endpoint=&limit=&offset=`
+
+---
+
+## 8) Prod quick smoke (frontend perspective)
+Bu repo smoke script’leri içerir:
+- `bash scripts/smoke_read_api.sh`
+- Opsiyonel `/read/*` testleri için:
+  - `SMOKE_LEAGUE_ID=39 SMOKE_SEASON=2025 bash scripts/smoke_read_api.sh`
 
 ---
 
