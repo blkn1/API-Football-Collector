@@ -16,6 +16,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from src.collector.api_client import APIClient  # noqa: E402
 from src.collector.rate_limiter import RateLimiter  # noqa: E402
+from src.utils.config import load_api_config, load_rate_limiter_config  # noqa: E402
 from src.utils.logging import get_logger  # noqa: E402
 
 logger = get_logger(component="run_job_once")
@@ -61,20 +62,33 @@ def _maybe_filter_daily_config(cfg_path: Path) -> Path:
 
 
 async def _run(job_id: str) -> None:
-    limiter = RateLimiter.from_config("config/rate_limiter.yaml")
-    client = APIClient.from_env()
+    api_cfg = load_api_config()
+    rl_cfg = load_rate_limiter_config()
+
+    limiter = RateLimiter(
+        max_tokens=rl_cfg.minute_soft_limit,
+        refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
+        emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+    )
+    client = APIClient(
+        base_url=api_cfg.base_url,
+        timeout_seconds=api_cfg.timeout_seconds,
+        api_key_env=api_cfg.api_key_env,
+    )
     cfg = _maybe_filter_daily_config(_daily_config_path())
 
     if job_id == "top_scorers_daily":
         from src.jobs.top_scorers import run_top_scorers_daily
 
         await run_top_scorers_daily(client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
         return
 
     if job_id == "team_statistics_refresh":
         from src.jobs.team_statistics import run_team_statistics_refresh
 
         await run_team_statistics_refresh(client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
         return
 
     raise SystemExit(f"Unsupported job_id: {job_id}")
