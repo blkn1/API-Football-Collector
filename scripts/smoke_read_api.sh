@@ -12,6 +12,9 @@ set -euo pipefail
 # Optional (fixtures date):
 #   DATE_UTC="2025-12-18" bash scripts/smoke_read_api.sh
 #
+# Optional (feature store endpoints):
+#   SMOKE_LEAGUE_ID=203 SMOKE_SEASON=2025 bash scripts/smoke_read_api.sh
+#
 
 BASE_URL="${READ_API_BASE:-${SERVICE_URL_READ_API:-}}"
 if [[ -z "${BASE_URL}" ]]; then
@@ -22,6 +25,8 @@ fi
 
 DATE_UTC="${DATE_UTC:-$(date -u +%F)}"
 LIMIT="${LIMIT:-50}"
+SMOKE_LEAGUE_ID="${SMOKE_LEAGUE_ID:-}"
+SMOKE_SEASON="${SMOKE_SEASON:-${READ_API_DEFAULT_SEASON:-}}"
 
 AUTH_ARGS=()
 if [[ -n "${READ_API_BASIC_USER:-}" && -n "${READ_API_BASIC_PASSWORD:-}" ]]; then
@@ -51,6 +56,27 @@ if command -v timeout >/dev/null 2>&1; then
 else
   echo "  (timeout not installed) Running a short sample (press Ctrl+C to stop):"
   curl -sS "${AUTH_ARGS[@]}" "${BASE_URL}/v1/sse/live-scores?interval_seconds=3&limit=300" | head -n 30 | sed -e 's/^/  /' || true
+fi
+
+if [[ -n "${SMOKE_LEAGUE_ID}" && -n "${SMOKE_SEASON}" ]]; then
+  echo
+  echo "== /read/leagues (limit=5) =="
+  curl -sS "${AUTH_ARGS[@]}" "${BASE_URL}/read/leagues?limit=5" | head -n 20 | sed -e 's/^/  /' || true
+
+  echo
+  echo "== /read/top_scorers (league_id=${SMOKE_LEAGUE_ID}, season=${SMOKE_SEASON}) =="
+  curl -sS "${AUTH_ARGS[@]}" "${BASE_URL}/read/top_scorers?league_id=${SMOKE_LEAGUE_ID}&season=${SMOKE_SEASON}&limit=10" | head -n 40 | sed -e 's/^/  /' || true
+
+  echo
+  echo "== /read/team_statistics (league_id=${SMOKE_LEAGUE_ID}, season=${SMOKE_SEASON}) =="
+  curl -sS "${AUTH_ARGS[@]}" "${BASE_URL}/read/team_statistics?league_id=${SMOKE_LEAGUE_ID}&season=${SMOKE_SEASON}&limit=5" | head -n 40 | sed -e 's/^/  /' || true
+
+  echo
+  echo "== /read/coverage (league_id=${SMOKE_LEAGUE_ID}, season=${SMOKE_SEASON}) =="
+  curl -sS "${AUTH_ARGS[@]}" "${BASE_URL}/read/coverage?league_id=${SMOKE_LEAGUE_ID}&season=${SMOKE_SEASON}&limit=10" | head -n 60 | sed -e 's/^/  /' || true
+else
+  echo
+  echo "== /read/* skipped (set SMOKE_LEAGUE_ID and SMOKE_SEASON to enable) =="
 fi
 
 echo

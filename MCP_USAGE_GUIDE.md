@@ -186,12 +186,11 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
   - Redeploy sonrası “live loop açık mı?” sorusunun en net cevabı.
 
 ### 5.4.1 Stale live fixtures (ops maintenance gözlemi)
-- `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="live")`
+- `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="daily")`
   - Amaç: CORE’da “canlı gibi kalan ama güncellenmeyen” maçları tespit etmek.
   - `tracked_only=true` iken scope seçimi:
     - `scope_source="daily"` → `config/jobs/daily.yaml -> tracked_leagues`
-    - `scope_source="live"` → `config/jobs/live.yaml -> jobs[live_fixtures_all].filters.tracked_leagues`
-  - Önerilen prod kullanım: **`scope_source="live"`** (canlı panelde izlediğin liglerle aynı scope).
+  - Not: Bu deployment’ta `live.yaml`/live loop devre dışıdır; bu yüzden `scope_source="daily"` kullanın.
 
 ### 5.5 Daily fixtures cadence gözlemi (30dk job gerçekten çalışıyor mu?)
 - `get_daily_fixtures_by_date_status(since_minutes=180)`
@@ -232,7 +231,7 @@ Claude’a şu sırayla tool çağırmasını söyle (prod ops “minimum + geni
    - Beklenen:
      - `ENABLE_LIVE_LOOP=1` ise `running=true` ve `requests>0`
      - `ENABLE_LIVE_LOOP=0` ise `running=false`
-5.1) `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="live")`
+5.1) `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="daily")`
    - Beklenen: normalde `stale_count=0` (tracked/live scope içinde).
    - Eğer `stale_count>0` ise bu “takılı canlı statü” işaretidir; stale_live_refresh job’ı takip edilmelidir.
 6) `get_daily_fixtures_by_date_status(since_minutes=180)`

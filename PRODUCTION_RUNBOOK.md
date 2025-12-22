@@ -172,7 +172,7 @@ Bizim prod örneği:
 - **Quota trend**: `get_rate_limit_status()` / `GET /v1/quota`
 - **Coverage**: `get_coverage_summary()` + en düşük coverage satırlarını `get_coverage_status(league_id)` ile drilldown
 - **Job health**: `get_job_status()` + `get_recent_log_errors()`
-- **Stale live kontrolü** (canlı panel güvenilirliği): `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="live")`
+- **Stale live kontrolü** (canlı panel güvenilirliği): `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="daily")`
 - **Data drift**: `get_raw_error_summary(since_minutes=1440)` (son 24h)
 
 ---
@@ -316,10 +316,10 @@ Idempotency kontrolü (DB):\n
 ### 5.8 “Canlı gibi takılı kalan” maçlar (stale live status)
 - Belirti:
   - Claude/MCP canlı taramasında “stale” görünen fixtures (örn. `1H/2H/HT/INT/SUSP`) ve `updated_at` çok eski.
-  - MCP: `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="live")` → `stale_count>0`
+  - MCP: `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="daily")` → `stale_count>0`
 - Otomatik çözüm (mevcut sistem):
   - `stale_live_refresh` job’ı bu fixture id’lerini seçer ve `/fixtures?ids=...` ile tekrar çekip CORE’daki status’ü düzeltir.
-  - Scope: prod’da **live.yaml filters.tracked_leagues** (canlı panelde izlenen ligler) ile aynıdır.
+  - Scope: bu deployment’ta `scope_source="daily"` → `config/jobs/daily.yaml -> tracked_leagues`.
 - Aksiyon:
   - `get_job_status(job_name="stale_live_refresh")` ile job loglarını doğrula.
   - Eğer `stale_count` uzun süre düşmüyorsa:

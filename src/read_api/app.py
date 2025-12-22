@@ -84,6 +84,86 @@ def _utc_end_of_day(d: Date) -> datetime:
     # inclusive end-of-day: next day 00:00 minus 1 microsecond
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc) + timedelta(days=1) - timedelta(microseconds=1)
 
+def _default_season_env() -> int | None:
+    raw = (os.getenv("READ_API_DEFAULT_SEASON") or "").strip()
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _require_season(season: int | None) -> int:
+    s = season if season is not None else _default_season_env()
+    if s is None:
+        raise HTTPException(status_code=400, detail="season_required")
+    try:
+        return int(s)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invalid_season")
+
+
+def _safe_limit(limit: int, *, cap: int) -> int:
+    return max(1, min(int(limit), int(cap)))
+
+
+def _safe_offset(offset: int) -> int:
+    return max(0, int(offset))
+
+
+def _resolve_league_ids(*, league_id: int | None, country: str | None, season: int | None) -> list[int]:
+    """
+    Resolve scope to a list of league_ids.
+    - If league_id is provided, returns [league_id]
+    - Else if country is provided, returns all league_ids matching country_name/country_code
+      and optionally filtered by season presence in core.leagues.seasons JSONB.
+    """
+    if league_id is not None:
+        return [int(league_id)]
+    c = (country or "").strip()
+    if not c:
+        return []
+
+    filters: list[str] = []
+    params: list[Any] = []
+
+    # Match both country_name and country_code (case-insensitive)
+    filters.append("AND (l.country_name ILIKE %s OR l.country_code ILIKE %s)")
+    params.append(c)
+    params.append(c)
+
+    if season is not None:
+        # seasons is stored as JSONB array (API schema) - filter if year exists.
+        filters.append(
+            """
+            AND (
+              l.seasons IS NULL
+              OR EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(l.seasons) s
+                WHERE (s->>'year')::int = %s
+              )
+            )
+            """.strip()
+        )
+        params.append(int(season))
+
+    sql_text = f"""
+    SELECT l.id
+    FROM core.leagues l
+    WHERE 1=1
+    {' '.join(filters)}
+    ORDER BY l.id ASC
+    """
+
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql_text, tuple(params))
+            rows = cur.fetchall()
+        conn.commit()
+    return [int(r[0]) for r in rows if r and r[0] is not None]
+
 
 def _fetchone(sql_text: str, params: tuple[Any, ...]) -> tuple[Any, ...] | None:
     with get_db_connection() as conn:
@@ -782,11 +862,734 @@ async def _system_status_payload() -> dict[str, Any]:
             "core_fixture_statistics": int(stats_row[9]),
             "core_fixture_lineups": int(stats_row[10]),
             "core_standings": int(stats_row[11]),
-            "raw_last_fetched_at_utc": _to_iso_or_none(stats_row[12]),
-            "core_fixtures_last_updated_at_utc": _to_iso_or_none(stats_row[13]),
+            "core_top_scorers": int(stats_row[12]),
+            "core_team_statistics": int(stats_row[13]),
+            "raw_last_fetched_at_utc": _to_iso_or_none(stats_row[14]),
+            "core_fixtures_last_updated_at_utc": _to_iso_or_none(stats_row[15]),
         }
 
     return {"quota": quota, "db": stats}
+
+
+# -----------------------------
+# Curated Read API (Feature Store)
+# -----------------------------
+
+LEAGUES_LIST_SQL = """
+SELECT
+  l.id,
+  l.name,
+  l.type,
+  l.logo,
+  l.country_name,
+  l.country_code,
+  l.country_flag,
+  l.seasons,
+  l.updated_at
+FROM core.leagues l
+WHERE 1=1
+  {filters}
+ORDER BY l.country_name NULLS LAST, l.name ASC
+LIMIT %s OFFSET %s
+"""
+
+FIXTURES_READ_SQL = """
+SELECT
+  f.id,
+  f.league_id,
+  l.name AS league_name,
+  f.season,
+  f.round,
+  f.date,
+  f.status_short,
+  f.status_long,
+  f.elapsed,
+  f.home_team_id,
+  th.name AS home_team_name,
+  f.away_team_id,
+  ta.name AS away_team_name,
+  f.goals_home,
+  f.goals_away,
+  f.score,
+  f.updated_at
+FROM core.fixtures f
+JOIN core.leagues l ON l.id = f.league_id
+JOIN core.teams th ON th.id = f.home_team_id
+JOIN core.teams ta ON ta.id = f.away_team_id
+WHERE 1=1
+  {filters}
+ORDER BY f.date DESC
+LIMIT %s OFFSET %s
+"""
+
+TOP_SCORERS_READ_SQL = """
+SELECT
+  ts.league_id,
+  l.name AS league_name,
+  ts.season,
+  ts.player_id,
+  ts.rank,
+  ts.team_id,
+  ts.team_name,
+  ts.goals,
+  ts.assists,
+  ts.raw,
+  ts.updated_at
+FROM core.top_scorers ts
+JOIN core.leagues l ON l.id = ts.league_id
+WHERE ts.league_id = %s
+  AND ts.season = %s
+ORDER BY ts.rank ASC NULLS LAST, ts.goals DESC NULLS LAST
+LIMIT %s OFFSET %s
+"""
+
+TEAM_STATISTICS_READ_SQL = """
+SELECT
+  s.league_id,
+  l.name AS league_name,
+  s.season,
+  s.team_id,
+  t.name AS team_name,
+  s.form,
+  s.raw,
+  s.updated_at
+FROM core.team_statistics s
+JOIN core.leagues l ON l.id = s.league_id
+JOIN core.teams t ON t.id = s.team_id
+WHERE s.league_id = %s
+  AND s.season = %s
+  {team_filter}
+ORDER BY t.name ASC
+LIMIT %s OFFSET %s
+"""
+
+READ_COVERAGE_SQL = """
+SELECT
+  c.league_id,
+  l.name AS league_name,
+  c.season,
+  c.endpoint,
+  c.expected_count,
+  c.actual_count,
+  c.count_coverage,
+  c.last_update,
+  c.lag_minutes,
+  c.freshness_coverage,
+  c.raw_count,
+  c.core_count,
+  c.pipeline_coverage,
+  c.overall_coverage,
+  c.calculated_at
+FROM mart.coverage_status c
+JOIN core.leagues l ON l.id = c.league_id
+WHERE 1=1
+  {filters}
+ORDER BY c.overall_coverage DESC NULLS LAST, c.calculated_at DESC
+LIMIT %s OFFSET %s
+"""
+
+
+@app.get("/read/leagues", dependencies=[Depends(require_access)])
+async def read_leagues(
+    country: str | None = None,
+    season: int | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    safe_limit = _safe_limit(limit, cap=500)
+    safe_offset = _safe_offset(offset)
+    filters: list[str] = []
+    params: list[Any] = []
+
+    c = (country or "").strip()
+    if c:
+        filters.append("AND (l.country_name ILIKE %s OR l.country_code ILIKE %s)")
+        params.append(c)
+        params.append(c)
+
+    if season is not None:
+        filters.append(
+            """
+            AND (
+              l.seasons IS NULL
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(l.seasons) s
+                WHERE (s->>'year')::int = %s
+              )
+            )
+            """.strip()
+        )
+        params.append(int(season))
+
+    sql_text = LEAGUES_LIST_SQL.format(filters="\n  ".join(filters))
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "id": int(r[0]),
+                "name": r[1],
+                "type": r[2],
+                "logo": r[3],
+                "country_name": r[4],
+                "country_code": r[5],
+                "country_flag": r[6],
+                "seasons": r[7],
+                "updated_at_utc": _to_iso_or_none(r[8]),
+            }
+        )
+    return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+
+@app.get("/read/fixtures", dependencies=[Depends(require_access)])
+async def read_fixtures(
+    league_id: int | None = None,
+    country: str | None = None,
+    season: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    s = _require_season(season)
+    safe_limit = _safe_limit(limit, cap=500)
+    safe_offset = _safe_offset(offset)
+
+    league_ids = _resolve_league_ids(league_id=league_id, country=country, season=s)
+    if league_id is None and (country is None or not str(country).strip()):
+        raise HTTPException(status_code=400, detail="league_id_or_country_required")
+    if not league_ids:
+        return {"ok": True, "items": [], "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+    filters: list[str] = []
+    params: list[Any] = []
+    filters.append("AND f.league_id = ANY(%s)")
+    params.append(league_ids)
+    filters.append("AND f.season = %s")
+    params.append(int(s))
+
+    if status is not None:
+        filters.append("AND f.status_short = %s")
+        params.append(str(status))
+
+    if team_id is not None:
+        filters.append("AND (f.home_team_id = %s OR f.away_team_id = %s)")
+        params.extend([int(team_id), int(team_id)])
+
+    if date_from is not None:
+        try:
+            d = _parse_ymd(str(date_from))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        filters.append("AND DATE(f.date AT TIME ZONE 'UTC') >= %s")
+        params.append(d.isoformat())
+    if date_to is not None:
+        try:
+            d = _parse_ymd(str(date_to))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        filters.append("AND DATE(f.date AT TIME ZONE 'UTC') <= %s")
+        params.append(d.isoformat())
+
+    sql_text = FIXTURES_READ_SQL.format(filters="\n  ".join(filters))
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "id": int(r[0]),
+                "league_id": int(r[1]),
+                "league_name": r[2],
+                "season": _to_int_or_none(r[3]),
+                "round": r[4],
+                "date_utc": _to_iso_or_none(r[5]),
+                "status_short": r[6],
+                "status_long": r[7],
+                "elapsed": _to_int_or_none(r[8]),
+                "home_team_id": _to_int_or_none(r[9]),
+                "home_team_name": r[10],
+                "away_team_id": _to_int_or_none(r[11]),
+                "away_team_name": r[12],
+                "goals_home": _to_int_or_none(r[13]),
+                "goals_away": _to_int_or_none(r[14]),
+                "score": r[15],
+                "updated_at_utc": _to_iso_or_none(r[16]),
+            }
+        )
+    return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+
+@app.get("/read/fixtures/{fixture_id}", dependencies=[Depends(require_access)])
+async def read_fixture(fixture_id: int) -> dict[str, Any]:
+    # Reuse FIXTURES_READ_SQL with id filter, limit 1
+    filters = "AND f.id = %s"
+    sql_text = FIXTURES_READ_SQL.format(filters=filters)
+    rows = await _fetchall_async(sql_text, (int(fixture_id), 1, 0))
+    if not rows:
+        raise HTTPException(status_code=404, detail="fixture_not_found")
+    r = rows[0]
+    return {
+        "ok": True,
+        "item": {
+            "id": int(r[0]),
+            "league_id": int(r[1]),
+            "league_name": r[2],
+            "season": _to_int_or_none(r[3]),
+            "round": r[4],
+            "date_utc": _to_iso_or_none(r[5]),
+            "status_short": r[6],
+            "status_long": r[7],
+            "elapsed": _to_int_or_none(r[8]),
+            "home_team_id": _to_int_or_none(r[9]),
+            "home_team_name": r[10],
+            "away_team_id": _to_int_or_none(r[11]),
+            "away_team_name": r[12],
+            "goals_home": _to_int_or_none(r[13]),
+            "goals_away": _to_int_or_none(r[14]),
+            "score": r[15],
+            "updated_at_utc": _to_iso_or_none(r[16]),
+        },
+    }
+
+
+@app.get("/read/fixtures/{fixture_id}/events", dependencies=[Depends(require_access)])
+async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, Any]:
+    safe_limit = _safe_limit(limit, cap=10000)
+    rows = await _fetchall_async(mcp_queries.FIXTURE_EVENTS_QUERY, (int(fixture_id), safe_limit))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "fixture_id": int(r[0]),
+                "time_elapsed": _to_int_or_none(r[1]),
+                "time_extra": _to_int_or_none(r[2]),
+                "team_id": _to_int_or_none(r[3]),
+                "player_id": _to_int_or_none(r[4]),
+                "assist_id": _to_int_or_none(r[5]),
+                "type": r[6],
+                "detail": r[7],
+                "comments": r[8],
+                "updated_at_utc": _to_iso_or_none(r[9]),
+            }
+        )
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+
+
+@app.get("/read/fixtures/{fixture_id}/lineups", dependencies=[Depends(require_access)])
+async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
+    rows = await _fetchall_async(mcp_queries.FIXTURE_LINEUPS_QUERY, (int(fixture_id),))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "formation": r[2],
+                "start_xi": r[3],
+                "substitutes": r[4],
+                "coach": r[5],
+                "colors": r[6],
+                "updated_at_utc": _to_iso_or_none(r[7]),
+            }
+        )
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+
+
+@app.get("/read/fixtures/{fixture_id}/statistics", dependencies=[Depends(require_access)])
+async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
+    rows = await _fetchall_async(mcp_queries.FIXTURE_STATISTICS_QUERY, (int(fixture_id),))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "statistics": r[2],
+                "updated_at_utc": _to_iso_or_none(r[3]),
+            }
+        )
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+
+
+@app.get("/read/fixtures/{fixture_id}/players", dependencies=[Depends(require_access)])
+async def read_fixture_players(
+    fixture_id: int, team_id: int | None = None, limit: int = 5000
+) -> dict[str, Any]:
+    safe_limit = _safe_limit(limit, cap=20000)
+    if team_id is not None:
+        sql_text = mcp_queries.FIXTURE_PLAYERS_QUERY.format(team_filter="AND team_id = %s")
+        rows = await _fetchall_async(sql_text, (int(fixture_id), int(team_id), safe_limit))
+    else:
+        sql_text = mcp_queries.FIXTURE_PLAYERS_QUERY.format(team_filter="")
+        rows = await _fetchall_async(sql_text, (int(fixture_id), safe_limit))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "fixture_id": int(r[0]),
+                "team_id": _to_int_or_none(r[1]),
+                "player_id": _to_int_or_none(r[2]),
+                "player_name": r[3],
+                "statistics": r[4],
+                "updated_at_utc": _to_iso_or_none(r[5]),
+            }
+        )
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+
+
+@app.get("/read/standings", dependencies=[Depends(require_access)])
+async def read_standings(league_id: int, season: int | None = None) -> dict[str, Any]:
+    s = _require_season(season)
+    rows = await _fetchall_async(mcp_queries.STANDINGS_QUERY, (int(league_id), int(s)))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "league_id": int(r[0]),
+                "season": int(r[1]),
+                "team_id": int(r[2]),
+                "team_name": r[3],
+                "rank": _to_int_or_none(r[4]),
+                "points": _to_int_or_none(r[5]),
+                "goals_diff": _to_int_or_none(r[6]),
+                "goals_for": _to_int_or_none(r[7]),
+                "goals_against": _to_int_or_none(r[8]),
+                "form": r[9],
+                "status": r[10],
+                "description": r[11],
+                "group": r[12],
+                "updated_at_utc": _to_iso_or_none(r[13]),
+            }
+        )
+    return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items}
+
+
+@app.get("/read/injuries", dependencies=[Depends(require_access)])
+async def read_injuries(
+    league_id: int | None = None,
+    country: str | None = None,
+    season: int | None = None,
+    team_id: int | None = None,
+    player_id: int | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    s = _require_season(season)
+    safe_limit = _safe_limit(limit, cap=1000)
+    safe_offset = _safe_offset(offset)
+
+    league_ids = _resolve_league_ids(league_id=league_id, country=country, season=s)
+    if league_id is None and (country is None or not str(country).strip()):
+        raise HTTPException(status_code=400, detail="league_id_or_country_required")
+    if not league_ids:
+        return {"ok": True, "items": [], "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+    filters: list[str] = []
+    params: list[Any] = []
+    filters.append("AND i.league_id = ANY(%s)")
+    params.append(league_ids)
+    filters.append("AND i.season = %s")
+    params.append(int(s))
+    if team_id is not None:
+        filters.append("AND i.team_id = %s")
+        params.append(int(team_id))
+    if player_id is not None:
+        filters.append("AND i.player_id = %s")
+        params.append(int(player_id))
+
+    # NOTE: INJURIES_QUERY doesn't support OFFSET; implement a local SQL with offset for read API.
+    sql_text = f"""
+    SELECT
+      i.league_id,
+      i.season,
+      i.team_id,
+      i.player_id,
+      i.player_name,
+      i.team_name,
+      i.type,
+      i.reason,
+      i.severity,
+      i.date,
+      i.updated_at
+    FROM core.injuries i
+    WHERE 1=1
+      {' '.join(filters)}
+    ORDER BY i.updated_at DESC NULLS LAST
+    LIMIT %s OFFSET %s
+    """
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "league_id": int(r[0]),
+                "season": int(r[1]),
+                "team_id": _to_int_or_none(r[2]),
+                "player_id": _to_int_or_none(r[3]),
+                "player_name": r[4],
+                "team_name": r[5],
+                "type": r[6],
+                "reason": r[7],
+                "severity": r[8],
+                "date": str(r[9]) if r[9] is not None else None,
+                "updated_at_utc": _to_iso_or_none(r[10]),
+            }
+        )
+    return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+
+@app.get("/read/top_scorers", dependencies=[Depends(require_access)])
+async def read_top_scorers(
+    league_id: int,
+    season: int | None = None,
+    include_raw: bool = True,
+    limit: int = 100,
+    offset: int = 0,
+) -> dict[str, Any]:
+    s = _require_season(season)
+    safe_limit = _safe_limit(limit, cap=500)
+    safe_offset = _safe_offset(offset)
+    rows = await _fetchall_async(TOP_SCORERS_READ_SQL, (int(league_id), int(s), safe_limit, safe_offset))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "league_id": int(r[0]),
+                "league_name": r[1],
+                "season": int(r[2]),
+                "player_id": _to_int_or_none(r[3]),
+                "rank": _to_int_or_none(r[4]),
+                "team_id": _to_int_or_none(r[5]),
+                "team_name": r[6],
+                "goals": _to_int_or_none(r[7]),
+                "assists": _to_int_or_none(r[8]),
+                "raw": (r[9] if include_raw else None),
+                "updated_at_utc": _to_iso_or_none(r[10]),
+            }
+        )
+    return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+
+@app.get("/read/team_statistics", dependencies=[Depends(require_access)])
+async def read_team_statistics(
+    league_id: int,
+    season: int | None = None,
+    team_id: int | None = None,
+    include_raw: bool = True,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    s = _require_season(season)
+    safe_limit = _safe_limit(limit, cap=2000)
+    safe_offset = _safe_offset(offset)
+    team_filter = ""
+    params: list[Any] = [int(league_id), int(s)]
+    if team_id is not None:
+        team_filter = "AND s.team_id = %s"
+        params.append(int(team_id))
+    sql_text = TEAM_STATISTICS_READ_SQL.format(team_filter=team_filter)
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "league_id": int(r[0]),
+                "league_name": r[1],
+                "season": int(r[2]),
+                "team_id": int(r[3]),
+                "team_name": r[4],
+                "form": r[5],
+                "raw": (r[6] if include_raw else None),
+                "updated_at_utc": _to_iso_or_none(r[7]),
+            }
+        )
+    return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
+
+@app.get("/read/coverage", dependencies=[Depends(require_access)])
+async def read_coverage(
+    league_id: int | None = None,
+    country: str | None = None,
+    season: int | None = None,
+    endpoint: str | None = None,
+    limit: int = 500,
+    offset: int = 0,
+) -> dict[str, Any]:
+    s = _require_season(season)
+    safe_limit = _safe_limit(limit, cap=2000)
+    safe_offset = _safe_offset(offset)
+
+    league_ids = _resolve_league_ids(league_id=league_id, country=country, season=s) if (league_id is not None or (country or "").strip()) else []
+
+    filters: list[str] = []
+    params: list[Any] = []
+    filters.append("AND c.season = %s")
+    params.append(int(s))
+
+    if league_ids:
+        filters.append("AND c.league_id = ANY(%s)")
+        params.append(league_ids)
+
+    ep = (endpoint or "").strip()
+    if ep:
+        filters.append("AND c.endpoint = %s")
+        params.append(ep)
+
+    sql_text = READ_COVERAGE_SQL.format(filters="\n  ".join(filters))
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "league_id": int(r[0]),
+                "league_name": r[1],
+                "season": int(r[2]),
+                "endpoint": r[3],
+                "expected_count": _to_int_or_none(r[4]),
+                "actual_count": _to_int_or_none(r[5]),
+                "count_coverage": r[6],
+                "last_update_utc": _to_iso_or_none(r[7]),
+                "lag_minutes": _to_int_or_none(r[8]),
+                "freshness_coverage": r[9],
+                "raw_count": _to_int_or_none(r[10]),
+                "core_count": _to_int_or_none(r[11]),
+                "pipeline_coverage": r[12],
+                "overall_coverage": r[13],
+                "calculated_at_utc": _to_iso_or_none(r[14]),
+            }
+        )
+
+    return {
+        "ok": True,
+        "filters": {"league_id": league_id, "country": country, "season": int(s), "endpoint": ep or None},
+        "items": items,
+        "paging": {"limit": safe_limit, "offset": safe_offset},
+    }
+
+
+@app.get("/read/h2h", dependencies=[Depends(require_access)])
+async def read_h2h(
+    team1_id: int,
+    team2_id: int,
+    league_id: int | None = None,
+    season: int | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """
+    Head-to-head fixtures + summary (W/D/L, goals) derived from core.fixtures.
+    Optionally filter by league_id and/or season.
+    """
+    safe_limit = _safe_limit(limit, cap=200)
+
+    filters: list[str] = []
+    params: list[Any] = [int(team1_id), int(team2_id), int(team2_id), int(team1_id)]
+
+    if league_id is not None:
+        filters.append("AND f.league_id = %s")
+        params.append(int(league_id))
+
+    if season is not None:
+        filters.append("AND f.season = %s")
+        params.append(int(season))
+
+    sql_text = f"""
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.status_short,
+      f.home_team_id,
+      th.name as home_team_name,
+      f.away_team_id,
+      ta.name as away_team_name,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    JOIN core.teams th ON f.home_team_id = th.id
+    JOIN core.teams ta ON f.away_team_id = ta.id
+    WHERE (
+      (f.home_team_id = %s AND f.away_team_id = %s)
+      OR
+      (f.home_team_id = %s AND f.away_team_id = %s)
+    )
+    {' '.join(filters)}
+    ORDER BY f.date DESC
+    LIMIT %s
+    """
+    params.append(safe_limit)
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    # Summary from team1 perspective
+    played = wins = draws = losses = 0
+    gf = ga = 0
+    for r in rows:
+        fid = int(r[0])
+        hid = _to_int_or_none(r[5])
+        aid = _to_int_or_none(r[7])
+        gh = _to_int_or_none(r[9])
+        ga_ = _to_int_or_none(r[10])
+        items.append(
+            {
+                "id": fid,
+                "league_id": int(r[1]),
+                "season": _to_int_or_none(r[2]),
+                "date_utc": _to_iso_or_none(r[3]),
+                "status": r[4],
+                "home_team_id": hid,
+                "home_team": r[6],
+                "away_team_id": aid,
+                "away_team": r[8],
+                "goals_home": gh,
+                "goals_away": ga_,
+                "updated_at_utc": _to_iso_or_none(r[11]),
+            }
+        )
+
+        # Only compute on completed results where goals are present
+        if hid is None or aid is None or gh is None or ga_ is None:
+            continue
+        played += 1
+        team1_is_home = int(hid) == int(team1_id)
+        team1_goals = int(gh) if team1_is_home else int(ga_)
+        team2_goals = int(ga_) if team1_is_home else int(gh)
+        gf += team1_goals
+        ga += team2_goals
+        if team1_goals > team2_goals:
+            wins += 1
+        elif team1_goals < team2_goals:
+            losses += 1
+        else:
+            draws += 1
+
+    return {
+        "ok": True,
+        "teams": {"team1_id": int(team1_id), "team2_id": int(team2_id)},
+        "filters": {"league_id": int(league_id) if league_id is not None else None, "season": int(season) if season is not None else None},
+        "summary_team1": {
+            "played": played,
+            "wins": wins,
+            "draws": draws,
+            "losses": losses,
+            "goals_for": gf,
+            "goals_against": ga,
+            "goals_for_avg": (round(gf / played, 4) if played else None),
+            "goals_against_avg": (round(ga / played, 4) if played else None),
+        },
+        "items": items,
+    }
 
 
 @app.get("/v1/sse/system-status", dependencies=[Depends(require_access)])

@@ -6,6 +6,7 @@ Kapsam:
 - Bugün/yarın/tarih bazlı fixture listesi
 - Canlı sayfa (SSE)
 - Takım sayfası: maç listesi + “last-20” özet metrikler + tek maç detay paketi
+- Feature engineering (modelleme) için “curated feature store” uçları (/read/*)
 
 Kural:
 - Tüm zamanlar **UTC** (frontend TR saatine çevirebilir).
@@ -48,20 +49,25 @@ export function parseTrackedLeagues(raw: string | undefined) {
 ```
 
 #### 1.1.2 Lig adı gösterimi (league_id → league_name)
-Read API v1’de `/v1/leagues` endpoint’i yoktur. Bu yüzden UI’de lig adını göstermek için tracked leagues ile sınırlı **statik bir map** kullanılır.
+Read API’de artık league metadata için curated endpoint var:
+- `GET /read/leagues?country=&season=&limit=&offset=`
+
+UI’de “league_id → league_name” çözümü için **statik map’e gerek yok**. Tracked leagues listesi kadar küçük bir cache ile `/read/leagues` çıktısı kullanılabilir.
 
 ```ts
-export const LEAGUE_NAMES: Record<number, string> = {
-  203: "Trendyol Süper Lig",
-  39: "Premier League",
-  140: "La Liga",
-  78: "Bundesliga",
-  135: "Serie A",
-  2: "UEFA Şampiyonlar Ligi",
-};
+export async function fetchLeagues(baseUrl: string, country?: string, season?: number) {
+  const qs = new URLSearchParams();
+  if (country) qs.set("country", country);
+  if (season) qs.set("season", String(season));
+  qs.set("limit", "500");
+  const res = await fetch(`${baseUrl}/read/leagues?${qs.toString()}`, { credentials: "include" });
+  if (!res.ok) throw new Error(`leagues_fetch_failed:${res.status}`);
+  const data = await res.json();
+  return (data.items || []) as Array<{ id: number; name: string }>;
+}
 
-export function leagueName(leagueId: number) {
-  return LEAGUE_NAMES[leagueId] || `League ${leagueId}`;
+export function buildLeagueNameMap(items: Array<{ id: number; name: string }>) {
+  return new Map(items.map(x => [x.id, x.name]));
 }
 ```
 
@@ -238,6 +244,12 @@ Kaynak:
 Amaç:
 - İki takımın son N karşılaşmasını göstermek + H2H tablosu oluşturmak.
 
+Yeni (feature engineering için, özet metrikli):
+- `GET /read/h2h?team1_id=&team2_id=&league_id=&season=&limit=`
+- Dönüş:
+  - `items`: maç listesi (UTC)
+  - `summary_team1`: team1 perspektifinden W/D/L + gf/ga + ortalamalar
+
 ---
 
 ## 5) Standings / injuries (opsiyonel ekranlar)
@@ -246,7 +258,36 @@ Amaç:
 
 ---
 
-## 6) Versiyonlama ve genişleme stratejisi
+## 6) Feature Store (modelleme/feature engineering) — /read/*
+
+Bu uçlar “tek tek çektiğimiz her veri için özel alan” hedefiyle tasarlanmıştır. Hepsi **read-only** ve **UTC** döner.
+
+Genel kurallar:
+- `season` çoğu uçta zorunludur. Prod’da default için `READ_API_DEFAULT_SEASON` kullanılabilir.
+- Scope: `league_id` veya `country` ile daralt.
+- Paging: `limit/offset` (limit cap uygulanır).
+
+### 6.1 Fixtures (league/country scoped)
+`GET /read/fixtures?league_id=&country=&season=&date_from=&date_to=&team_id=&status=&limit=&offset=`
+
+### 6.2 Fixture detail parçaları (tekil uçlar)
+- `GET /read/fixtures/{fixture_id}/events`
+- `GET /read/fixtures/{fixture_id}/lineups`
+- `GET /read/fixtures/{fixture_id}/statistics`
+- `GET /read/fixtures/{fixture_id}/players`
+
+### 6.3 Top scorers (league+season)
+`GET /read/top_scorers?league_id=&season=&include_raw=1&limit=&offset=`
+
+### 6.4 Team statistics (league+season+team)
+`GET /read/team_statistics?league_id=&season=&team_id=&include_raw=1&limit=&offset=`
+
+### 6.5 Coverage (monitoring)
+`GET /read/coverage?season=&league_id=&country=&endpoint=&limit=&offset=`
+
+---
+
+## 7) Versiyonlama ve genişleme stratejisi
 
 Bu contract intentionally “küçük ama güçlü” tutulur.
 Sonraki fazlarda gerekirse eklenebilir:

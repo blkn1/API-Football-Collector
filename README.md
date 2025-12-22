@@ -15,7 +15,7 @@ High-signal docs:
 - **Data layers (PostgreSQL)**: `db/schemas/` (RAW JSONB archive → CORE normalized UPSERT → MART coverage)
 - **Backfill**: `src/jobs/backfill.py` (resumeable `core.backfill_progress`)
 - **MCP**: `src/mcp/` (read-only tools: coverage, db stats, fixtures/standings/injuries/fixture_details queries)
-- **Docker / Coolify**: root `docker-compose.yml` (collector + live_loop + mcp + read_api)
+- **Docker / Coolify**: root `docker-compose.yml` (collector + mcp + read_api + postgres)
 - **Healthchecks**: `scripts/healthcheck_*.py`
 - **Tests**: `tests/unit/`, `tests/integration/`, `tests/mcp/`
 
@@ -54,10 +54,9 @@ On startup, the collector runs `python scripts/apply_schemas.py` which applies `
 
 This repo ships a root `Dockerfile` and a Compose stack in `docker-compose.yml` (repo root).
 
-- **collector**: APScheduler service that runs enabled non-live jobs from `config/jobs/*.yaml`
-- **live_loop**: optional `/fixtures?live=all` poller (15s). Controlled by `ENABLE_LIVE_LOOP=1`. Default: off.
+- **collector**: APScheduler service that runs enabled jobs from `config/jobs/*.yaml`
 - **mcp**: read-only query interface (Coolify: HTTP/SSE)
-- **read_api**: dış tüketim için read-only REST + SSE (ops, n8n, dashboard)
+- **read_api**: external consumption: read-only REST + SSE (ops, n8n, dashboards, feature engineering)
 
 Minimal steps:
 
@@ -69,7 +68,6 @@ Required environment:
 - `API_FOOTBALL_KEY`
 - `DATABASE_URL` (recommended) or `POSTGRES_*`
 - `SCHEDULER_TIMEZONE` (recommended, e.g. `Europe/Istanbul` for TR cron evaluation)
-- `REDIS_URL` (only needed if `ENABLE_LIVE_LOOP=1`)
 
 MCP (Coolify / HTTP-SSE):
 - `MCP_TRANSPORT=streamable-http` (prod default)
@@ -86,17 +84,14 @@ Read API (REST + SSE):
 - Health: `GET /v1/health`
 - Quota: `GET /v1/quota`
 - Fixtures: `GET /v1/fixtures?date=YYYY-MM-DD&limit=200`
+- Feature Store (curated, league/country scoped): `GET /read/*` (see `READ_API_FRONTEND_CONTRACT.md`)
 - Live scores (SSE): `GET /v1/sse/live-scores`
 - Prod smoke test (curl): `bash scripts/smoke_read_api.sh`
 
 Prod domain (örnek):
 - `https://readapi.zinalyze.pro`
 
-Enable live loop (optional):
-
-```bash
-ENABLE_LIVE_LOOP=1 docker compose up -d --build
-```
+Note: live polling (/fixtures?live=all) is intentionally disabled in this deployment to protect quota and keep cadence predictable.
 
 ## Phase 1 Validation Checklist
 

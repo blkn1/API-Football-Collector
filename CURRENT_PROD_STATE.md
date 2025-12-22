@@ -8,7 +8,7 @@ Bu doküman, şu ana kadar yaptığımız değişikliklerin **son halini** ve wa
 - **collector**: APScheduler + jobs (`config/jobs/*.yaml`) + quota-safe istekler + RAW→CORE→MART
 - **mcp**: read-only monitoring (Claude Desktop dahil)
 - **read_api**: dış uygulamalar için read-only REST + SSE
-- **live_loop**: opsiyonel; `ENABLE_LIVE_LOOP=1` olmadıkça API çağırmaz
+Not: Bu deployment’ta `live_loop` servisi compose’tan kaldırıldı (bilinçli karar: live polling yok).
 
 Prod network notu:
 - Prod’da **Postgres/Redis host port publish edilmez** (güvenlik + log gürültüsü önleme).
@@ -24,11 +24,11 @@ Prod network notu:
 
 ## 2.1 Günlük fixtures modeli: per_tracked_leagues (fixtures_fetch_mode)
 
-Prod’da “bültende maç var ama sistemde yok” sorunu için `daily_fixtures_by_date` artık **global-by-date** modunda çalışır:
+`daily_fixtures_by_date` job’ı artık **per_tracked_leagues** modundadır:
 - Config: `config/jobs/daily.yaml` en üst satır:
   - `fixtures_fetch_mode: per_tracked_leagues`
-- Davranış: `GET /fixtures?date=YYYY-MM-DD` (gerekirse paging)
-- Sonuç: tracked olmayan kupalar/UEFA gibi competition’lar da “o gün” oynanıyorsa CORE’a düşer.
+- Davranış: yalnızca `config/jobs/daily.yaml -> tracked_leagues` içindeki ligler için fixtures çekilir.
+- Sonuç: tracked olmayan competition’lar CORE’a otomatik düşmez (bilinçli karar: scope kontrolü + quota güvenliği).
 
 Deterministik kanıt (örnek):
 - RAW (league filter olmayan global çağrı):
@@ -119,7 +119,7 @@ Bu repo artık root Compose + root Dockerfile kullanıyor:
 - ✅ Kullanılan: `docker-compose.yml`, `Dockerfile`
 
 Silinebilir (redundant/legacy):
-- `docker-compose.live.yml` (root compose zaten `live_loop` içeriyor)
+- `docker-compose.live.yml` (legacy; bu repo root `docker-compose.yml` kullanır ve live servis içermez)
 - `docker/` klasörü komple:
   - `docker/docker-compose.yml`
   - `docker/Dockerfile`

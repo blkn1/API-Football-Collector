@@ -21,11 +21,6 @@ Bu değişkenler Coolify’nin domain routing / reverse-proxy katmanında kullan
   - **Ne**: Collector için tam URL (ör: `https://ogz.zinalyze.pro`)
   - **Etkiler**: Coolify routing/health (Coolify ayarlarına göre).
 
-- **`SERVICE_FQDN_LIVE_LOOP`**, **`SERVICE_URL_LIVE_LOOP`**
-  - **Ne**: Live loop servisi domain/URL
-  - **Etkiler**: Live loop HTTP sunmadığı için pratikte routing gerekmeyebilir; Coolify proje şablonları otomatik ekleyebilir.
-  - **Not**: Bizde `ENABLE_LIVE_LOOP=0` ile live loop **kapalı** (API çağrısı yapmaz).
-
 - **`SERVICE_FQDN_MCP`**, **`SERVICE_URL_MCP`**
   - **Ne**: MCP servisi için FQDN/URL (ör: `mcp.zinalyze.pro`)
   - **Etkiler**: MCP, HTTP/SSE üzerinden dışarı açıldığı için bu alanlar **aktif** kullanılır (reverse-proxy → container port mapping).
@@ -80,21 +75,11 @@ Sistem, DB bağlantısını öncelikle `DATABASE_URL` ile bekler. Compose ayrıc
 
 ---
 
-## 5) Live loop kontrolü (bizde kapalı)
+## 5) Live loop (bu deployment’ta kaldırıldı)
 
-- **`ENABLE_LIVE_LOOP`**
-  - **Değerler**: `0` / `1`
-  - **Nerede kullanılır**: `docker-compose.yml` live_loop `command` bloğu.
-  - **Etkisi**:
-    - `0`: container idle kalır, **API çağrısı yok**
-    - `1`: `scripts/live_loop.py --interval 15` çalışır (`/fixtures?live=all`)
-  - **Not (quota)**: Live loop açılırsa dakikada ~4 request (15s interval) ek yük gelir; minute limit’e yaklaşırken dikkat.
-
-- **`REDIS_URL`**
-  - **Örnek**: `redis://redis:6379/0`
-  - **Nerede kullanılır**: live loop state/delta (repo içindeki live loop tasarımına bağlı)
-  - **Etkisi**: Live loop açıkken stabil delta/tekrarsız işleme için gereklidir.
-  - **Bizde**: Live loop kapalı olsa bile env’de durabilir.
+Bu stack’te live polling servisleri (`live_loop`, `redis`) compose’tan kaldırıldı.
+- Amaç: quota güvenliği + deterministik günlük cadence.
+- Not: `scripts/live_loop.py` repo’da kalabilir (legacy/opsiyonel) ama prod deploy’da çalıştırılmıyor.
 
 ---
 
@@ -214,5 +199,20 @@ SERVICE_URL_MCP="https://mcp.zinalyze.pro" bash scripts/smoke_mcp.sh
 Bu sayede:
 - Üretim limiti değişince kodu değil config’i değiştirirsin.
 - Backfill hızını, quota-safe olarak ENV üzerinden ayarlarsın.
+
+---
+
+## 11) Read API (Feature Store) — erişim ve varsayılanlar
+
+- **`READ_API_IP_ALLOWLIST`** (önerilen prod güvenliği)
+  - **Format**: `ip1,ip2,ip3` (comma-separated)
+  - **Etkisi**: allowlist dışındaki IP’ler 403 alır.
+
+- **`READ_API_BASIC_USER`**, **`READ_API_BASIC_PASSWORD`** (opsiyonel)
+  - **Etkisi**: set edilirse Basic Auth zorunlu olur.
+
+- **`READ_API_DEFAULT_SEASON`** (önerilen)
+  - **Ne**: `/read/*` endpoint’lerinde `season` verilmezse kullanılacak default.
+  - **Not**: DB timestamp’ler yine UTC; bu sadece filtre default’udur.
 
 
