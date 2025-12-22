@@ -105,6 +105,11 @@ Gözlem:
 - Ops:
   - `/ops/api/system_status` → `standings_progress`
 
+“Bitti mi?” (net kanıt):
+- `get_standings_refresh_progress()` içinde:
+  - `lap_count >= 1` → en az 1 tam tur tamamlandı
+  - `last_full_pass_at_utc` → son tam turun zamanı
+
 ### 3.5 Live loop (legacy)
 Bu deployment’ta live polling servisleri (`live_loop`, `redis`) compose’tan kaldırıldı.
 - Repo’da `scripts/live_loop.py` dosyası **legacy** olarak durabilir ama prod’da çalıştırılmıyor.

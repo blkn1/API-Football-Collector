@@ -134,32 +134,51 @@ async def sync_standings(
     # - If league_filter is set, batching is bypassed (explicit run for a single league).
     # - If max_leagues_per_run is None, process all (legacy behavior).
     # - Progress is stored in core.standings_refresh_progress keyed by progress_job_id.
-    async def _load_cursor() -> int:
+    async def _load_progress() -> tuple[int, int]:
         try:
-            val = query_scalar(
-                "SELECT cursor FROM core.standings_refresh_progress WHERE job_id=%s",
+            row = query_scalar(
+                "SELECT json_build_object('cursor', cursor, 'lap_count', lap_count) "
+                "FROM core.standings_refresh_progress WHERE job_id=%s",
                 (str(progress_job_id),),
             )
-            return int(val) if val is not None else 0
+            # query_scalar may return a dict (psycopg2 JSON) or a string; be defensive
+            if isinstance(row, dict):
+                cursor = int(row.get("cursor") or 0)
+                lap = int(row.get("lap_count") or 0)
+                return cursor, lap
+            return 0, 0
         except Exception:
-            return 0
+            return 0, 0
 
-    def _save_cursor(*, cursor: int, total_pairs: int, last_error: str | None = None) -> None:
+    def _save_progress(
+        *,
+        cursor: int,
+        total_pairs: int,
+        cursor_before: int,
+        lap_count: int,
+        last_error: str | None = None,
+    ) -> None:
         if dry_run:
             return
+        # Wrap detection: if cursor moved "backwards" in modular space, we completed a full pass.
+        wrapped = int(cursor) < int(cursor_before)
+        lap_next = int(lap_count) + (1 if wrapped else 0)
         with get_transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO core.standings_refresh_progress (job_id, cursor, total_pairs, last_run_at, last_error)
-                    VALUES (%s, %s, %s, NOW(), %s)
+                    INSERT INTO core.standings_refresh_progress
+                      (job_id, cursor, total_pairs, last_run_at, last_error, lap_count, last_full_pass_at)
+                    VALUES (%s, %s, %s, NOW(), %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END)
                     ON CONFLICT (job_id) DO UPDATE
                       SET cursor = EXCLUDED.cursor,
                           total_pairs = EXCLUDED.total_pairs,
                           last_run_at = EXCLUDED.last_run_at,
-                          last_error = EXCLUDED.last_error
+                          last_error = EXCLUDED.last_error,
+                          lap_count = EXCLUDED.lap_count,
+                          last_full_pass_at = COALESCE(EXCLUDED.last_full_pass_at, core.standings_refresh_progress.last_full_pass_at)
                     """,
-                    (str(progress_job_id), int(cursor), int(total_pairs), last_error),
+                    (str(progress_job_id), int(cursor), int(total_pairs), last_error, int(lap_next), bool(wrapped)),
                 )
 
     def _batch(leagues_in: list[TrackedLeague]) -> tuple[list[TrackedLeague], dict[str, Any]]:
@@ -190,10 +209,12 @@ async def sync_standings(
         }
 
     _cursor_value = 0
+    _lap_count = 0
     batch_meta: dict[str, Any] = {"mode": "all"}
     if league_filter is None and max_leagues_per_run is not None:
-        _cursor_value = await _load_cursor()
+        _cursor_value, _lap_count = await _load_progress()
         leagues, batch_meta = _batch(leagues)
+        batch_meta["lap_count_before"] = int(_lap_count)
 
     limiter2 = limiter or RateLimiter(max_tokens=300, refill_rate=5.0)
     client2 = client or APIClient()
@@ -311,9 +332,11 @@ async def sync_standings(
         # Advance progress cursor after successful/attempted run (best-effort).
         try:
             if league_filter is None and max_leagues_per_run is not None and batch_meta.get("mode") == "cursor":
-                _save_cursor(
+                _save_progress(
                     cursor=int(batch_meta.get("cursor_after") or 0),
                     total_pairs=int(batch_meta.get("total_pairs") or 0),
+                    cursor_before=int(batch_meta.get("cursor_before") or 0),
+                    lap_count=int(batch_meta.get("lap_count_before") or 0),
                     last_error=last_error,
                 )
         except Exception:

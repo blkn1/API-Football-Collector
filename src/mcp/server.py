@@ -1380,7 +1380,9 @@ async def get_standings_refresh_progress(job_id: str = "daily_standings") -> dic
                 "total_pairs": _to_int_or_none(row[2]),
                 "last_run_at_utc": _to_iso_or_none(row[3]),
                 "last_error": row[4],
-                "updated_at_utc": _to_iso_or_none(row[5]),
+                "lap_count": _to_int_or_none(row[5]),
+                "last_full_pass_at_utc": _to_iso_or_none(row[6]),
+                "updated_at_utc": _to_iso_or_none(row[7]),
             },
             "ts_utc": _utc_now_iso(),
         }

@@ -221,6 +221,8 @@ STANDINGS_REFRESH_PROGRESS_QUERY = """
       total_pairs,
       last_run_at,
       last_error,
+      lap_count,
+      last_full_pass_at,
       updated_at
     FROM core.standings_refresh_progress
     WHERE job_id = %s

@@ -225,6 +225,9 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
 - `get_backfill_progress(job_id=None, season=None, include_completed=False, limit=200)`
 - `get_standings_refresh_progress(job_id="daily_standings")`
   - daily_standings “parça parça” çalışıyorsa cursor/total_pairs/last_run_at gösterir.
+  - Ayrıca “bitti mi?” için:
+    - `lap_count`: kaç tam tur (wrap-around) tamamlandı
+    - `last_full_pass_at_utc`: son tam turun zamanı
 - `get_raw_error_summary(since_minutes=60, endpoint=None, top_endpoints_limit=25)`
 - `get_raw_error_samples(since_minutes=60, endpoint=None, limit=25)`
 - `get_recent_log_errors(job_name=None, limit=50)`
