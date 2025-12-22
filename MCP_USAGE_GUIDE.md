@@ -102,12 +102,64 @@ Claude Desktop doğrudan HTTP transport konuşmadığı için prod’a bağlanı
 
 ## “MCP’de hangi tool’lar var?” (dokümana değil MCP’ye bak)
 
-Doküman zamanla eskiyebilir. Bu yüzden doğru yöntem:
+Bu bölüm iki sorunu aynı anda çözer:
 
-- Prod’da: `bash scripts/smoke_mcp.sh` (initialize → tools/list → tools/call)
-- Claude’da: `tools/list` çağır ve gelen listeyi kaydet
+- **Tool keşfi**: “Prod’da hangi MCP tool’ları var?” (doküman drift’ini bitirir)
+- **Session problemi**: “Claude Desktop bazen neden çalışmıyor? Neden ‘yeni session’ gerekiyor?”
 
-Bu liste “MCP ile çağırabileceğimiz her şey”dir.
+### 1) Neden Claude Desktop bazen “çalışmıyor”?
+Prod MCP `streamable-http` olduğu için **stateful** çalışır:
+
+- Client önce **initialize** yapar
+- Server response’ta bir **`mcp-session-id`** döner
+- Client bundan sonra tüm `tools/list` ve `tools/call` isteklerinde bu session id’yi header’da taşır
+
+**Redeploy** olduğunda MCP container restart olur ve:
+- eski session’lar **geçersiz** olabilir
+- bazı client’lar (özellikle adapter/desktop) eski session’ı “kafasında” tutup tekrar kullanmaya çalışır
+- sonuç: Claude’da “tool yok”, “session hatası”, “hiçbir şey dönmüyor” gibi problemler
+
+Kısa çözüm:
+- Claude Desktop’ı tamamen kapat/aç (veya MCP bağlantısını kapatıp yeniden bağlan) → client yeniden initialize yapar.
+
+### 2) Tool listesini (ve session’ı) en garanti şekilde nasıl doğrularım?
+Prod’a karşı en sağlam doğrulama: `scripts/smoke_mcp.sh`.
+
+Bu script şunları otomatik yapar:
+- **initialize** → her çalıştırdığında **yeni session** alır
+- **tools/list** → o an prod’da hangi tool’lar varsa listeler
+- birkaç **tools/call** → MCP’nin gerçekten cevap ürettiğini kanıtlar
+
+Çalıştır:
+- `bash scripts/smoke_mcp.sh`
+
+Eğer domain/path farklıysa override:
+- `MCP_BASE_URL="https://mcp.example.com" MCP_PATH="/mcp" bash scripts/smoke_mcp.sh`
+
+Bu script çalışıyorsa ama Claude çalışmıyorsa, sorun büyük ihtimalle:
+- Claude/adapter’ın **eski session’ı tutması**
+- veya yanlış endpoint’e bağlanması
+
+Bu durumda pratik adım:
+- Claude Desktop restart
+- adapter URI kontrolü (doğru `/mcp` path)
+- tekrar `tools/list`
+
+### 3) “bash çalışmıyor / script koşamıyorum” durumunda ne yapacağım?
+Bu script’i **MCP’ye erişebilen herhangi bir makinede** çalıştırabilirsin (local laptop dahil). Gerekenler:
+- `bash`, `curl`, `awk`, `sed`, `tr`
+
+Eğer script’i hiç koşturamıyorsan (ör. container’da bash yok), en basit yöntem:
+- script’i local’de koş (genelde en hızlısı)
+
+> Amaç teknik detay değil: “initialize → session id al → tools/list çağır” akışını mutlaka doğrulayacak bir yol bulmak.
+
+### 4) Hızlı kontrol listesi (en sık hatalar)
+- **Redeploy sonrası** Claude bozulduysa: önce Claude restart → sonra `tools/list`.
+- `scripts/smoke_mcp.sh` “initialize did not return mcp-session-id” diyorsa:
+  - yanlış `MCP_PATH` (genelde `/mcp`)
+  - reverse proxy yanlış yönlendiriyor
+  - veya istek `Accept: application/json, text/event-stream` olmadan gidiyor (script bunu zaten doğru set ediyor)
 
 ---
 
