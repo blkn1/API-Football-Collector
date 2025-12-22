@@ -191,10 +191,18 @@ def _build_runner(
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
                 )
             elif job.job_id == "daily_standings":
+                max_leagues = None
+                try:
+                    v = (job.mode or {}).get("max_leagues_per_run")
+                    if v is not None and str(v).strip() != "":
+                        max_leagues = int(v)
+                except Exception:
+                    max_leagues = None
                 await run_daily_standings(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                    max_leagues_per_run=max_leagues,
                 )
             elif job.job_id == "injuries_hourly":
                 await run_injuries_hourly(

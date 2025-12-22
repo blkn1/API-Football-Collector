@@ -214,6 +214,18 @@ LAST_SYNC_FIXTURE_DETAILS_ANY_QUERY = """
     WHERE endpoint = ANY(ARRAY['/fixtures/players','/fixtures/events','/fixtures/statistics','/fixtures/lineups'])
 """
 
+STANDINGS_REFRESH_PROGRESS_QUERY = """
+    SELECT
+      job_id,
+      cursor,
+      total_pairs,
+      last_run_at,
+      last_error,
+      updated_at
+    FROM core.standings_refresh_progress
+    WHERE job_id = %s
+"""
+
 LIVE_LOOP_ACTIVITY_QUERY = """
     SELECT
       COUNT(*)::int AS requests,

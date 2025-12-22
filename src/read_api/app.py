@@ -1740,6 +1740,7 @@ async def ops_system_status() -> dict:
     coverage_summary = await mcp_server.get_coverage_summary(season=season_int) if season_int is not None else await mcp_server.get_coverage_summary()
     job_status = await mcp_server.get_job_status()
     backfill = await mcp_server.get_backfill_progress()
+    standings_progress = await mcp_server.get_standings_refresh_progress(job_id="daily_standings")
     raw_errors = await mcp_server.get_raw_error_summary(since_minutes=60)
     raw_error_samples = await mcp_server.get_raw_error_samples(
         since_minutes=60,
@@ -1779,6 +1780,7 @@ async def ops_system_status() -> dict:
         "coverage_summary": coverage_summary,
         "job_status": job_status,
         "job_status_compact": jobs_compact,
+        "standings_progress": standings_progress,
         "backfill": backfill,
         "raw_errors": raw_errors,
         "raw_error_samples": raw_error_samples,

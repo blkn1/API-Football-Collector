@@ -111,6 +111,8 @@ async def sync_standings(
     config_path: Path,
     client: APIClient | None = None,
     limiter: RateLimiter | None = None,
+    max_leagues_per_run: int | None = None,
+    progress_job_id: str = "daily_standings",
 ) -> StandingsSyncSummary:
     """
     Sync standings for tracked leagues from config:
@@ -128,6 +130,71 @@ async def sync_standings(
         if not leagues:
             raise ValueError(f"League {league_filter} not found in config: {config_path}")
 
+    # Optional batching: process only N leagues per run and advance a cursor in CORE.
+    # - If league_filter is set, batching is bypassed (explicit run for a single league).
+    # - If max_leagues_per_run is None, process all (legacy behavior).
+    # - Progress is stored in core.standings_refresh_progress keyed by progress_job_id.
+    async def _load_cursor() -> int:
+        try:
+            val = query_scalar(
+                "SELECT cursor FROM core.standings_refresh_progress WHERE job_id=%s",
+                (str(progress_job_id),),
+            )
+            return int(val) if val is not None else 0
+        except Exception:
+            return 0
+
+    def _save_cursor(*, cursor: int, total_pairs: int, last_error: str | None = None) -> None:
+        if dry_run:
+            return
+        with get_transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO core.standings_refresh_progress (job_id, cursor, total_pairs, last_run_at, last_error)
+                    VALUES (%s, %s, %s, NOW(), %s)
+                    ON CONFLICT (job_id) DO UPDATE
+                      SET cursor = EXCLUDED.cursor,
+                          total_pairs = EXCLUDED.total_pairs,
+                          last_run_at = EXCLUDED.last_run_at,
+                          last_error = EXCLUDED.last_error
+                    """,
+                    (str(progress_job_id), int(cursor), int(total_pairs), last_error),
+                )
+
+    def _batch(leagues_in: list[TrackedLeague]) -> tuple[list[TrackedLeague], dict[str, Any]]:
+        # Stable order so cursor is deterministic across runs.
+        ordered = sorted(leagues_in, key=lambda x: (int(x.season or 0), int(x.id)))
+        total = len(ordered)
+        if total == 0:
+            return [], {"total_pairs": 0, "cursor_before": 0, "cursor_after": 0, "batch_size": 0}
+
+        if max_leagues_per_run is None or max_leagues_per_run <= 0 or max_leagues_per_run >= total:
+            return ordered, {"total_pairs": total, "cursor_before": 0, "cursor_after": 0, "batch_size": total, "mode": "all"}
+
+        cursor_before = 0
+        try:
+            cursor_before = int(_cursor_value)
+        except Exception:
+            cursor_before = 0
+        start = cursor_before % total
+        n = int(max_leagues_per_run)
+        batch_list = (ordered[start : start + n] + ordered[0 : max(0, (start + n) - total)])[:n]
+        cursor_after = (start + len(batch_list)) % total
+        return batch_list, {
+            "total_pairs": total,
+            "cursor_before": cursor_before,
+            "cursor_after": cursor_after,
+            "batch_size": len(batch_list),
+            "mode": "cursor",
+        }
+
+    _cursor_value = 0
+    batch_meta: dict[str, Any] = {"mode": "all"}
+    if league_filter is None and max_leagues_per_run is not None:
+        _cursor_value = await _load_cursor()
+        leagues, batch_meta = _batch(leagues)
+
     limiter2 = limiter or RateLimiter(max_tokens=300, refill_rate=5.0)
     client2 = client or APIClient()
 
@@ -138,9 +205,11 @@ async def sync_standings(
         "standings_sync_started",
         dry_run=dry_run,
         leagues=[{"league_id": l.id, "season": int(l.season or 0)} for l in leagues],
+        batch=batch_meta,
     )
 
     try:
+        last_error: str | None = None
         for l in leagues:
             league_id = l.id
             league_name = l.name or f"League {league_id}"
@@ -159,9 +228,11 @@ async def sync_standings(
                 continue
             except APIClientError as e:
                 logger.error("api_call_failed", league_id=league_id, err=str(e))
+                last_error = str(e)
                 continue
             except Exception as e:
                 logger.error("api_call_unexpected_error", league_id=league_id, err=str(e))
+                last_error = str(e)
                 continue
 
             envelope = result.data or {}
@@ -177,6 +248,7 @@ async def sync_standings(
                 )
             except Exception as e:
                 logger.error("dependency_bootstrap_failed", league_id=league_id, err=str(e))
+                last_error = str(e)
                 continue
 
             if not dry_run:
@@ -208,6 +280,7 @@ async def sync_standings(
                     missing_team_ids_count=len(missing),
                     missing_team_ids_sample=sorted(list(missing))[:25],
                 )
+                last_error = f"missing_teams:{len(missing)}"
                 continue
 
             try:
@@ -220,6 +293,7 @@ async def sync_standings(
                 logger.info("core_replaced", league_id=league_id, rows_inserted=len(rows), rows_in_db=int(count or 0))
             except Exception as e:
                 logger.error("db_replace_failed", league_id=league_id, err=str(e))
+                last_error = str(e)
                 continue
 
             q = limiter2.quota
@@ -233,6 +307,18 @@ async def sync_standings(
             daily_remaining=q.daily_remaining,
             minute_remaining=q.minute_remaining,
         )
+
+        # Advance progress cursor after successful/attempted run (best-effort).
+        try:
+            if league_filter is None and max_leagues_per_run is not None and batch_meta.get("mode") == "cursor":
+                _save_cursor(
+                    cursor=int(batch_meta.get("cursor_after") or 0),
+                    total_pairs=int(batch_meta.get("total_pairs") or 0),
+                    last_error=last_error,
+                )
+        except Exception:
+            pass
+
         return StandingsSyncSummary(
             leagues=[l.id for l in leagues],
             api_requests=api_requests,

@@ -88,6 +88,23 @@ Prod kuralı:
 - `scope_source: live` seçersen `live.yaml` içindeki `filters.tracked_leagues` **boş olamaz**.
   - Live loop için boş liste “track all” anlamına gelebilir; ama stale refresh için bu **quota-risk** olduğu için intentionally reddedilir.
 
+#### 3.4.3 daily_standings “parça parça” (batch) çalıştırma
+Çok fazla tracked lig varsa `/standings` job’ı tek seferde uzun sürebilir ve quota’yı tek anda tüketebilir.
+Bu repo bunun için **cursor-based batching** destekler:
+
+- `config/jobs/daily.yaml` içinde:
+  - `jobs[daily_standings].mode.max_leagues_per_run: <N>`
+- Davranış:
+  - Her çalıştırmada sadece N adet (league,season) işlenir.
+  - Cursor CORE’da tutulur: `core.standings_refresh_progress` (wrap-around).
+
+Gözlem:
+- MCP:
+  - `get_standings_refresh_progress(job_id="daily_standings")`
+  - `get_last_sync_time(endpoint="/standings")`
+- Ops:
+  - `/ops/api/system_status` → `standings_progress`
+
 ### 3.5 Live loop (legacy)
 Bu deployment’ta live polling servisleri (`live_loop`, `redis`) compose’tan kaldırıldı.
 - Repo’da `scripts/live_loop.py` dosyası **legacy** olarak durabilir ama prod’da çalıştırılmıyor.

@@ -1358,6 +1358,37 @@ async def get_backfill_progress(
 
 
 @app.tool()
+async def get_standings_refresh_progress(job_id: str = "daily_standings") -> dict:
+    """
+    Read cursor-based batching progress for standings refresh.
+
+    Source: core.standings_refresh_progress
+
+    Useful when daily_standings uses mode.max_leagues_per_run to run "parça parça".
+    """
+    try:
+        jid = str(job_id or "daily_standings")
+        row = await _db_fetchone_async(queries.STANDINGS_REFRESH_PROGRESS_QUERY, (jid,))
+        if not row:
+            return {"ok": True, "job_id": jid, "exists": False, "progress": None, "ts_utc": _utc_now_iso()}
+        return {
+            "ok": True,
+            "job_id": jid,
+            "exists": True,
+            "progress": {
+                "cursor": _to_int_or_none(row[1]),
+                "total_pairs": _to_int_or_none(row[2]),
+                "last_run_at_utc": _to_iso_or_none(row[3]),
+                "last_error": row[4],
+                "updated_at_utc": _to_iso_or_none(row[5]),
+            },
+            "ts_utc": _utc_now_iso(),
+        }
+    except Exception as e:
+        return _ok_error("get_standings_refresh_progress_failed", details=str(e))
+
+
+@app.tool()
 async def get_raw_error_summary(
     since_minutes: int = 60,
     endpoint: str | None = None,

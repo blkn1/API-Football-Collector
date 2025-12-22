@@ -31,7 +31,9 @@ async def run_daily_fixtures_by_date(
     logger.info("daily_fixtures_by_date_complete", date_utc=target_date_utc)
 
 
-async def run_daily_standings(*, client: APIClient, limiter: RateLimiter, config_path: Path) -> None:
+async def run_daily_standings(
+    *, client: APIClient, limiter: RateLimiter, config_path: Path, max_leagues_per_run: int | None = None
+) -> None:
     from src.utils.standings import sync_standings
 
     await sync_standings(
@@ -39,6 +41,8 @@ async def run_daily_standings(*, client: APIClient, limiter: RateLimiter, config
         config_path=config_path,
         client=client,
         limiter=limiter,
+        max_leagues_per_run=max_leagues_per_run,
+        progress_job_id="daily_standings",
     )
     logger.info("daily_standings_complete")
 
