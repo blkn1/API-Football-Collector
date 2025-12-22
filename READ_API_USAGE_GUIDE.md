@@ -442,6 +442,17 @@ Bu kodlar “frontend/automation” tarafında doğru mesaj üretmek için kulla
 
 Hedef: iki takımı (veya bir takımı) geçmiş maçlarına göre karşılaştırmak.
 
+### 0) Önce “data leakage” önlemi: as_of_date / cutoff mantığı
+Eğer “tahmin” yapıyorsan, geleceği görmemek için her şeyi bir **cutoff** tarihine bağla:
+
+- **Cutoff**: tahmin yapacağın maçın kickoff zamanından **önceki** bir an.
+- Pratik: `as_of_date=YYYY-MM-DD` kullanıp o günün UTC “end-of-day”’ini cutoff kabul et.
+- Amaç: “maç oynandıktan sonra güncellenen stats/events” gibi bilgileri feature’a yanlışlıkla karıştırmamak.
+
+Bu yüzden aşağıdaki örneklerde sürekli şu pattern var:
+- “Önce aday maçları listele”
+- “Sonra o maçtan önceki dönem için feature çıkar”
+
 ### 1) Fixture listesini çek (tamamlanmış maçlar)
 Örnek: belirli lig+sezon içinde, belirli takım ve tarih aralığı:
 
@@ -464,6 +475,132 @@ Buradan tipik olarak şunları toplarsın:
 
 Alternatif (tek endpoint):
 - Daha hızlı başlangıç için `/v1/teams/{team_id}/metrics?last_n=20` kullan (hazır ortalamaları verir).
+
+---
+
+## Challenge örnekleri (tahmin yapıyormuş gibi)
+
+Bu bölümdeki örneklerin amacı şu: “bir maç için feature set nasıl çıkarılır?” sorusunu uçtan uca göstermek.
+Hepsi tarih aralığı düşünülerek yazıldı.
+
+### Örnek A — “Hafta sonu maçlarını tahmin edeceğim” (lig bazlı fixture aday listesi)
+Amaç: Önce tahmin edeceğin maçları seçmek.
+
+1) Hafta sonu (UTC) aday maç listesi:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=39&season=2025&date_from=2025-12-27&date_to=2025-12-28&limit=500&offset=0"
+```
+
+2) Bu listeden `status_short="NS"` olanları “predict set” yap.
+> Bu noktada goals/score null olması normaldir; maç daha oynanmadı.
+
+3) Her maç için `fixture_id`, `home_team_id`, `away_team_id`, `date_utc` değerlerini sakla.
+
+### Örnek B — “Bir maç için iki takımın son-20 formunu çıkar” (leakage kontrollü)
+Amaç: Bir maçın kickoff’undan önceki performansa bakarak feature üretmek.
+
+Elimizde bir maç olsun:
+- `fixture_id=1398685`
+- `home_team_id=3584`
+- `away_team_id=1002`
+- kickoff tarihi: `2026-05-02` (örnek)
+
+1) Home takım için hazır metrik (tamamlanmış maçlardan, cutoff ile):
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v1/teams/3584/metrics?last_n=20&as_of_date=2026-05-01"
+```
+
+2) Away takım için aynı:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v1/teams/1002/metrics?last_n=20&as_of_date=2026-05-01"
+```
+
+Bu iki output’tan tipik feature’lar:
+- W/D/L, win_rate
+- gf_avg / ga_avg
+- btts_rate, clean_sheet_rate
+- shots_on_goal avg, corners avg, possession avg (varsa)
+
+> Neden iyi: `as_of_date` sayesinde 2026-05-02 maçının sonucuna/istatistiğine “yanlışlıkla” bakmamış olursun.
+
+### Örnek C — “Aynı lig içinde team-level season profile + sakatlık etkisi”
+Amaç: Takımların sezon profili (team_statistics) + sakatlık yoğunluğu ile feature oluşturmak.
+
+1) Lig içindeki iki takımın sezon profili (form gibi):
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/team_statistics?league_id=39&season=2025&team_id=3584&include_raw=false&limit=1"
+```
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/team_statistics?league_id=39&season=2025&team_id=1002&include_raw=false&limit=1"
+```
+
+2) Aynı lig+sezonda sakatlık listesi (takım bazlı):
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/injuries?league_id=39&season=2025&team_id=3584&limit=200&offset=0"
+```
+
+Bu çıktıdan uygulama tarafında çıkarılabilecek basit feature:
+- “injuries_count” (list length)
+- severity distribution (eğer doluysa)
+
+> Neden iyi: “form” (team_statistics) ile “availability” (injuries) aynı maç için birleşir.
+
+### Örnek D — “Top scorers etkisi: gol tehdidi”
+Amaç: Takımın gol tehdidini proxy’lemek.
+
+1) Lig top scorers listesini çek:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/top_scorers?league_id=39&season=2025&include_raw=false&limit=50&offset=0"
+```
+
+2) Bu listeden:
+- home takımda oynayan oyuncu var mı?
+- ilk 10’da kaç oyuncu var?
+gibi “count-based” feature’lar üret.
+
+> Neden iyi: Bu yaklaşım tek tek oyuncu fixture details’a girmeden “gol üretme kapasitesi”ne kaba bir sinyal sağlar.
+
+### Örnek E — “Head-to-head (H2H) bias” (league/season filtreli)
+Amaç: İki takım arasındaki geçmiş sonuçlardan “psikolojik/uyum” sinyali.
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/h2h?team1_id=3584&team2_id=1002&league_id=204&season=2025&limit=20"
+```
+
+Bu response’ta iki değer seti önemlidir:
+- `summary_team1`: team1 perspektifinden W/D/L + gol ortalamaları
+- `items`: tek tek maçlar
+
+> Neden iyi: Aynı league+season filtresi, “10 yıl önceki alakasız maçları” karıştırmayı azaltır.
+
+### Örnek F — “Training dataset üret: sezon içinde rolling windows”
+Amaç: Model eğitimi için her maç için “maçtan önceki features” ve “label (sonuç)” üretmek.
+
+Pratik yaklaşım (iteratif):
+1) Sezondan FT maçları çek (label için):
+- `/read/fixtures?league_id=<LID>&season=<S>&status=FT&date_from=...&date_to=...`
+2) Her FT maç için cutoff’ı “maçtan 1 gün önce” kabul et:
+- home: `/v1/teams/{home}/metrics?last_n=20&as_of_date=<fixture_date_minus_1>`
+- away: `/v1/teams/{away}/metrics?...`
+3) Label:
+- maçtaki `goals_home/goals_away` (fixtures item’dan)
+
+> Neden iyi: Her satırda cutoff aynı mantıkla uygulanır; leakage riski düşük, dataset tutarlı.
 
 ---
 
