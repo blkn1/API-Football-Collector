@@ -1220,7 +1220,73 @@ async def get_job_status(job_name: str | None = None) -> dict:
             if j.get("job_id") not in logged_ids:
                 merged.append({**j, "status": ("disabled" if not j.get("enabled") else "unknown"), "last_event": None, "last_event_ts_utc": None})
 
-        return {"ok": True, "jobs": merged, "log_file": logs.get("log_file"), "ts_utc": _utc_now_iso()}
+        async def _raw_last_seen_for_job(job: dict[str, Any]) -> dict[str, Any]:
+            """
+            Fallback evidence for 'unknown' jobs:
+            - Read RAW to find the most recent fetch for the job's endpoint pattern.
+            - Adds:
+              - last_raw_fetched_at_utc
+              - last_raw_endpoints (for fixture_details jobs)
+            """
+            jid = str(job.get("job_id") or "")
+            ep = job.get("endpoint")
+
+            # Disabled jobs: don't spend DB queries.
+            if not bool(job.get("enabled", False)):
+                return {"last_raw_fetched_at_utc": None, "last_raw_endpoints": None}
+
+            # Job-specific RAW patterns (avoid ambiguity for /fixtures shared endpoint).
+            if jid == "daily_fixtures_by_date":
+                row = await _db_fetchone_async(queries.LAST_SYNC_FIXTURES_DAILY_QUERY, ())
+                dt = row[0] if row else None
+                return {"last_raw_fetched_at_utc": _to_iso_or_none(dt), "last_raw_endpoints": ["/fixtures"]}
+
+            if jid == "fixtures_backfill_league_season":
+                row = await _db_fetchone_async(queries.LAST_SYNC_FIXTURES_BACKFILL_QUERY, ())
+                dt = row[0] if row else None
+                return {"last_raw_fetched_at_utc": _to_iso_or_none(dt), "last_raw_endpoints": ["/fixtures(from/to)"]}
+
+            if jid == "stale_live_refresh":
+                row = await _db_fetchone_async(queries.LAST_SYNC_FIXTURES_IDS_QUERY, ())
+                dt = row[0] if row else None
+                return {"last_raw_fetched_at_utc": _to_iso_or_none(dt), "last_raw_endpoints": ["/fixtures(ids)"]}
+
+            # Fixture details jobs use endpoint "/fixtures/*" in config, but RAW uses concrete endpoints.
+            if (ep == "/fixtures/*") or jid.startswith("fixture_details_"):
+                row_any = await _db_fetchone_async(queries.LAST_SYNC_FIXTURE_DETAILS_ANY_QUERY, ())
+                dt_any = row_any[0] if row_any else None
+                # Per-endpoint breakdown (best-effort)
+                per: dict[str, str | None] = {}
+                for e in ("/fixtures/players", "/fixtures/events", "/fixtures/statistics", "/fixtures/lineups"):
+                    r = await _db_fetchone_async(queries.LAST_SYNC_TIME_QUERY, (e,))
+                    per[e] = _to_iso_or_none(r[0]) if r else None
+                return {"last_raw_fetched_at_utc": _to_iso_or_none(dt_any), "last_raw_endpoints": per}
+
+            # Generic endpoint: use last sync time for the endpoint itself.
+            if isinstance(ep, str) and ep.startswith("/"):
+                row = await _db_fetchone_async(queries.LAST_SYNC_TIME_QUERY, (ep,))
+                dt = row[0] if row else None
+                return {"last_raw_fetched_at_utc": _to_iso_or_none(dt), "last_raw_endpoints": [ep]}
+
+            return {"last_raw_fetched_at_utc": None, "last_raw_endpoints": None}
+
+        # Enrich with RAW evidence when logs are missing.
+        enriched: list[dict[str, Any]] = []
+        for j in merged:
+            # Prefer logs when present
+            last_log = j.get("last_event_ts_utc")
+            if last_log:
+                enriched.append({**j, "last_seen_at_utc": last_log, "last_seen_source": "logs"})
+                continue
+
+            raw_ev = await _raw_last_seen_for_job(j)
+            last_raw = raw_ev.get("last_raw_fetched_at_utc")
+            if last_raw:
+                enriched.append({**j, **raw_ev, "last_seen_at_utc": last_raw, "last_seen_source": "raw"})
+            else:
+                enriched.append({**j, **raw_ev, "last_seen_at_utc": None, "last_seen_source": None})
+
+        return {"ok": True, "jobs": enriched, "log_file": logs.get("log_file"), "ts_utc": _utc_now_iso()}
     except Exception as e:
         return _ok_error("get_job_status_failed", details=str(e))
 

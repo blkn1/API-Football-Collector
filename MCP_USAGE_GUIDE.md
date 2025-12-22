@@ -216,6 +216,8 @@ Tool’lar `src/mcp/server.py` içinde `@app.tool()` ile tanımlıdır.
   - Not: `core_top_scorers` ve `core_team_statistics` sayımları da dahildir.
 - `get_job_status(job_name=None)`
   - Job config + collector log tail merge.
+  - Not: Eğer log event yoksa, MCP RAW tablodan “son görülen fetch” kanıtını ekler:
+    - `last_seen_at_utc`, `last_seen_source=raw`, `last_raw_fetched_at_utc`
 - `get_coverage_summary(season=None)`
 - `get_coverage_status(league_id=None, season=None)`
 

@@ -177,6 +177,43 @@ LAST_SYNC_TIME_QUERY = """
     WHERE endpoint = %s
 """
 
+# Job-specific "last sync" evidence (RAW).
+# These are used by MCP get_job_status() when collector.jsonl doesn't have events.
+
+# daily_fixtures_by_date (per_tracked_leagues): /fixtures with requested_params.date (and not from/to window backfill)
+LAST_SYNC_FIXTURES_DAILY_QUERY = """
+    SELECT MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND (requested_params ? 'date')
+      AND NOT (requested_params ? 'from')
+      AND NOT (requested_params ? 'to')
+"""
+
+# fixtures_backfill_league_season: /fixtures with from/to window parameters
+LAST_SYNC_FIXTURES_BACKFILL_QUERY = """
+    SELECT MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND (requested_params ? 'from')
+      AND (requested_params ? 'to')
+"""
+
+# stale_live_refresh: /fixtures with ids (max 20) parameter
+LAST_SYNC_FIXTURES_IDS_QUERY = """
+    SELECT MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = '/fixtures'
+      AND (requested_params ? 'ids')
+"""
+
+# Any fixture detail endpoint (players/events/statistics/lineups)
+LAST_SYNC_FIXTURE_DETAILS_ANY_QUERY = """
+    SELECT MAX(fetched_at) AS last_fetched_at
+    FROM raw.api_responses
+    WHERE endpoint = ANY(ARRAY['/fixtures/players','/fixtures/events','/fixtures/statistics','/fixtures/lineups'])
+"""
+
 LIVE_LOOP_ACTIVITY_QUERY = """
     SELECT
       COUNT(*)::int AS requests,
