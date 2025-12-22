@@ -116,5 +116,20 @@ If you’re running in Coolify and want a safe smoke-test locally first:
 - `python scripts/test_api.py` (FREE `/status`)
 - `pytest -q tests/unit/test_rate_limiter.py`
 
+## Operational Validation (Coolify / production)
+
+This repo includes “evidence-based” validation helpers:
+
+- **End-to-end DB validation (no API quota used)**:
+  - `cd /app && sh scripts/e2e_validate.sh`
+- **Run a single job once (skip cron)**:
+  - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+
+Important: Coolify’s “postgres terminal” is a shell. To run SQL, use `psql`, e.g.:
+
+```bash
+psql -U postgres -d api_football -c "SELECT COUNT(*) FROM core.top_scorers;"
+```
+
 
 

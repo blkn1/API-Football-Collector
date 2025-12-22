@@ -3,7 +3,7 @@
 Bu doküman şunu netleştirir:
 
 - “Lig eklemek” ne demek?
-- **Canlı (live_loop)** ve **günlük (daily / per_tracked_leagues)** veri toplama ne kaydeder?
+- **Canlı (live_loop) [legacy]** ve **günlük (daily / per_tracked_leagues)** veri toplama ne kaydeder?
 - “Maç bittiğinde” ne olur?
 - Bir takım (örn. **Galatasaray**) kendi ligi dışında maç yaparsa ve o ligi eklemediysek **görebilir miyiz?**
 - Nasıl doğrularız? (SQL + curl)
@@ -40,21 +40,21 @@ Bu mod açıkken:
 
 ### 1.2 Canlı maçları ekranda göstermek için (live loop)
 
+> Not: Bu deployment’ta live polling servisleri compose’tan kaldırıldı (bilinçli karar: live polling yok).
+> Bu bölüm **legacy bilgi** amaçlıdır.
+
 - **Amaç**: `/v1/sse/live-scores` ve `mart.live_score_panel` içinde canlı maçlar görünsün.
-- **Kaynak config**: `config/jobs/live.yaml -> filters.tracked_leagues`
+- Not: Bu deployment’ta `config/jobs/live.yaml` yoktur; live loop koşmaz.
 
 Live loop şu API çağrısını yapar:
 - `GET /fixtures?live=all` (15 saniyede bir)
 
-Sonra **hangi liglerin** maçlarını CORE’a yazacağını `tracked_leagues` ile filtreler.
-
-Örnek:
-- UECL (UEFA Europa Conference League) = **848**
-- Canlı panelde UECL görmek için `config/jobs/live.yaml` içine `- 848` eklenir.
+Sonra **hangi liglerin** maçlarını CORE’a yazacağını `tracked_leagues` ile filtreler (legacy kurulumlarda).
 
 ---
 
 ## 2) Canlı (live_loop) ne kaydeder? Maç bitince ne olur?
+> Not: Bu deployment’ta live loop çalışmadığı için bu bölüm “nasıl olurdu?” şeklinde düşünülmelidir.
 
 ### 2.1 Live loop ne yapar?
 
@@ -206,8 +206,8 @@ Bu bölüm “yeni lig ekleyeceğim, nerelere dokunacağım?” sorusunun **tek 
   - Bu repoda fixtures ingest sadece **tracked ligler** içindir (`fixtures_fetch_mode: per_tracked_leagues`).
   - Sezon geçmişi için backfill gerekir (otomatik, resumeable).
 
-- **Canlı panel/SSE’de görünsün**:
-  - Live loop filtresi (aşağıdaki `config/jobs/live.yaml`) o ligi kapsamalı.
+- **Canlı panel/SSE’de görünsün (legacy)**:
+  - Bu deployment’ta live loop yok. Bu madde sadece legacy kurulumlar içindir.
 
 - **Maç detayları (players/events/statistics/lineups) gelsin + coverage düzgün olsun**:
   - Lig **tracked_leagues** içinde olmalı (fixture_details job’ları tracked-only çalışır).
@@ -230,6 +230,7 @@ Notlar:
 - `daily_fixtures_by_date`: TR 06:00
 - `daily_standings`: TR 06:10
 - `fixture_details_recent_finalize`: TR 06:30
+- `top_scorers_daily`: TR 06:40
 - Backfill (gün içine yayılmış):\n
   - `fixtures_backfill_league_season`: her 10 dk (dakika 0/10/20/…)\n
   - `fixture_details_backfill_season`: her 10 dk (dakika 5/15/25/…) \n
@@ -243,17 +244,8 @@ Notlar:
    - `get_raw_error_summary(since_minutes=60)` → 429/5xx trendi olmamalı\n
    - `get_rate_limit_status()` → quota düşüşü kontrollü\n
 
-### 7.3 Live (canlı filtre) → `config/jobs/live.yaml`
-
-Canlı tarafta iki mod var:
-
-- **Filtreli (önerilen, quota-safe)**:
-  - `filters.tracked_leagues` içine league_id ekle.
-  - Böylece `/fixtures?live=all` çağrısı yapılır ama CORE’a sadece bu ligler yazılır.
-
-- **Filtresiz (track all)**:
-  - `filters.tracked_leagues` boş bırakılırsa code “hepsini işle” anlamına gelir.
-  - Bu **çok daha fazla CORE update** demektir; sadece gerçekten istiyorsan kullan.
+### 7.3 Live (legacy)
+Bu repo artık prod deploy’da live polling kullanmaz. `config/jobs/live.yaml` bu deployment’ta yoktur.
 
 ### 7.4 Coverage /fixtures neden bazen “0%” görünür? → `config/coverage.yaml`
 
@@ -283,10 +275,10 @@ Not: Bu projede bootstrap job’ları scope’u boşsa **daily.yaml tracked_leag
   - `/fixtures/players|events|statistics|lineups` satırları gelmeli
   - `/fixtures` satırı freshness/pipeline ile anlamlı olmalı
 
-### 6.2 Live scores (SSE)
+### 6.2 Live scores (SSE) (legacy)
 
 ```bash
-curl -sS -u "naneci:nanecigeliyor1." \
+curl -sS -u "<READ_API_BASIC_USER>:<READ_API_BASIC_PASSWORD>" \
 "https://readapi.zinalyze.pro/v1/sse/live-scores?interval_seconds=3&limit=300"
 ```
 
@@ -296,10 +288,21 @@ curl -sS -u "naneci:nanecigeliyor1." \
 
 ```bash
 READ_API_BASE="https://readapi.zinalyze.pro" \
-READ_API_BASIC_USER="naneci" \
-READ_API_BASIC_PASSWORD="nanecigeliyor1." \
+READ_API_BASIC_USER="<READ_API_BASIC_USER>" \
+READ_API_BASIC_PASSWORD="<READ_API_BASIC_PASSWORD>" \
 bash scripts/smoke_read_api.sh
 ```
+
+---
+
+## 9) Cron beklemeden doğrulama (Coolify terminal)
+Collector terminal:
+- `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+- `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=team_statistics_refresh python3 scripts/run_job_once.py`
+
+Postgres terminal (SQL çalıştırmak için `psql` gerekir):
+- `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM raw.api_responses WHERE endpoint='/players/topscorers' AND fetched_at > NOW() - INTERVAL '1 hour';"`
+- `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM core.top_scorers;"`
 
 ---
 

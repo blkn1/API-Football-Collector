@@ -142,6 +142,16 @@ LIMIT 50;
 - `GET /v1/teams?search=&league_id=&limit=`
 - `GET /v1/injuries?league_id=&season=&team_id=&player_id=&limit=`
 
+Curated Feature Store (modelleme / feature engineering):
+- `GET /read/leagues?country=&season=&limit=&offset=`
+- `GET /read/fixtures?league_id=&country=&season=&date_from=&date_to=&team_id=&status=&limit=&offset=`
+- `GET /read/fixtures/{fixture_id}`
+- `GET /read/fixtures/{fixture_id}/events|lineups|statistics|players`
+- `GET /read/top_scorers?league_id=&season=&include_raw=1&limit=&offset=`
+- `GET /read/team_statistics?league_id=&season=&team_id=&include_raw=1&limit=&offset=`
+- `GET /read/h2h?team1_id=&team2_id=&league_id=&season=&limit=`
+- `GET /read/coverage?season=&league_id=&country=&endpoint=&limit=&offset=`
+
 ### 3.2 SSE (read-only)
 - `GET /v1/sse/system-status` → event: `system_status`
 - `GET /v1/sse/live-scores` → event: `live_score_update`
@@ -212,6 +222,16 @@ FROM core.backfill_progress
 GROUP BY job_id
 ORDER BY job_id;
 ```
+
+### 4.1.3.1 Cron beklemeden job doğrulama (Coolify terminal)
+Collector terminal (tek lig, quota-safe):
+- `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+
+Postgres terminal (kanıt):
+- `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM raw.api_responses WHERE endpoint='/players/topscorers' AND fetched_at > NOW() - INTERVAL '1 hour';"`
+- `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM core.top_scorers;"`
+
+Not: Postgres terminal bir shell’dir; SQL yazmak için `psql` kullanmalısın.
 
 ### 4.1.4 Test doğrulama (pytest + idempotency)
 Minimum unit set (hızlı, quota-safe):

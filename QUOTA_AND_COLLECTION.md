@@ -29,32 +29,30 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
 - `bootstrap_countries` → `GET /countries` (aylık)
 
 ### 3.2 Günlük/operasyonel (her gün açık)
-- `daily_fixtures_by_date` → `GET /fixtures?date=YYYY-MM-DD` (***/30 dakikada bir***)
+- `daily_fixtures_by_date` → `GET /fixtures?...` (**günde 1 kez**, TR 06:00)
+  - **Mod**: `config/jobs/daily.yaml -> fixtures_fetch_mode = per_tracked_leagues`
+  - **Çağrı şekli**: `/fixtures?league=<id>&season=<season>&date=YYYY-MM-DD` (tracked ligler için)
   - **RAW**: `/fixtures`
-  - **CORE**: `core.fixtures` (+ bazı nested bloklar gelirse `core.fixture_details` JSONB)
-  - **Mod**: `config/jobs/daily.yaml -> fixtures_fetch_mode`
-    - `global_by_date`: date-only çağrı + paging (kupalar/UEFA dahil “o gün” tüm maçlar)
-    - `per_tracked_leagues`: league+season+date çağrıları (tracked list ile sınırlı)
-- `stale_live_refresh` → `GET /fixtures?ids=<...>` (***/10 dakikada bir***, maintenance)
-  - Amaç: “live gibi kalan ama güncellenmeyen” fixture’ları tekrar fetch ederek CORE’daki status’ü düzeltmek.
-  - **Bounded quota**: her çalışmada en fazla `batch_size` kadar fixture seçer (default 20) → API request sayısı genelde **1/run** (ids max 20).
-  - **Scope**: `config/jobs/daily.yaml -> jobs[stale_live_refresh].params.scope_source`
-    - `daily`: daily tracked leagues
-    - `live`: live.yaml `filters.tracked_leagues` (prod’da tercih edilen; “canlı panelde izlediğin ligler” ile aynı scope)
+  - **CORE**: `core.fixtures`
+  - Not: `global_by_date` mod desteği dokümanda geçebilir ama bu deployment’ta kullanılmıyor.
+
+- `fixture_details_recent_finalize` → per-fixture detail endpoint’leri (**günde 1 kez**, TR 06:30)
+  - `/fixtures/players`, `/fixtures/events`, `/fixtures/statistics`, `/fixtures/lineups`
+  - **CORE**: `core.fixture_players/events/statistics/lineups`
 - `daily_standings` → `GET /standings?league&season` (**per-league season**, günlük)
   - **RAW**: `/standings`
   - **CORE**: `core.standings` (league+season bazında replace)
 - `injuries_hourly` → `GET /injuries?league&season` (**per-league season**, saatlik)
   - **RAW**: `/injuries`
   - **CORE**: `core.injuries`
-- `fixture_details_recent_finalize` (15 dk)
-  - Biten maçlar (son 24h): per-fixture
-    - `/fixtures/players`, `/fixtures/events`, `/fixtures/statistics`, `/fixtures/lineups`
-  - **CORE**:
-    - `core.fixture_players`
-    - `core.fixture_events`
-    - `core.fixture_statistics`
-    - `core.fixture_lineups`
+
+- `top_scorers_daily` → `GET /players/topscorers?league&season` (**günde 1 kez**, TR 06:40)
+  - **RAW**: `/players/topscorers`
+  - **CORE**: `core.top_scorers`
+
+- `team_statistics_refresh` → `GET /teams/statistics?league&season&team` (**10 dakikada bir**, gün içine yayılmış)
+  - **RAW**: `/teams/statistics`
+  - **CORE**: `core.team_statistics` (+ progress: `core.team_statistics_progress`)
 
 ### 3.3 Backfill (DB doldurma, live_loop yok)
 Backfill state tablosu:
@@ -71,7 +69,7 @@ Backfill sezonları (SeçenekB, lig bazlı doğru sezon):
 - Fallback (rare): Eğer `core.leagues.seasons` içinde sezon başlangıç/bitiş tarihleri yoksa tek sefer “unbounded” olabilir:
   - `GET /fixtures?league=<id>&season=<season>`
   - Bu risk `ensure_league_exists` refresh + `/leagues?id=...` ile minimize edildi.
-- Sıklık: **her 1 dakika** (cron `* * * * *`)
+- Sıklık: **10 dakikada bir** (cron `0-59/10 * * * *`)
 - Resume: `core.backfill_progress.next_page` (**window index** olarak kullanılır)
 
 #### Standings backfill (ucuz)
@@ -128,7 +126,15 @@ Zorunlu / kritik:
 - `API_FOOTBALL_KEY`
 - `DATABASE_URL` (veya `POSTGRES_*`)
 - `SCHEDULER_TIMEZONE=Europe/Istanbul`
-- `ENABLE_LIVE_LOOP=0` (live_loop kapalı)
+Not: Bu deployment’ta live polling servisleri compose’tan kaldırıldı (ENABLE_LIVE_LOOP kullanılmıyor).
+
+## 5.1 Cron beklemeden doğrulama (manual test)
+Collector terminal:
+- Tek lig top scorers:
+  - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+
+Postgres terminal (kanıt):
+- `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM core.top_scorers;"`
 
 MCP (opsiyonel, sizde aktif):
 - `MCP_TRANSPORT=sse`

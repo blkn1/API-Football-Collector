@@ -82,22 +82,15 @@ Bu job:
 
 Scope (hangi liglerde çalışır?) **config-driven**:
 - `params.scope_source: daily` → `config/jobs/daily.yaml -> tracked_leagues`
-- `params.scope_source: live` → `config/jobs/live.yaml -> jobs[live_fixtures_all].filters.tracked_leagues`
+  - Not: Bu deployment’ta `live.yaml`/live loop yok.
 
 Prod kuralı:
 - `scope_source: live` seçersen `live.yaml` içindeki `filters.tracked_leagues` **boş olamaz**.
   - Live loop için boş liste “track all” anlamına gelebilir; ama stale refresh için bu **quota-risk** olduğu için intentionally reddedilir.
 
-### 3.5 `config/jobs/live.yaml`
-- Scheduler içinde “live_loop job” tanımlı olsa bile, prod’da live loop ayrı servis olarak çalıştırılır.
-- `ENABLE_LIVE_LOOP=1` ile live loop container aktif edilir.
-
-#### 3.5.1 Live loop tracked_leagues (UECL örneği)
-Live loop yalnızca `/fixtures?live=all` çağrısı yapar; ama hangi maçların CORE’a yazılacağını `tracked_leagues` belirler.
-
-Örnek:
-- UEFA Europa Conference League = **848**
-- `config/jobs/live.yaml` → `filters.tracked_leagues` içine `- 848` eklenirse live panelde görünür.
+### 3.5 Live loop (legacy)
+Bu deployment’ta live polling servisleri (`live_loop`, `redis`) compose’tan kaldırıldı.
+- Repo’da `scripts/live_loop.py` dosyası **legacy** olarak durabilir ama prod’da çalıştırılmıyor.
 
 ### 3.6 `config/jobs/static.yaml`
 - Countries/timezones gibi “static bootstrap” job’ları.
@@ -138,7 +131,6 @@ Kural: sistem kendisi rastgele lig eklemez; kontrol sende olmalı.
 3) İlk 1 saat MCP health:
    - `get_raw_error_summary(since_minutes=60)`
    - `get_daily_fixtures_by_date_status(since_minutes=180)`
-   - `get_live_loop_status(since_minutes=5)` (live loop açıksa)
    - `get_backfill_progress(job_id="fixtures_backfill_league_season")` (backfill ilerliyor mu?)
 
 4) Eğer standings tarafında “missing teams” görürsen:
@@ -212,13 +204,35 @@ Deploy sonrası:
 - `get_rate_limit_status()`
 - `get_raw_error_summary(since_minutes=60)`
 - `get_backfill_progress()`
-- `get_live_loop_status(since_minutes=5)` (ENABLE_LIVE_LOOP=1 ise)
 - `get_daily_fixtures_by_date_status(since_minutes=180)`
 
 PASS:
 - critical tool’lar exception üretmiyor
 - 4xx/5xx/envelope error yok (veya anormal artmıyor)
 - live loop ve daily cadence RAW’da kanıtlanıyor
+
+---
+
+## 9) “Bugün sistem gerçekten çalışıyor mu?” (Coolify terminal + kanıt)
+
+Bu repo artık “cron’u beklemeden” job doğrulaması için yardımcı script’ler içerir:
+
+### 9.1 Tek job’u 1 kere çalıştır (collector terminal)
+- Top scorers (tek lig):
+  - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+- Team statistics (tek lig):
+  - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=team_statistics_refresh python3 scripts/run_job_once.py`
+
+### 9.2 DB kanıtı (postgres terminal)
+Not: Postgres terminal bir shell’dir; SQL çalıştırmak için `psql` gerekir.
+
+- RAW kanıtı:
+  - `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM raw.api_responses WHERE endpoint='/players/topscorers' AND fetched_at > NOW() - INTERVAL '1 hour';"`
+- CORE kanıtı:
+  - `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM core.top_scorers;"`
+
+### 9.3 Uçtan uca kontrol (collector terminal)
+- `cd /app && sh scripts/e2e_validate.sh`
 
 ---
 
