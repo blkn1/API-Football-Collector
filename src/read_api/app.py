@@ -988,6 +988,22 @@ ORDER BY c.overall_coverage DESC NULLS LAST, c.calculated_at DESC
 LIMIT %s OFFSET %s
 """
 
+READ_COUNTRIES_SQL = """
+SELECT
+  l.country_name,
+  l.country_code,
+  l.country_flag,
+  COUNT(*)::int AS leagues_count
+FROM core.leagues l
+WHERE 1=1
+  AND l.country_name IS NOT NULL
+  AND btrim(l.country_name) <> ''
+  {filters}
+GROUP BY l.country_name, l.country_code, l.country_flag
+ORDER BY l.country_name ASC NULLS LAST
+LIMIT %s OFFSET %s
+"""
+
 
 @app.get("/read/leagues", dependencies=[Depends(require_access)])
 async def read_leagues(
@@ -1042,6 +1058,59 @@ async def read_leagues(
         )
     return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
+
+@app.get("/read/countries", dependencies=[Depends(require_access)])
+async def read_countries(
+    season: int | None = None,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """
+    Hierarchy root: list countries present in core.leagues.
+    Intended flow:
+      /read/countries -> pick country -> /read/leagues?country=... -> pick league -> /read/fixtures, /read/h2h, ...
+    """
+    safe_limit = _safe_limit(limit, cap=500)
+    safe_offset = _safe_offset(offset)
+    filters: list[str] = []
+    params: list[Any] = []
+
+    query = (q or "").strip()
+    if query:
+        filters.append("AND (l.country_name ILIKE %s OR l.country_code ILIKE %s)")
+        params.append(f"%{query}%")
+        params.append(f"%{query}%")
+
+    if season is not None:
+        filters.append(
+            """
+            AND (
+              l.seasons IS NULL
+              OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(l.seasons) s
+                WHERE (s->>'year')::int = %s
+              )
+            )
+            """.strip()
+        )
+        params.append(int(season))
+
+    sql_text = READ_COUNTRIES_SQL.format(filters="\n  ".join(filters))
+    params.extend([safe_limit, safe_offset])
+    rows = await _fetchall_async(sql_text, tuple(params))
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        items.append(
+            {
+                "country_name": r[0],
+                "country_code": r[1],
+                "country_flag": r[2],
+                "leagues_count": _to_int_or_none(r[3]),
+            }
+        )
+    return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
 @app.get("/read/fixtures", dependencies=[Depends(require_access)])
 async def read_fixtures(

@@ -52,6 +52,16 @@ export function parseTrackedLeagues(raw: string | undefined) {
 Read API’de artık league metadata için curated endpoint var:
 - `GET /read/leagues?country=&season=&limit=&offset=`
 
+Önerilen hiyerarşi (UI flow):
+1) Ülke listesi:
+   - `GET /read/countries?season=&q=&limit=&offset=`
+2) Ülke → lig listesi:
+   - `GET /read/leagues?country=<COUNTRY>&season=<SEASON>&limit=&offset=`
+3) Lig → fixtures / h2h / team stats:
+   - `GET /read/fixtures?...`
+   - `GET /read/h2h?...`
+   - `GET /read/team_statistics?...`
+
 UI’de “league_id → league_name” çözümü için **statik map’e gerek yok**. Tracked leagues listesi kadar küçük bir cache ile `/read/leagues` çıktısı kullanılabilir.
 
 ```ts
