@@ -1,0 +1,513 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Zinalyze Read API",
+    "version": "1.0.0",
+    "description": "Read-only API for fixtures, standings, team statistics and league coverage. Uses Basic Auth (READ_API_BASIC_USER / READ_API_BASIC_PASSWORD)."
+  },
+  "servers": [{ "url": "https://readapi.zinalyze.pro" }],
+  "components": {
+    "securitySchemes": {
+      "basicAuth": { "type": "http", "scheme": "basic" }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" },
+          "code": { "type": "integer" }
+        },
+        "required": ["error"],
+        "additionalProperties": true
+      },
+      "Paging": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "total": { "type": "integer" },
+          "next_offset": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "db": { "type": "boolean" }
+        },
+        "required": ["ok", "db"],
+        "additionalProperties": true
+      },
+      "QuotaResponse": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer" },
+          "remaining": { "type": "integer" },
+          "reset_utc": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "TeamRef": {
+        "type": "object",
+        "properties": {
+          "team_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "short_name": { "type": "string" },
+          "logo": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "LeagueRef": {
+        "type": "object",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "country": { "type": "string" },
+          "season": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "VenueRef": {
+        "type": "object",
+        "properties": {
+          "venue_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "city": { "type": "string" }
+        },
+        "additionalProperties": true
+      },
+      "ScoreRef": {
+        "type": "object",
+        "properties": {
+          "home": { "type": "integer" },
+          "away": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "Fixture": {
+        "type": "object",
+        "description": "Core fixture shape for both /v1/* arrays and /read/* items. Extra fields are allowed.",
+        "properties": {
+          "fixture_id": { "type": "integer" },
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "utc_date": { "type": "string", "format": "date-time" },
+          "date": { "type": "string" },
+          "timestamp": { "type": "integer" },
+          "status": { "type": "string" },
+          "status_short": { "type": "string" },
+          "status_elapsed": { "type": "integer" },
+          "round": { "type": "string" },
+          "home_team": { "$ref": "#/components/schemas/TeamRef" },
+          "away_team": { "$ref": "#/components/schemas/TeamRef" },
+          "home_team_id": { "type": "integer" },
+          "away_team_id": { "type": "integer" },
+          "league": { "$ref": "#/components/schemas/LeagueRef" },
+          "venue": { "$ref": "#/components/schemas/VenueRef" },
+          "goals": { "$ref": "#/components/schemas/ScoreRef" },
+          "score_ht": { "$ref": "#/components/schemas/ScoreRef" },
+          "score_ft": { "$ref": "#/components/schemas/ScoreRef" }
+        },
+        "required": ["fixture_id"],
+        "additionalProperties": true
+      },
+      "V1FixturesArray": {
+        "type": "array",
+        "items": { "$ref": "#/components/schemas/Fixture" }
+      },
+      "ReadFixturesEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Fixture" } },
+          "paging": { "$ref": "#/components/schemas/Paging" }
+        },
+        "required": ["ok", "items"],
+        "additionalProperties": true
+      },
+      "ReadFixtureItemEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "item": { "$ref": "#/components/schemas/Fixture" }
+        },
+        "required": ["ok", "item"],
+        "additionalProperties": true
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "time_elapsed": { "type": "integer" },
+          "time_extra": { "type": "integer" },
+          "team_id": { "type": "integer" },
+          "player_id": { "type": "integer" },
+          "assist_id": { "type": "integer" },
+          "type": {
+            "description": "Event category. The API may return values outside this list; unknown values are still valid.",
+            "anyOf": [
+              { "type": "string", "enum": ["Goal", "Card", "Subst", "Var"] },
+              { "type": "string" }
+            ]
+          },
+          "detail": {
+            "description": "Event detail. The API may return values outside this list; unknown values are still valid.",
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "Normal Goal",
+                  "Own Goal",
+                  "Penalty",
+                  "Missed Penalty",
+                  "Yellow Card",
+                  "Red Card",
+                  "Second Yellow Card",
+                  "Substitution",
+                  "VAR Goal",
+                  "VAR Penalty",
+                  "VAR Offside"
+                ]
+              },
+              { "type": "string" }
+            ]
+          },
+          "comments": { "type": "string" },
+          "updated_at_utc": { "type": "string", "format": "date-time" }
+        },
+        "required": ["type"],
+        "additionalProperties": true
+      },
+      "EventsEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "fixture_id": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } }
+        },
+        "required": ["ok", "fixture_id", "items"],
+        "additionalProperties": true
+      },
+      "LineupPlayer": {
+        "type": "object",
+        "properties": {
+          "player_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "number": { "type": "integer" },
+          "pos": { "type": "string" },
+          "grid": { "type": "string" }
+        },
+        "required": ["name"],
+        "additionalProperties": true
+      },
+      "Lineup": {
+        "type": "object",
+        "properties": {
+          "team_id": { "type": "integer" },
+          "team": { "$ref": "#/components/schemas/TeamRef" },
+          "formation": { "type": "string" },
+          "coach": {
+            "type": "object",
+            "properties": { "coach_id": { "type": "integer" }, "name": { "type": "string" } },
+            "additionalProperties": true
+          },
+          "startXI": { "type": "array", "items": { "$ref": "#/components/schemas/LineupPlayer" } },
+          "substitutes": { "type": "array", "items": { "$ref": "#/components/schemas/LineupPlayer" } }
+        },
+        "required": ["team_id"],
+        "additionalProperties": true
+      },
+      "LineupsEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "fixture_id": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Lineup" } }
+        },
+        "required": ["ok", "fixture_id", "items"],
+        "additionalProperties": true
+      },
+      "Statistic": {
+        "type": "object",
+        "properties": {
+          "team_id": { "type": "integer" },
+          "team": { "$ref": "#/components/schemas/TeamRef" },
+          "type": { "type": "string", "description": "e.g., Shots on Goal, Possession, Corners" },
+          "value": {
+            "description": "May be integer or string like '55%' or null.",
+            "anyOf": [{ "type": "integer" }, { "type": "number" }, { "type": "string" }, { "type": "null" }]
+          }
+        },
+        "required": ["type"],
+        "additionalProperties": true
+      },
+      "StatisticsEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "fixture_id": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Statistic" } }
+        },
+        "required": ["ok", "fixture_id", "items"],
+        "additionalProperties": true
+      },
+      "PlayerStat": {
+        "type": "object",
+        "properties": {
+          "team_id": { "type": "integer" },
+          "team": { "$ref": "#/components/schemas/TeamRef" },
+          "player_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "number": { "type": "integer" },
+          "pos": { "type": "string" },
+          "minutes": { "type": "integer" },
+          "goals": { "type": "integer" },
+          "assists": { "type": "integer" },
+          "shots": { "type": "integer" },
+          "passes": { "type": "integer" },
+          "tackles": { "type": "integer" },
+          "rating": { "type": "string" },
+          "cards_yellow": { "type": "integer" },
+          "cards_red": { "type": "integer" }
+        },
+        "required": ["name"],
+        "additionalProperties": true
+      },
+      "PlayersEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "fixture_id": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/PlayerStat" } }
+        },
+        "required": ["ok", "fixture_id", "items"],
+        "additionalProperties": true
+      },
+      "League": {
+        "type": "object",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "name": { "type": "string" },
+          "country": { "type": "string" },
+          "season": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "LeaguesResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/League" } },
+          "paging": { "$ref": "#/components/schemas/Paging" }
+        },
+        "required": ["items"],
+        "additionalProperties": true
+      },
+      "StandingsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "rank": { "type": "integer" },
+                "team_id": { "type": "integer" },
+                "team_name": { "type": "string" },
+                "points": { "type": "integer" },
+                "played": { "type": "integer" },
+                "win": { "type": "integer" },
+                "draw": { "type": "integer" },
+                "lose": { "type": "integer" },
+                "goals_for": { "type": "integer" },
+                "goals_against": { "type": "integer" },
+                "goals_diff": { "type": "integer" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": true
+      },
+      "TopScorersResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "player_id": { "type": "integer" },
+                "player_name": { "type": "string" },
+                "team_id": { "type": "integer" },
+                "team_name": { "type": "string" },
+                "goals": { "type": "integer" },
+                "assists": { "type": "integer" },
+                "penalties": { "type": "integer" }
+              },
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": ["items"],
+        "additionalProperties": true
+      },
+      "CoverageResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "season": { "type": "integer" },
+          "league_id": { "type": "integer" },
+          "generated_utc": { "type": "string" },
+          "coverage": {
+            "type": "object",
+            "properties": {
+              "leagues": { "type": "integer" },
+              "fixtures": { "type": "integer" },
+              "teams": { "type": "integer" }
+            },
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": true
+      },
+      "OpsSystemStatusResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "quota": {
+            "type": "object",
+            "properties": { "limit": { "type": "integer" }, "remaining": { "type": "integer" } },
+            "additionalProperties": true
+          },
+          "db": {
+            "type": "object",
+            "properties": { "ok": { "type": "boolean" } },
+            "additionalProperties": true
+          },
+          "job_status": {
+            "type": "object",
+            "properties": { "running": { "type": "boolean" }, "last_run_utc": { "type": "string" } },
+            "additionalProperties": true
+          }
+        },
+        "required": ["ok"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "security": [{ "basicAuth": [] }],
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service health",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } }
+          }
+        }
+      }
+    },
+    "/v1/quota": {
+      "get": {
+        "summary": "Quota status",
+        "operationId": "getQuota",
+        "responses": {
+          "200": {
+            "description": "Rate-limit information",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaResponse" } } }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+          }
+        }
+      }
+    },
+    "/v1/fixtures": {
+      "get": {
+        "summary": "List fixtures",
+        "operationId": "getFixtures",
+        "parameters": [
+          { "name": "date", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "league_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 500 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of fixtures (array, no envelope)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } }
+          }
+        }
+      }
+    },
+    "/v1/teams/{team_id}/fixtures": {
+      "get": {
+        "summary": "List fixtures for a team across all competitions within a UTC date range",
+        "operationId": "getTeamFixtures",
+        "parameters": [
+          { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "from_date", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC start date (YYYY-MM-DD)" },
+          { "name": "to_date", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC end date (YYYY-MM-DD)" },
+          { "name": "status", "in": "query", "required": false, "schema": { "type": "string" }, "description": "Optional fixture status_short filter (e.g., FT, NS)" },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 200, "minimum": 1, "maximum": 500 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of team fixtures (array, no envelope)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } }
+          },
+          "400": { "description": "Invalid date range / parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/read/leagues": {
+      "get": {
+        "summary": "List leagues",
+        "operationId": "getLeagues",
+        "parameters": [
+          { "name": "country", "in": "query", "schema": { "type": "string" } },
+          { "name": "season", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Leagues list (envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LeaguesResponse" } } } }
+        }
+      }
+    },
+    "/read/fixtures": {
+      "get": {
+        "summary": "Get fixtures (curated)",
+        "operationId": "readFixtures",
+        "parameters": [
+          { "name": "league_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "country", "in": "query", "schema": { "type": "string" } },
+          { "name": "season", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "date_from", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "date_to", "in": "query", "schema": { "type": "string", "format": "date" } },
+          { "name": "team_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "status", "in": "query", "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 200, "minimum": 1, "maximum": 500 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Curated fixtures (ok + items + paging)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadFixturesEnvelope" } } } }
+        }
+      }
+    }
+  }
+}
+
