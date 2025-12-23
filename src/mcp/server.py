@@ -199,21 +199,72 @@ def _tracked_leagues_from_daily_config() -> list[dict[str, Any]]:
     return leagues
 
 
+def _load_daily_config() -> dict[str, Any]:
+    cfg_path = Path(os.getenv("API_FOOTBALL_DAILY_CONFIG", str(PROJECT_ROOT / "config" / "jobs" / "daily.yaml")))
+    try:
+        return yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _season_for_league_from_daily_config(league_id: int) -> int | None:
+    """
+    If config/jobs/daily.yaml uses per-league seasons (tracked_leagues[].season),
+    return season for the given league_id when present.
+    """
+    cfg = _load_daily_config()
+    tracked = cfg.get("tracked_leagues") or []
+    if not isinstance(tracked, list):
+        return None
+    for x in tracked:
+        if not isinstance(x, dict):
+            continue
+        try:
+            if int(x.get("id")) != int(league_id):
+                continue
+        except Exception:
+            continue
+        s = x.get("season")
+        try:
+            return int(s) if s is not None else None
+        except Exception:
+            return None
+    return None
+
+
 def _default_season_from_daily_config() -> int | None:
     """
     Default season comes from config/jobs/daily.yaml (or API_FOOTBALL_DAILY_CONFIG override).
     This keeps MCP tools config-driven while avoiding assumptions.
     """
-    cfg_path = Path(os.getenv("API_FOOTBALL_DAILY_CONFIG", str(PROJECT_ROOT / "config" / "jobs" / "daily.yaml")))
-    try:
-        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return None
+    cfg = _load_daily_config()
+
+    # Preferred: explicit top-level season.
     season_cfg = cfg.get("season")
     try:
-        return int(season_cfg) if season_cfg is not None else None
+        if season_cfg is not None:
+            return int(season_cfg)
     except Exception:
+        pass
+
+    # Fallback: if tracked_leagues all share a single season, use it deterministically.
+    tracked = cfg.get("tracked_leagues") or []
+    if not isinstance(tracked, list):
         return None
+    seasons: set[int] = set()
+    for x in tracked:
+        if not isinstance(x, dict):
+            continue
+        s = x.get("season")
+        if s is None:
+            continue
+        try:
+            seasons.add(int(s))
+        except Exception:
+            continue
+    if len(seasons) == 1:
+        return next(iter(seasons))
+    return None
 
 
 def _parse_job_logs(job_name: str | None = None) -> dict[str, Any]:
@@ -398,13 +449,25 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
     try:
         # Default season from config/jobs/daily.yaml when available (keeps config-driven behavior).
         if season is None:
-            season_cfg = _default_season_from_daily_config()
-            if season_cfg is None:
-                return _ok_error(
-                    "season_required",
-                    details="Missing season in daily config. Pass season explicitly or set top-level 'season:' in config/jobs/daily.yaml",
-                )
-            season = int(season_cfg)
+            # If league_id is provided, prefer per-league season (tracked_leagues[].season) when present.
+            if league_id is not None:
+                season_cfg = _season_for_league_from_daily_config(int(league_id))
+                if season_cfg is None:
+                    season_cfg = _default_season_from_daily_config()
+                if season_cfg is None:
+                    return _ok_error(
+                        "season_required",
+                        details="Pass season explicitly, or set tracked_leagues[].season for this league in config/jobs/daily.yaml, or set top-level 'season:' in daily.yaml",
+                    )
+                season = int(season_cfg)
+            else:
+                season_cfg = _default_season_from_daily_config()
+                if season_cfg is None:
+                    return _ok_error(
+                        "season_required",
+                        details="Pass season explicitly, or set top-level 'season:' in config/jobs/daily.yaml (or ensure all tracked_leagues share the same season)",
+                    )
+                season = int(season_cfg)
 
         sql_text = queries.COVERAGE_STATUS
         if league_id is not None:
@@ -464,7 +527,7 @@ async def get_coverage_summary(season: int | None = None, tracked_only: bool = T
             if season_cfg is None:
                 return _ok_error(
                     "season_required",
-                    details="Missing season in daily config. Pass season explicitly or set top-level 'season:' in config/jobs/daily.yaml",
+                    details="Pass season explicitly, or set top-level 'season:' in config/jobs/daily.yaml (or ensure all tracked_leagues share the same season)",
                 )
             season = int(season_cfg)
 
