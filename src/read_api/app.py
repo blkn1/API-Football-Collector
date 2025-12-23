@@ -1857,3 +1857,17 @@ async def ops_system_status() -> dict:
         "raw_error_samples": raw_error_samples,
         "recent_log_errors": recent_log_errors,
     }
+
+
+@app.get("/ops/api/scope_policy", dependencies=[Depends(require_access)])
+async def ops_scope_policy(league_id: int, season: int | None = None) -> dict:
+    """
+    Explain why certain endpoints are missing for a given league.
+
+    This is a thin wrapper over MCP's `get_scope_policy()` so ops users can answer:
+    - \"Why is there no standings for this competition?\"
+    - \"Is it out-of-scope by policy or missing due to a pipeline issue?\"
+    """
+    from src.mcp import server as mcp_server
+
+    return await mcp_server.get_scope_policy(league_id=int(league_id), season=(int(season) if season is not None else None))
