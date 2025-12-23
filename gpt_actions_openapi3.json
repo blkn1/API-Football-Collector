@@ -508,9 +508,11 @@
           "results": { "type": "object" },
           "goals": { "type": "object" },
           "match_stats_avg": { "type": "object" },
+          "match_stats_sum": { "type": "object", "description": "Totals across the window for common match stats (e.g. total corner_kicks). Null when not available." },
+          "match_stats_count": { "type": "object", "description": "How many matches contributed to each stat in match_stats_avg/sum." },
           "fixtures_sample": { "type": "array", "items": { "type": "object" } }
         },
-        "required": ["ok", "team_id", "window", "results", "goals", "match_stats_avg", "fixtures_sample"],
+        "required": ["ok", "team_id", "window", "results", "goals", "match_stats_avg", "match_stats_sum", "match_stats_count", "fixtures_sample"],
         "additionalProperties": true
       }
     }

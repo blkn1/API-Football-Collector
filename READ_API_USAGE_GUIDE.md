@@ -239,9 +239,21 @@ Query params:
 Ne döner:
 - W/D/L, gol ortalamaları, BTTS/clean sheet oranları
 - match statistics ortalamaları (shots, corners, cards, possession…)
+- match statistics toplamları + kaç maçta mevcut olduğu (özellikle “son 20 maç toplam korner” için)
 - `fixtures_sample`: örnek fixture listesi
 
 Bu endpoint, “challenge” gibi kullan: model features için hızlı başlangıç.
+
+Örnek: son 20 maç toplam korner
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v1/teams/228/metrics?last_n=20"
+```
+
+Response içinde:
+- `match_stats_sum.corner_kicks` = toplam korner (son 20 maç, sadece stats bulunan maçlar)
+- `match_stats_count.corner_kicks` = korner stat’ı gelen maç sayısı
 
 ---
 

@@ -683,6 +683,29 @@ async def team_metrics(team_id: int, last_n: int = 20, as_of_date: str | None = 
             "ball_possession_pct": _avg("ball_possession"),
             "offsides": _avg("offsides"),
         },
+        # Totals across the sample window (useful for e.g. "last 20 matches total corners")
+        # Notes:
+        # - totals are computed only where the stat exists in the underlying per-fixture statistics
+        # - possession is included for parity with avg but is not a meaningful "total" (use avg)
+        "match_stats_sum": {
+            "total_shots": (stat_sums.get("total_shots") if stat_counts.get("total_shots", 0) > 0 else None),
+            "shots_on_goal": (stat_sums.get("shots_on_goal") if stat_counts.get("shots_on_goal", 0) > 0 else None),
+            "corner_kicks": (stat_sums.get("corner_kicks") if stat_counts.get("corner_kicks", 0) > 0 else None),
+            "yellow_cards": (stat_sums.get("yellow_cards") if stat_counts.get("yellow_cards", 0) > 0 else None),
+            "red_cards": (stat_sums.get("red_cards") if stat_counts.get("red_cards", 0) > 0 else None),
+            "ball_possession_pct": (stat_sums.get("ball_possession") if stat_counts.get("ball_possession", 0) > 0 else None),
+            "offsides": (stat_sums.get("offsides") if stat_counts.get("offsides", 0) > 0 else None),
+        },
+        # How many matches contributed to each stat (because some leagues/fixtures may not provide stats)
+        "match_stats_count": {
+            "total_shots": int(stat_counts.get("total_shots", 0)),
+            "shots_on_goal": int(stat_counts.get("shots_on_goal", 0)),
+            "corner_kicks": int(stat_counts.get("corner_kicks", 0)),
+            "yellow_cards": int(stat_counts.get("yellow_cards", 0)),
+            "red_cards": int(stat_counts.get("red_cards", 0)),
+            "ball_possession_pct": int(stat_counts.get("ball_possession", 0)),
+            "offsides": int(stat_counts.get("offsides", 0)),
+        },
         "fixtures_sample": fixtures[: min(len(fixtures), 20)],
     }
 
