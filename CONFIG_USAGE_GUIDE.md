@@ -61,6 +61,22 @@ Bu dosya prod’daki “operasyonel gerçeklik”tir:
 Kural:
 - “Yeni lig takip edilecekse” tek doğru yer: **`daily.yaml tracked_leagues`**
 
+### 3.4.4 Scope Policy (Cup vs League optimizasyonu)
+Bu repo’da “quota’yı boşa yakmadan kaliteyi korumak” için **scope policy** eklendi.
+
+- Config: `config/scope_policy.yaml`
+- Amaç: her `(league_id, season)` için **hangi endpoint’lerin anlamlı olduğunu** belirlemek.
+- Örnek (default yaklaşım):
+  - **Baseline (always-on)**: `/fixtures` + fixture_details fanout (`/fixtures/events|lineups|players|statistics`) + `/injuries`
+  - **League-only (varsayılan)**: `/standings`, `/teams/statistics`, `/players/topscorers`
+  - **Cup (varsayılan)**: yukarıdaki league-only endpoint’ler **out-of-scope** (çoğu kupada boş/noisy)
+
+Güvenlik kuralı:
+- Eğer bir ligin type’ı (Cup/League) CORE’da yoksa policy **fail-open** çalışır (endpoint’i kapatmaz). Böylece “değerli veriyi yanlışlıkla kesme” riski minimize edilir.
+
+Override:
+- Tek bir lig/sezon için zorunlu enable/disable gerekiyorsa `config/scope_policy.yaml -> overrides` kullanılır.
+
 #### 3.4.1 fixtures_fetch_mode (bülten gap çözümü)
 `config/jobs/daily.yaml` en üstünde:
 - `fixtures_fetch_mode: per_tracked_leagues` (bu repo default)

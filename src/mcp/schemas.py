@@ -100,6 +100,7 @@ class LastSyncTime(OkEnvelope):
 
 class CoverageRow(MCPModel):
     league: str
+    league_type: str | None = None
     league_id: int
     season: int
     endpoint: str
@@ -111,6 +112,10 @@ class CoverageRow(MCPModel):
     lag_minutes: int | None = None
     calculated_at_utc: str | None = None
     flags: Any | None = None
+    # Scope-policy annotations (out-of-scope != missing)
+    in_scope: bool | None = None
+    scope_reason: str | None = None
+    scope_policy_version: int | None = None
 
 
 class CoverageStatus(OkEnvelope):
@@ -129,6 +134,20 @@ class CoverageSummaryRow(MCPModel):
 class CoverageSummary(OkEnvelope):
     season: int
     summary: CoverageSummaryRow | None = None
+
+
+class ScopeEndpointDecision(MCPModel):
+    endpoint: str
+    in_scope: bool
+    reason: str
+    policy_version: int
+
+
+class ScopePolicyResponse(OkEnvelope):
+    league_id: int
+    season: int
+    league_type: str | None = None
+    decisions: list[ScopeEndpointDecision]
 
 
 class FixtureRow(MCPModel):

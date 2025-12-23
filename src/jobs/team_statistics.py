@@ -13,6 +13,7 @@ from src.collector.rate_limiter import EmergencyStopError, RateLimiter
 from src.transforms.team_statistics import transform_team_statistics
 from src.utils.db import get_db_connection, upsert_core, upsert_mart_coverage, upsert_raw
 from src.utils.logging import get_logger
+from src.utils.scope_policy import filter_tracked_leagues_for_endpoint, get_league_types_map
 
 
 logger = get_logger(component="jobs_team_statistics")
@@ -187,6 +188,20 @@ async def run_team_statistics_refresh(*, client: APIClient, limiter: RateLimiter
     - Update MART coverage per league/season
     """
     leagues = _load_tracked_leagues(config_path)
+    types_map = get_league_types_map([int(x.get("id")) for x in leagues if isinstance(x, dict) and x.get("id") is not None])
+    leagues_in_scope, leagues_skipped = filter_tracked_leagues_for_endpoint(
+        leagues=leagues,
+        endpoint="/teams/statistics",
+        league_type_provider=lambda lid: types_map.get(int(lid)),
+    )
+    if leagues_skipped:
+        logger.info(
+            "scope_policy_skipped_pairs",
+            endpoint="/teams/statistics",
+            skipped_count=len(leagues_skipped),
+            examples=leagues_skipped[:10],
+        )
+    leagues = leagues_in_scope
     league_ids = sorted({int(x["id"]) for x in leagues})
     seasons = sorted({int(x["season"]) for x in leagues})
 

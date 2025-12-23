@@ -1,0 +1,51 @@
+# Scope Policy (Production v3)
+#
+# Purpose:
+# - Reduce quota waste without harming high-value datasets.
+# - Decide which endpoints/jobs are in-scope for each (league_id, season).
+# - Keep decisions config-driven, observable, and overrideable.
+#
+# Model:
+# - baseline: always enabled (fixtures + fixture_details fanout)
+# - by_competition_type: default allow/deny per API-Football league "type" (League / Cup)
+# - overrides: per-league forced enable/disable, regardless of type
+#
+# Notes:
+# - When league type is unknown (not in CORE yet), the resolver FAILS OPEN (treats as in-scope)
+#   to avoid accidentally dropping valuable data.
+# - Endpoint keys are canonical API paths (collector job endpoint field).
+
+version: 1
+
+# Endpoints that are always considered in-scope for tracked leagues.
+baseline_enabled_endpoints:
+  - /fixtures
+  - /fixtures/events
+  - /fixtures/lineups
+  - /fixtures/players
+  - /fixtures/statistics
+  - /injuries
+
+# Defaults based on competition type from core.leagues.type (API-Football "League" vs "Cup").
+by_competition_type:
+  League:
+    enabled_endpoints:
+      - /standings
+      - /teams/statistics
+      - /players/topscorers
+  Cup:
+    # Cups are typically knockout; standings/topscorers/team stats are often empty/noisy.
+    disabled_endpoints:
+      - /standings
+      - /teams/statistics
+      - /players/topscorers
+
+# Per league overrides (force enable/disable), applied after type defaults.
+overrides:
+  # Türkiye Kupası (Turkey Cup) — Cup: disable standings (default) and keep baseline endpoints.
+  - league_id: 206
+    season: 2025
+    disabled_endpoints:
+      - /standings
+
+

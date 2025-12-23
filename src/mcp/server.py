@@ -43,6 +43,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from src.mcp import queries  # noqa: E402
 from src.mcp import schemas as mcp_schemas  # noqa: E402
 from src.utils.db import get_db_connection  # noqa: E402
+from src.utils.scope_policy import decide_scope  # noqa: E402
 
 logger = get_logger(component="mcp_server")
 
@@ -490,26 +491,95 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
 
         out: list[dict[str, Any]] = []
         for r in rows:
+            league_type = r[1]
+            league_id_row = int(r[2])
+            season_row = int(r[3])
+            endpoint = r[4]
+            d = decide_scope(
+                league_id=league_id_row,
+                season=season_row,
+                endpoint=endpoint,
+                league_type_provider=lambda _lid: (str(league_type) if league_type is not None else None),
+            )
             out.append(
                 {
                     "league": r[0],
-                    "league_id": int(r[1]),
-                    "season": int(r[2]),
-                    "endpoint": r[3],
-                    "count_coverage": _to_float_or_none(r[4]),
-                    "freshness_coverage": _to_float_or_none(r[5]),
-                    "pipeline_coverage": _to_float_or_none(r[6]),
-                    "overall_coverage": _to_float_or_none(r[7]),
-                    "last_update_utc": _to_iso_or_none(r[8]),
-                    "lag_minutes": _to_int_or_none(r[9]),
-                    "calculated_at_utc": _to_iso_or_none(r[10]),
-                    "flags": (r[11] if len(r) > 11 else None),
+                    "league_type": (str(league_type) if league_type is not None else None),
+                    "league_id": league_id_row,
+                    "season": season_row,
+                    "endpoint": endpoint,
+                    "count_coverage": _to_float_or_none(r[5]),
+                    "freshness_coverage": _to_float_or_none(r[6]),
+                    "pipeline_coverage": _to_float_or_none(r[7]),
+                    "overall_coverage": _to_float_or_none(r[8]),
+                    "last_update_utc": _to_iso_or_none(r[9]),
+                    "lag_minutes": _to_int_or_none(r[10]),
+                    "calculated_at_utc": _to_iso_or_none(r[11]),
+                    "flags": (r[12] if len(r) > 12 else None),
+                    "in_scope": bool(d.in_scope),
+                    "scope_reason": d.reason,
+                    "scope_policy_version": int(d.policy_version),
                 }
             )
 
         return _ok(mcp_schemas.CoverageStatus(season=int(season), coverage=[mcp_schemas.CoverageRow.model_validate(x) for x in out], ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_coverage_status_failed", details=str(e))
+
+
+@app.tool()
+async def get_scope_policy(league_id: int, season: int | None = None) -> dict:
+    """
+    Explain which endpoints are considered in-scope for a given (league_id, season),
+    and why (Cup vs League, overrides, baseline, etc.).
+    """
+    try:
+        if season is None:
+            season_cfg = _season_for_league_from_daily_config(int(league_id))
+            if season_cfg is None:
+                season_cfg = _default_season_from_daily_config()
+            if season_cfg is None:
+                return _ok_error(
+                    "season_required",
+                    details="Pass season explicitly, or set tracked_leagues[].season for this league in config/jobs/daily.yaml, or set top-level 'season:' in daily.yaml",
+                )
+            season = int(season_cfg)
+
+        row = await _db_fetchone_async("SELECT type FROM core.leagues WHERE id=%s", (int(league_id),))
+        league_type = str(row[0]) if row and row[0] is not None else None
+
+        endpoints = [
+            "/fixtures",
+            "/fixtures/events",
+            "/fixtures/lineups",
+            "/fixtures/players",
+            "/fixtures/statistics",
+            "/injuries",
+            "/standings",
+            "/teams/statistics",
+            "/players/topscorers",
+        ]
+        decisions: list[dict[str, Any]] = []
+        for ep in endpoints:
+            d = decide_scope(
+                league_id=int(league_id),
+                season=int(season),
+                endpoint=ep,
+                league_type_provider=lambda _lid: league_type,
+            )
+            decisions.append({"endpoint": ep, "in_scope": bool(d.in_scope), "reason": d.reason, "policy_version": int(d.policy_version)})
+
+        return _ok(
+            mcp_schemas.ScopePolicyResponse(
+                league_id=int(league_id),
+                season=int(season),
+                league_type=league_type,
+                decisions=[mcp_schemas.ScopeEndpointDecision.model_validate(x) for x in decisions],
+                ts_utc=_utc_now_iso(),
+            )
+        )
+    except Exception as e:
+        return _ok_error("get_scope_policy_failed", details=str(e))
 
 
 @app.tool()

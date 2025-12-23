@@ -97,6 +97,26 @@ Beklenen:
 }
 ```
 
+---
+
+## Scope policy (Cup vs League): out-of-scope ≠ missing
+
+Bu repo’da quota optimizasyonu için bazı endpoint’ler belirli competition type’larda **bilinçli şekilde çalıştırılmaz**.
+
+Kaynak:
+- Policy config: `config/scope_policy.yaml`
+- Enforcement (jobs): `src/utils/standings.py`, `src/jobs/team_statistics.py`, `src/jobs/top_scorers.py`
+- Görünürlük (MCP): `get_scope_policy()`, `get_coverage_status()` (coverage satırlarına `in_scope/scope_reason` eklenir)
+
+### Tool: `get_scope_policy(league_id=..., season=None)`
+
+Kullanım:
+- Türkiye Kupası: `get_scope_policy(league_id=206)` → `/standings in_scope=false` beklenir.
+
+Bu sayede:
+- Cup için standings boş dönse bile “incident” gibi okunmaz
+- Quota israfı azalır
+
 ## MCP ile teşhis modeli: tek metrikle karar verme (yanlış)
 
 Bu projede bir sorunu teşhis etmek için her zaman 3 kanıt kaynağını birlikte okuruz:

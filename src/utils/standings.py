@@ -14,6 +14,7 @@ from src.transforms.standings import transform_standings
 from src.utils.db import get_transaction, query_scalar, upsert_raw
 from src.utils.logging import get_logger
 from src.utils.dependencies import ensure_standings_dependencies, get_missing_team_ids_in_core
+from src.utils.scope_policy import decide_scope, get_league_types_map
 
 
 logger = get_logger(component="standings_sync")
@@ -129,6 +130,36 @@ async def sync_standings(
         leagues = [x for x in leagues if x.id == int(league_filter)]
         if not leagues:
             raise ValueError(f"League {league_filter} not found in config: {config_path}")
+
+    # Scope policy: cups are typically out-of-scope for standings. Skip out-of-scope league-season pairs.
+    # Safety: if league type is unknown, we FAIL OPEN (will run standings) to avoid accidental data loss.
+    scoped_in: list[TrackedLeague] = []
+    skipped: list[dict[str, Any]] = []
+    types_map = get_league_types_map([int(x.id) for x in leagues])
+    for l in leagues:
+        d = decide_scope(
+            league_id=int(l.id),
+            season=int(l.season or 0),
+            endpoint="/standings",
+            league_type_provider=lambda lid: types_map.get(int(lid)),
+        )
+        if d.in_scope:
+            scoped_in.append(l)
+        else:
+            skipped.append({"league_id": int(l.id), "season": int(l.season or 0), "reason": d.reason, "policy_version": d.policy_version})
+    if skipped:
+        logger.info(
+            "scope_policy_skipped_pairs",
+            endpoint="/standings",
+            skipped_count=len(skipped),
+            examples=skipped[:10],
+        )
+    leagues = scoped_in
+
+    if league_filter is None and not leagues:
+        # If the entire tracked set is out-of-scope for standings, this is not an error.
+        logger.info("standings_sync_skipped", reason="all_pairs_out_of_scope", endpoint="/standings")
+        return StandingsSyncSummary(leagues=[], api_requests=0, total_rows=0, daily_remaining=None, minute_remaining=None)
 
     # Optional batching: process only N leagues per run and advance a cursor in CORE.
     # - If league_filter is set, batching is bypassed (explicit run for a single league).

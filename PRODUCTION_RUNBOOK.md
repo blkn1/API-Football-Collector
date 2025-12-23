@@ -44,10 +44,20 @@ Ek ops gözlemler (Phase 1.5):
 - **Backfill progress**: `get_backfill_progress()`
 - **RAW error health**: `get_raw_error_summary(since_minutes=60)`
 - **Recent error logs**: `get_recent_log_errors(limit=50)`
+- **Scope policy (quota optimizasyonu)**: `get_scope_policy(league_id=<LID>)`
 
 ### 1.3 PASS / FAIL kriteri
 - **PASS**: A+B+D `ok=true` ve DB bağlantısı sağlıklı.
 - **FAIL**: Tool exception / DB bağlantı hatası / output şeması bozulmuş.
+
+### 1.5 Scope policy doğrulama (Cup vs League)
+Bu deployment’ta quota optimizasyonu için **Cup** competition’larda bazı endpoint’ler out-of-scope kabul edilir:
+- Varsayılan: Cup → `/standings`, `/teams/statistics`, `/players/topscorers` kapalı
+- Baseline her zaman açık: `/fixtures` + fixture_details + `/injuries`
+
+Doğrulama:
+- `get_scope_policy(league_id=206)` → Türkiye Kupası için `/standings in_scope=false` beklenir.
+- `get_raw_error_summary(since_minutes=60, endpoint="/standings")` → request sayısının düşmesi beklenir (redeploy sonrası).
 
 ### 1.4 MCP Prod transport notu (Traefik + streamable-http)
 Prod’da MCP `streamable-http` çalışır ve **stateful session** gerektirir:

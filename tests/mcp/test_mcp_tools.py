@@ -98,6 +98,7 @@ async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
         return [
             (
                 "Bundesliga",
+                "League",
                 78,
                 2024,
                 "/fixtures",
@@ -145,6 +146,7 @@ async def test_get_coverage_status_tracked_only_filters(monkeypatch, tmp_path: P
         return [
             (
                 "Bundesliga",
+                "League",
                 78,
                 2024,
                 "/fixtures",

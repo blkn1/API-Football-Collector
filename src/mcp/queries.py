@@ -11,6 +11,7 @@ CRITICAL:
 COVERAGE_STATUS = """
     SELECT
       l.name as league_name,
+      l.type as league_type,
       c.league_id,
       c.season,
       c.endpoint,

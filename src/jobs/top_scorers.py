@@ -11,6 +11,7 @@ from src.collector.rate_limiter import EmergencyStopError, RateLimiter
 from src.transforms.top_scorers import transform_top_scorers
 from src.utils.db import upsert_core, upsert_mart_coverage, upsert_raw
 from src.utils.logging import get_logger
+from src.utils.scope_policy import filter_tracked_leagues_for_endpoint, get_league_types_map
 
 
 logger = get_logger(component="jobs_top_scorers")
@@ -84,6 +85,20 @@ async def run_top_scorers_daily(*, client: APIClient, limiter: RateLimiter, conf
     - CORE upsert into core.top_scorers
     """
     leagues = _load_tracked_leagues(config_path)
+    types_map = get_league_types_map([int(x.get("id")) for x in leagues if isinstance(x, dict) and x.get("id") is not None])
+    leagues_in_scope, leagues_skipped = filter_tracked_leagues_for_endpoint(
+        leagues=leagues,
+        endpoint="/players/topscorers",
+        league_type_provider=lambda lid: types_map.get(int(lid)),
+    )
+    if leagues_skipped:
+        logger.info(
+            "scope_policy_skipped_pairs",
+            endpoint="/players/topscorers",
+            skipped_count=len(leagues_skipped),
+            examples=leagues_skipped[:10],
+        )
+    leagues = leagues_in_scope
 
     total_rows = 0
     api_requests = 0
