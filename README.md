@@ -7,6 +7,7 @@ High-signal docs:
 - `QUOTA_AND_COLLECTION.md` (quota math + job cadence + throughput knobs)
 - `env_info.md` (Coolify ENV reference: what/where/impact)
 - `LEAGUE_TRACKING_GUIDE.md` (lig ekleme, live vs daily, takım farklı ligde oynarsa ne olur?)
+- `SCOPE_POLICY_GUIDE.md` (Cup vs League scope rules: why some endpoints like standings are intentionally skipped)
 
 ## What This Repo Contains (Production v3.0)
 

@@ -414,6 +414,16 @@ JSON içinde şunları döner:
 Ne zaman kullanılır:
 - “tek bakışta sistem” ve hızlı debug
 
+### `GET /ops/api/scope_policy`
+Amaç: “Neden standings yok?” gibi sorularda **out-of-scope mı, yoksa pipeline sorunu mu** ayrımını hızlı yapmak.
+
+Query params:
+- `league_id` (zorunlu)
+- `season` (opsiyonel; verilmezse MCP config’den infer eder)
+
+Yanıt:
+- MCP `get_scope_policy()` çıktısını aynen döner (`decisions[]` içinde endpoint bazında `in_scope/reason`).
+
 ---
 
 ## Hata kodları (Read API’nin “sözlüğü”)

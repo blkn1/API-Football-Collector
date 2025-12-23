@@ -18,6 +18,8 @@ Prod network notu:
 
 - **Tracked leagues**: `config/jobs/daily.yaml -> tracked_leagues[]`  
   - Her item: `{id, name, season}` (**per-league season**)
+- **Scope policy (Cup vs League)**: `config/scope_policy.yaml`
+  - Amaç: quota optimizasyonu + “out-of-scope ≠ missing” ayrımını deterministik yapmak
 - **Overrides**: `config/league_overrides.yaml` (ambiguous league mapping için deterministik)
 - **Resolver çıktısı**: `config/resolved_tracked_leagues.yaml` (audit amaçlı)
 - **Rate limiter**: `config/rate_limiter.yaml` (soft cap + emergency stop)

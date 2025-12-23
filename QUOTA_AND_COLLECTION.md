@@ -40,6 +40,7 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
   - `/fixtures/players`, `/fixtures/events`, `/fixtures/statistics`, `/fixtures/lineups`
   - **CORE**: `core.fixture_players/events/statistics/lineups`
 - `daily_standings` → `GET /standings?league&season` (**per-league season**, günlük)
+  - **Scope policy**: Cup competition’larda `/standings` default **out-of-scope** olabilir (request atılmaz).
   - **RAW**: `/standings`
   - **CORE**: `core.standings` (league+season bazında replace)
 - `injuries_hourly` → `GET /injuries?league&season` (**per-league season**, saatlik)
@@ -47,10 +48,12 @@ Kaynak: `config/jobs/*.yaml` + `src/collector/scheduler.py`
   - **CORE**: `core.injuries`
 
 - `top_scorers_daily` → `GET /players/topscorers?league&season` (**günde 1 kez**, TR 06:40)
+  - **Scope policy**: Cup competition’larda `/players/topscorers` default out-of-scope olabilir.
   - **RAW**: `/players/topscorers`
   - **CORE**: `core.top_scorers`
 
 - `team_statistics_refresh` → `GET /teams/statistics?league&season&team` (**10 dakikada bir**, gün içine yayılmış)
+  - **Scope policy**: Cup competition’larda `/teams/statistics` default out-of-scope olabilir.
   - **RAW**: `/teams/statistics`
   - **CORE**: `core.team_statistics` (+ progress: `core.team_statistics_progress`)
 
