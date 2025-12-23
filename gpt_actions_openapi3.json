@@ -463,6 +463,30 @@
         },
         "required": ["ok"],
         "additionalProperties": true
+      },
+      "ScopePolicyDecision": {
+        "type": "object",
+        "properties": {
+          "endpoint": { "type": "string" },
+          "in_scope": { "type": "boolean" },
+          "reason": { "type": "string" },
+          "policy_version": { "type": "integer" }
+        },
+        "required": ["endpoint", "in_scope", "reason", "policy_version"],
+        "additionalProperties": true
+      },
+      "OpsScopePolicyResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "ts_utc": { "type": "string", "format": "date-time" },
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "league_type": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "decisions": { "type": "array", "items": { "$ref": "#/components/schemas/ScopePolicyDecision" } }
+        },
+        "required": ["ok", "ts_utc", "league_id", "season", "decisions"],
+        "additionalProperties": true
       }
     }
   },
@@ -702,6 +726,22 @@
           "200": { "description": "System status (ok + nested objects)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpsSystemStatusResponse" } } } },
           "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         }
+      }
+    },
+    "/ops/api/scope_policy": {
+      "get": {
+        "summary": "Explain scope policy decisions for a league (why an endpoint is out-of-scope)",
+        "operationId": "opsScopePolicy",
+        "parameters": [
+          { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Scope policy decisions (ok + decisions[])", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpsScopePolicyResponse" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
       }
     }
   }
