@@ -12,6 +12,91 @@ MCP’yi doğru kullandığında şu sorulara **kanıtla** cevap verirsin:
 
 ---
 
+## MCP tool sözleşmesi (schema-driven, deterministik)
+
+Bu repo’da MCP tool output’ları artık “dokümana göre değişen” serbest dict’ler değil, **Pydantic ile doğrulanan şema** ile üretilir.
+
+Kaynak:
+- Şemalar: `src/mcp/schemas.py`
+- Tool implementasyonları: `src/mcp/server.py`
+
+### 1) Ortak envelope
+
+- **Başarılı response**:
+  - `ok: true`
+  - `ts_utc: <ISO-8601 UTC>`
+  - Tool’a göre ek alanlar (örn. `items`, `stats`, `coverage`, `jobs`…)
+
+- **Hata response**:
+  - `ok: false`
+  - `error: <string>`
+  - `details: <any | null>` (opsiyonel)
+  - `ts_utc: <ISO-8601 UTC>`
+
+> Not: Şema deterministik olsun diye `None` değerler **explicit null** olarak döner (alan drop edilmez). Bu, client tarafında “key var mı?” branching ihtiyacını azaltır.
+
+### 2) Liste dönen tool’lar artık `items` ile döner
+
+Örn. eskiden `query_fixtures(...)` “liste” dönebiliyordu. Artık:
+- `query_fixtures(...) -> { ok, items: [...], ts_utc }`
+- `query_teams(...) -> { ok, items: [...], ts_utc }`
+- `query_standings(...) -> { ok, items: [...], ts_utc }`
+- `query_injuries(...) -> { ok, items: [...], ts_utc }`
+- `query_fixture_players/events/statistics/lineups(...) -> { ok, items: [...], ts_utc }`
+
+### 3) Örnekler (çıktı)
+
+#### 3.1 `get_rate_limit_status()` (no rows)
+
+Beklenen:
+
+```json
+{
+  "ok": true,
+  "source": "raw.api_responses (no rows with quota headers yet)",
+  "daily_remaining": null,
+  "minute_remaining": null,
+  "observed_at_utc": null,
+  "ts_utc": "2025-12-23T00:00:00+00:00"
+}
+```
+
+#### 3.2 `query_fixtures(league_id=78, status=\"FT\", limit=2)`
+
+Beklenen:
+
+```json
+{
+  "ok": true,
+  "items": [
+    {
+      "id": 123,
+      "league_id": 78,
+      "season": 2025,
+      "date_utc": "2025-12-12T20:00:00+00:00",
+      "status": "FT",
+      "home_team": "Bayern",
+      "away_team": "Dortmund",
+      "goals_home": 2,
+      "goals_away": 1,
+      "updated_at_utc": "2025-12-12T22:00:00+00:00"
+    }
+  ],
+  "ts_utc": "2025-12-23T00:00:00+00:00"
+}
+```
+
+#### 3.3 Hata örneği
+
+```json
+{
+  "ok": false,
+  "error": "season_required",
+  "details": "Missing season in daily config. Pass season explicitly or set top-level 'season:' in config/jobs/daily.yaml",
+  "ts_utc": "2025-12-23T00:00:00+00:00"
+}
+```
+
 ## MCP ile teşhis modeli: tek metrikle karar verme (yanlış)
 
 Bu projede bir sorunu teşhis etmek için her zaman 3 kanıt kaynağını birlikte okuruz:

@@ -29,8 +29,8 @@ Read API’de tüm uçlar `require_access` ile korunabilir:
 
 ### Basic Auth (opsiyonel ama önerilen)
 ENV:
-- `READ_API_BASIC_USER`
-- `READ_API_BASIC_PASSWORD`
+  - `READ_API_BASIC_USER`
+  - `READ_API_BASIC_PASSWORD`
 
 Davranış:
 - Bu ikisi set edilirse **Basic Auth zorunlu** olur.

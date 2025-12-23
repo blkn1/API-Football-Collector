@@ -1,4 +1,12 @@
 resolved:
+- id: 206
+  name: Türkiye Kupası
+  country: Turkey
+  type: Cup
+  season: 2025
+  source: Türkiye Kupası
+  match_score: 999
+  override: true
 - id: 141
   name: Segunda División
   country: Spain

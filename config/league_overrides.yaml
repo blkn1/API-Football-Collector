@@ -21,6 +21,9 @@ overrides:
     league_id: 308
   - source: "Birleşik Arap Emirlikleri 1. Lig"
     league_id: 303
+  - source: "Türkiye Kupası"
+    league_id: 206
+    season: 2025
 
   # Remaining unresolved (manual IDs). These will be validated by `resolve_tracked_leagues.py`
   # via GET /leagues?id=<id> to prevent wrong-country / wrong-type wiring.

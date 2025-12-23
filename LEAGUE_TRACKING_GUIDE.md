@@ -225,6 +225,12 @@ Notlar:
 - Bu liste **standings/injuries** gibi league+season job’larını da scope’lar.
 - `fixture_details_recent_finalize` ve `fixture_details_backfill_90d` artık **sadece bu listeden** fixture seçer.
 
+#### İsimlendirme (Unicode vs ASCII)
+- Teknik olarak TR karakterleri sorun değildir (YAML UTF‑8).
+- Operasyonel pratik öneri: `tracked_leagues[].name` alanını **ASCII/İngilizce** tut.
+  - Bu alan “label”dır; sistem davranışını belirleyen şey `id` ve `season`’dır.
+  - Örn: `Turkey Cup` (audit tarafında TR isim yine korunabilir).
+
 ### 7.2.1 Bu repoda varsayılan cadence (daily-only, TR)
 - Cron timezone: `SCHEDULER_TIMEZONE=Europe/Istanbul`
 - `daily_fixtures_by_date`: TR 06:00
@@ -238,11 +244,59 @@ Notlar:
 ### 7.2.2 Yeni lig ekleme prosedürü (prod-safe, minimum)
 1) `config/jobs/daily.yaml -> tracked_leagues` listesine `{id, name, season}` ekle.\n
 2) Deploy/redeploy.\n
-3) Aynı gün tek seferlik (önerilen): `bootstrap_leagues` + `bootstrap_teams` çalıştır (seasons metadata + FK).\n
+3) (Opsiyonel) Aynı gün tek seferlik: `bootstrap_leagues` + `bootstrap_teams` çalıştır (seasons metadata + toplu refresh).\n
 4) MCP ile izle:\n
    - `get_backfill_progress(job_id=\"fixtures_backfill_league_season\")` → completed oranı artmalı\n
    - `get_raw_error_summary(since_minutes=60)` → 429/5xx trendi olmamalı\n
    - `get_rate_limit_status()` → quota düşüşü kontrollü\n
+
+#### 7.2.2.0 Standart örnek (kopyala‑yapıştır)
+**Hedef:** Türkiye Kupası (league_id=206, season=2025)\n
+\n
+1) `config/jobs/daily.yaml` içine ekle (ASCII label önerisi):
+\n
+```yaml
+- id: 206
+  name: Turkey Cup
+  season: 2025
+```
+\n
+2) (Önerilen) Resolver/audit zinciri:
+- `config/league_targets.txt` içine ekle:
+\n
+```text
+Türkiye Kupası
+```
+\n
+- `config/league_overrides.yaml` içine ekle (deterministik):
+\n
+```yaml
+- source: "Türkiye Kupası"
+  league_id: 206
+  season: 2025
+```
+\n
+3) Audit çıktısını üret:
+\n
+```bash
+python3 scripts/resolve_tracked_leagues.py
+```
+\n
+Beklenen: `config/resolved_tracked_leagues.yaml` içinde `id: 206` satırı görünür (`type: Cup`, `country: Turkey`).
+
+#### 7.2.2.1 Önerilen (audit + deterministik resolver zinciri)
+Runtime için zorunlu değil; “hedef listeyi” yönetmek ve audit üretmek için önerilir:
+- `config/league_targets.txt`: TR isimlerle hedef listesi
+- `config/league_overrides.yaml`: `source -> league_id (+ season)` deterministik eşleme
+- `config/resolved_tracked_leagues.yaml`: resolver çıktısı (**audit**)
+
+#### 7.2.2.2 FK / bağımlılıklar (neden “fixtures önce teams/leagues” kuralı bozulmuyor?)
+`core.fixtures` FK ile korunur (`core.leagues`, `core.teams`, `core.venues`).
+Bu repo fixtures/standings yazmadan önce dependency guard çalıştırır:
+- Lig eksikse `/leagues?id=<league_id>` ile getirip CORE’a UPSERT eder
+- Takımlar eksikse `/teams?league=<league_id>&season=<season>` ile getirip CORE’a UPSERT eder (gerekirse `/teams?id=...` fallback)
+- Venue id’leri fixtures payload’ından çıkarılıp CORE’a UPSERT edilir  
+(bkz. `src/utils/dependencies.py`)
 
 ### 7.3 Live (legacy)
 Bu repo artık prod deploy’da live polling kullanmaz. `config/jobs/live.yaml` bu deployment’ta yoktur.
@@ -299,6 +353,10 @@ bash scripts/smoke_read_api.sh
 Collector terminal:
 - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
 - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=team_statistics_refresh python3 scripts/run_job_once.py`
+
+Fixtures için (yeni eklenen ligleri hızlı doğrulamak):
+- `cd /app && ONLY_LEAGUE_ID=<LEAGUE_ID> JOB_ID=daily_fixtures_by_date python3 scripts/run_job_once.py`
+  - Not: API key/quota gerekir; `daily_fixtures_by_date` bugünün UTC tarihini kullanır.
 
 Postgres terminal (SQL çalıştırmak için `psql` gerekir):
 - `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM raw.api_responses WHERE endpoint='/players/topscorers' AND fetched_at > NOW() - INTERVAL '1 hour';"`

@@ -69,10 +69,11 @@ async def test_query_fixtures_filters_and_shape(monkeypatch):
     monkeypatch.setattr(server, "_db_fetchall_async", _fake_fetchall)
 
     out = await server.query_fixtures(league_id=78, date="2025-12-12", status="FT", limit=10)
-    assert isinstance(out, list) and len(out) == 1
-    assert out[0]["league_id"] == 78
-    assert out[0]["status"] == "FT"
-    assert out[0]["home_team"] == "Bayern"
+    assert out["ok"] is True
+    assert isinstance(out["items"], list) and len(out["items"]) == 1
+    assert out["items"][0]["league_id"] == 78
+    assert out["items"][0]["status"] == "FT"
+    assert out["items"][0]["home_team"] == "Bayern"
     assert "LIMIT %s" in captured["sql"]
     assert captured["params"][-1] == 10
 

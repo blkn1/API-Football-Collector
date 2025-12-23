@@ -143,10 +143,20 @@ Sezon kuralı:
 
 Kural: sistem kendisi rastgele lig eklemez; kontrol sende olmalı.
 
-1) `config/jobs/daily.yaml` → `tracked_leagues` listesine yeni lig:
-   - `id`
-   - `season`
-   - (opsiyonel) `name`
+### 4.1 Kontrat (source of truth)
+**Yeni bir competition/lig/kupa takip edilecekse tek zorunlu yer**: `config/jobs/daily.yaml -> tracked_leagues`.
+
+- Zorunlu alanlar:
+  - `id` (API-Football `league_id`)
+  - `season` (o competition için takip edeceğin sezon)
+- Opsiyonel alan:
+  - `name` (sadece label/okunabilirlik; sistem mantığı `id+season` ile çalışır)
+
+#### 4.1.1 “Türkçe harf kullanmayacağız” notu
+- Teknik olarak sorun yok: YAML UTF‑8, DB/transform katmanı Unicode ile çalışır.
+- Operasyonel pratik öneri: `tracked_leagues[].name` alanını **ASCII/İngilizce** tutmak iyi olur.
+  - Sebep: bu alan sadece label; log/grep/ops ekranlarında arama ve kopyalama daha kolay olur.
+  - Örnek: `name: Turkey Cup` (ama `resolved_tracked_leagues.yaml` audit’inde orijinal “Türkiye Kupası” yine görünebilir).
 
 2) Redeploy.
 
@@ -158,6 +168,32 @@ Kural: sistem kendisi rastgele lig eklemez; kontrol sende olmalı.
 4) Eğer standings tarafında “missing teams” görürsen:
    - Dependency resolver bu boşluğu doldurur (gerekirse `/teams?id` fallback).
    - Eğer çok büyük çaplı değişim varsa, **tek seferlik bootstrap** uygulanır (bkz. Bölüm 5).
+
+### 4.2 Önerilen (audit + deterministik resolver zinciri)
+Bu adımlar **runtime için zorunlu değildir**, ama “83 lig rollout” gibi ölçeklerde tutarlılık/audit için önerilir:
+
+- `config/league_targets.txt`:
+  - İnsan-okunur hedef liste (TR isimler kullanılabilir).
+- `config/league_overrides.yaml`:
+  - Ambiguous isimler için deterministik `source -> league_id (+ season)` eşlemesi.
+  - Özellikle local-language kupalar için “yanlış eşleşme” riskini sıfırlar.
+- `config/resolved_tracked_leagues.yaml`:
+  - `scripts/resolve_tracked_leagues.py` çıktısıdır.
+  - **Audit amaçlıdır** (prod runtime source-of-truth değildir).
+
+### 4.3 Opsiyonel: `config/coverage.yaml -> expected_fixtures`
+`expected_fixtures` yalnızca “sezon toplam fixture sayısı” bilinen liglerde anlamlıdır.
+- Liglerde (örn. Premier League) sabit olabilir.
+- Kupalar için genelde değişken olduğu için çoğu zaman boş bırakmak daha doğrudur.
+
+### 4.4 Ne olacak? (collector davranışı)
+`fixtures_fetch_mode: per_tracked_leagues` iken yeni entry şunu tetikler:
+- Daily fixtures akışı artık `/fixtures?league=<id>&season=<season>&date=YYYY-MM-DD` çağrılarını o lig için de yapar.
+
+FK güvenliği:
+- `core.fixtures` FK’leri (league/team/venue) korunur.
+- Repo “dependency guard” ile fixtures yazmadan önce gerekirse ligi/teams/venues’i CORE’a UPSERT eder
+  (bkz. `src/utils/dependencies.py`).
 
 ---
 

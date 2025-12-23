@@ -303,6 +303,9 @@ tracked_leagues:
 - id: 204
   name: 1. Lig
   season: 2025
+- id: 206
+  name: Turkey Cup
+  season: 2025
 - id: 207
   name: Super League
   season: 2025

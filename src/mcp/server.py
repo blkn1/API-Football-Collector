@@ -41,6 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.mcp import queries  # noqa: E402
+from src.mcp import schemas as mcp_schemas  # noqa: E402
 from src.utils.db import get_db_connection  # noqa: E402
 
 logger = get_logger(component="mcp_server")
@@ -78,10 +79,16 @@ def _utc_now_iso() -> str:
 
 
 def _ok_error(message: str, *, details: Any | None = None) -> dict[str, Any]:
-    payload: dict[str, Any] = {"ok": False, "error": message, "ts_utc": _utc_now_iso()}
-    if details is not None:
-        payload["details"] = details
-    return payload
+    return mcp_schemas.ErrorEnvelope(error=message, ts_utc=_utc_now_iso(), details=details).model_dump(exclude_none=True)
+
+
+def _ok(model: mcp_schemas.MCPModel) -> dict[str, Any]:
+    """
+    Serialize a validated MCP schema model into JSON-serializable dict.
+    IMPORTANT: Do NOT drop None fields. Keeping explicit nulls makes tool schemas
+    deterministic and reduces client-side branching (OpenAPI-like contract).
+    """
+    return model.model_dump()
 
 
 def _parse_iso_date_utc(d: str) -> date_type:
@@ -437,7 +444,7 @@ async def get_coverage_status(league_id: int | None = None, season: int | None =
                 }
             )
 
-        return {"ok": True, "season": int(season), "coverage": out, "ts_utc": _utc_now_iso()}
+        return _ok(mcp_schemas.CoverageStatus(season=int(season), coverage=[mcp_schemas.CoverageRow.model_validate(x) for x in out], ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_coverage_status_failed", details=str(e))
 
@@ -487,19 +494,15 @@ async def get_coverage_summary(season: int | None = None, tracked_only: bool = T
         else:
             row = await _db_fetchone_async(queries.COVERAGE_SUMMARY, (int(season),))
         if not row:
-            return {"ok": True, "season": int(season), "summary": None, "ts_utc": _utc_now_iso()}
-        return {
-            "ok": True,
-            "season": int(row[0]),
-            "summary": {
-                "rows": int(row[1]),
-                "leagues": int(row[2]),
-                "endpoints": int(row[3]),
-                "avg_overall_coverage": _to_float_or_none(row[4]),
-                "last_calculated_at_utc": _to_iso_or_none(row[5]),
-            },
-            "ts_utc": _utc_now_iso(),
-        }
+            return _ok(mcp_schemas.CoverageSummary(season=int(season), summary=None, ts_utc=_utc_now_iso()))
+        summary = mcp_schemas.CoverageSummaryRow(
+            rows=int(row[1]),
+            leagues=int(row[2]),
+            endpoints=int(row[3]),
+            avg_overall_coverage=_to_float_or_none(row[4]),
+            last_calculated_at_utc=_to_iso_or_none(row[5]),
+        )
+        return _ok(mcp_schemas.CoverageSummary(season=int(row[0]), summary=summary, ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_coverage_summary_failed", details=str(e))
 
@@ -515,24 +518,26 @@ async def get_rate_limit_status() -> dict:
     try:
         row = await _db_fetchone_async(queries.LAST_QUOTA_HEADERS_QUERY, ())
         if not row:
-            return {
-                "ok": True,
-                "source": "raw.api_responses (no rows with quota headers yet)",
-                "daily_remaining": None,
-                "minute_remaining": None,
-                "observed_at_utc": None,
-                "ts_utc": _utc_now_iso(),
-            }
+            return _ok(
+                mcp_schemas.RateLimitStatus(
+                    source="raw.api_responses (no rows with quota headers yet)",
+                    daily_remaining=None,
+                    minute_remaining=None,
+                    observed_at_utc=None,
+                    ts_utc=_utc_now_iso(),
+                )
+            )
 
         observed_at, daily_raw, minute_raw = row
-        return {
-            "ok": True,
-            "source": "raw.api_responses.response_headers",
-            "daily_remaining": _to_int_or_none(daily_raw),
-            "minute_remaining": _to_int_or_none(minute_raw),
-            "observed_at_utc": _to_iso_or_none(observed_at),
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.RateLimitStatus(
+                source="raw.api_responses.response_headers",
+                daily_remaining=_to_int_or_none(daily_raw),
+                minute_remaining=_to_int_or_none(minute_raw),
+                observed_at_utc=_to_iso_or_none(observed_at),
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_rate_limit_status_failed", details=str(e))
 
@@ -549,17 +554,26 @@ async def get_live_loop_status(since_minutes: int = 5) -> dict:
         mins = max(1, min(int(since_minutes), 60 * 24))
         row = await _db_fetchone_async(queries.LIVE_LOOP_ACTIVITY_QUERY, (mins,))
         if not row:
-            return {"ok": True, "window": {"since_minutes": mins}, "running": False, "requests": 0, "last_fetched_at_utc": None, "ts_utc": _utc_now_iso()}
+            return _ok(
+                mcp_schemas.LiveLoopStatus(
+                    window={"since_minutes": mins},
+                    running=False,
+                    requests=0,
+                    last_fetched_at_utc=None,
+                    ts_utc=_utc_now_iso(),
+                )
+            )
         reqs, last_dt = row
         requests = _to_int_or_none(reqs) or 0
-        return {
-            "ok": True,
-            "window": {"since_minutes": mins},
-            "running": bool(requests > 0),
-            "requests": int(requests),
-            "last_fetched_at_utc": _to_iso_or_none(last_dt),
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.LiveLoopStatus(
+                window={"since_minutes": mins},
+                running=bool(requests > 0),
+                requests=int(requests),
+                last_fetched_at_utc=_to_iso_or_none(last_dt),
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_live_loop_status_failed", details=str(e))
 
@@ -583,32 +597,34 @@ async def get_daily_fixtures_by_date_status(since_minutes: int = 180) -> dict:
         mins = max(1, min(int(since_minutes), 60 * 24))
         row = await _db_fetchone_async(queries.DAILY_FIXTURES_BY_DATE_PAGING_METRICS_QUERY, (mins,))
         if not row:
-            return {
-                "ok": True,
-                "window": {"since_minutes": mins},
-                "running": False,
-                "requests": 0,
-                "pages_fetched": 0,
-                "max_page": None,
-                "results_sum": 0,
-                "last_fetched_at_utc": None,
-                "ts_utc": _utc_now_iso(),
-            }
+            return _ok(
+                mcp_schemas.DailyFixturesByDateStatus(
+                    window={"since_minutes": mins},
+                    running=False,
+                    requests=0,
+                    global_requests=0,
+                    pages_fetched=0,
+                    max_page=None,
+                    results_sum=0,
+                    last_fetched_at_utc=None,
+                    ts_utc=_utc_now_iso(),
+                )
+            )
         reqs, last_dt, global_reqs, global_pages_distinct, global_max_page, global_results_sum = row
         requests = _to_int_or_none(reqs) or 0
-        return {
-            "ok": True,
-            "window": {"since_minutes": mins},
-            "running": bool(requests > 0),
-            "requests": int(requests),
-            # Global-by-date metrics (date-only calls, no league filter)
-            "global_requests": int(_to_int_or_none(global_reqs) or 0),
-            "pages_fetched": int(_to_int_or_none(global_pages_distinct) or 0),
-            "max_page": _to_int_or_none(global_max_page),
-            "results_sum": int(_to_int_or_none(global_results_sum) or 0),
-            "last_fetched_at_utc": _to_iso_or_none(last_dt),
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.DailyFixturesByDateStatus(
+                window={"since_minutes": mins},
+                running=bool(requests > 0),
+                requests=int(requests),
+                global_requests=int(_to_int_or_none(global_reqs) or 0),
+                pages_fetched=int(_to_int_or_none(global_pages_distinct) or 0),
+                max_page=_to_int_or_none(global_max_page),
+                results_sum=int(_to_int_or_none(global_results_sum) or 0),
+                last_fetched_at_utc=_to_iso_or_none(last_dt),
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_daily_fixtures_by_date_status_failed", details=str(e))
 
@@ -626,7 +642,13 @@ async def get_last_sync_time(endpoint: str) -> dict:
             endpoint = f"/{endpoint}"
         row = await _db_fetchone_async(queries.LAST_SYNC_TIME_QUERY, (endpoint,))
         last_dt = row[0] if row else None
-        return {"ok": True, "endpoint": endpoint, "last_fetched_at_utc": _to_iso_or_none(last_dt), "ts_utc": _utc_now_iso()}
+        return _ok(
+            mcp_schemas.LastSyncTime(
+                endpoint=endpoint,
+                last_fetched_at_utc=_to_iso_or_none(last_dt),
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_last_sync_time_failed", details=str(e))
 
@@ -637,7 +659,7 @@ async def query_fixtures(
     date: str | None = None,
     status: str | None = None,
     limit: int = 10,
-) -> list:
+) -> dict:
     """
     Query fixtures (core.fixtures) with optional filters.
 
@@ -683,9 +705,10 @@ async def query_fixtures(
                     "updated_at_utc": _to_iso_or_none(r[9]),
                 }
             )
-        return out
+        items = [mcp_schemas.FixtureRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.FixturesQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_fixtures_failed", details=str(e))]
+        return _ok_error("query_fixtures_failed", details=str(e))
 
 
 @app.tool()
@@ -768,22 +791,24 @@ async def get_stale_live_fixtures_status(
                 }
             )
 
-        return {
-            "ok": True,
-            "threshold_minutes": int(mins),
-            "tracked_only": bool(tracked_only),
-            "scope_source": (scope_source or "daily").strip().lower(),
-            "stale_count": len(out),
-            "ignored_untracked": int(ignored_untracked),
-            "fixtures": out,
-            "ts_utc": _utc_now_iso(),
-        }
+        fixtures_items = [mcp_schemas.FixtureRow.model_validate(x) for x in out]
+        return _ok(
+            mcp_schemas.StaleLiveFixturesStatus(
+                threshold_minutes=int(mins),
+                tracked_only=bool(tracked_only),
+                scope_source=(scope_source or "daily").strip().lower(),
+                stale_count=len(fixtures_items),
+                ignored_untracked=int(ignored_untracked),
+                fixtures=fixtures_items,
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_stale_live_fixtures_status_failed", details=str(e))
 
 
 @app.tool()
-async def query_standings(league_id: int, season: int) -> list:
+async def query_standings(league_id: int, season: int) -> dict:
     """
     Query standings (core.standings) for a league+season.
     """
@@ -809,13 +834,14 @@ async def query_standings(league_id: int, season: int) -> list:
                     "updated_at_utc": _to_iso_or_none(r[13]),
                 }
             )
-        return out
+        items = [mcp_schemas.StandingsRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.StandingsQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_standings_failed", details=str(e))]
+        return _ok_error("query_standings_failed", details=str(e))
 
 
 @app.tool()
-async def query_teams(league_id: int | None = None, search: str | None = None, limit: int = 20) -> list:
+async def query_teams(league_id: int | None = None, search: str | None = None, limit: int = 20) -> dict:
     """
     Query teams (core.teams).
 
@@ -863,9 +889,10 @@ async def query_teams(league_id: int | None = None, search: str | None = None, l
                     "updated_at_utc": _to_iso_or_none(r[8]),
                 }
             )
-        return out
+        items = [mcp_schemas.TeamRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.TeamsQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_teams_failed", details=str(e))]
+        return _ok_error("query_teams_failed", details=str(e))
 
 
 @app.tool()
@@ -876,21 +903,18 @@ async def get_league_info(league_id: int) -> dict:
     try:
         row = await _db_fetchone_async(queries.LEAGUE_INFO_QUERY, (int(league_id),))
         if not row:
-            return {"ok": True, "league": None, "ts_utc": _utc_now_iso()}
-        return {
-            "ok": True,
-            "league": {
-                "id": int(row[0]),
-                "name": row[1],
-                "type": row[2],
-                "logo": row[3],
-                "country_name": row[4],
-                "country_code": row[5],
-                "country_flag": row[6],
-                "updated_at_utc": _to_iso_or_none(row[7]),
-            },
-            "ts_utc": _utc_now_iso(),
-        }
+            return _ok(mcp_schemas.LeagueInfoResponse(league=None, ts_utc=_utc_now_iso()))
+        league = mcp_schemas.LeagueInfo(
+            id=int(row[0]),
+            name=row[1],
+            type=row[2],
+            logo=row[3],
+            country_name=row[4],
+            country_code=row[5],
+            country_flag=row[6],
+            updated_at_utc=_to_iso_or_none(row[7]),
+        )
+        return _ok(mcp_schemas.LeagueInfoResponse(league=league, ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_league_info_failed", details=str(e))
 
@@ -903,29 +927,26 @@ async def get_database_stats() -> dict:
     try:
         row = await _db_fetchone_async(queries.DATABASE_STATS_QUERY, ())
         if not row:
-            return {"ok": True, "stats": None, "ts_utc": _utc_now_iso()}
-        return {
-            "ok": True,
-            "stats": {
-                "raw_api_responses": int(row[0]),
-                "core_leagues": int(row[1]),
-                "core_teams": int(row[2]),
-                "core_venues": int(row[3]),
-                "core_fixtures": int(row[4]),
-                "core_fixture_details": int(row[5]),
-                "core_injuries": int(row[6]),
-                "core_fixture_players": int(row[7]),
-                "core_fixture_events": int(row[8]),
-                "core_fixture_statistics": int(row[9]),
-                "core_fixture_lineups": int(row[10]),
-                "core_standings": int(row[11]),
-                "core_top_scorers": int(row[12]),
-                "core_team_statistics": int(row[13]),
-                "raw_last_fetched_at_utc": _to_iso_or_none(row[14]),
-                "core_fixtures_last_updated_at_utc": _to_iso_or_none(row[15]),
-            },
-            "ts_utc": _utc_now_iso(),
-        }
+            return _ok(mcp_schemas.DatabaseStatsResponse(stats=None, ts_utc=_utc_now_iso()))
+        stats = mcp_schemas.DatabaseStats(
+            raw_api_responses=int(row[0]),
+            core_leagues=int(row[1]),
+            core_teams=int(row[2]),
+            core_venues=int(row[3]),
+            core_fixtures=int(row[4]),
+            core_fixture_details=int(row[5]),
+            core_injuries=int(row[6]),
+            core_fixture_players=int(row[7]),
+            core_fixture_events=int(row[8]),
+            core_fixture_statistics=int(row[9]),
+            core_fixture_lineups=int(row[10]),
+            core_standings=int(row[11]),
+            core_top_scorers=int(row[12]),
+            core_team_statistics=int(row[13]),
+            raw_last_fetched_at_utc=_to_iso_or_none(row[14]),
+            core_fixtures_last_updated_at_utc=_to_iso_or_none(row[15]),
+        )
+        return _ok(mcp_schemas.DatabaseStatsResponse(stats=stats, ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_database_stats_failed", details=str(e))
 
@@ -937,7 +958,7 @@ async def query_injuries(
     team_id: int | None = None,
     player_id: int | None = None,
     limit: int = 50,
-) -> list:
+) -> dict:
     """
     Query injuries (core.injuries) with optional filters.
     """
@@ -986,9 +1007,10 @@ async def query_injuries(
                     "updated_at_utc": _to_iso_or_none(r[10]),
                 }
             )
-        return out
+        items = [mcp_schemas.InjuryRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.InjuriesQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_injuries_failed", details=str(e))]
+        return _ok_error("query_injuries_failed", details=str(e))
 
 
 @app.tool()
@@ -1000,33 +1022,31 @@ async def get_fixture_detail_status(fixture_id: int) -> dict:
     try:
         row = await _db_fetchone_async(queries.FIXTURE_DETAIL_STATUS_QUERY, (int(fixture_id),))
         if not row:
-            return {"ok": True, "fixture": None, "ts_utc": _utc_now_iso()}
+            return _ok(mcp_schemas.FixtureDetailStatusResponse(fixture=None, ts_utc=_utc_now_iso()))
 
-        return {
-            "ok": True,
-            "fixture": {
-                "fixture_id": int(row[0]),
-                "league_id": int(row[1]),
-                "season": _to_int_or_none(row[2]),
-                "date_utc": _to_iso_or_none(row[3]),
-                "status_short": row[4],
-                "has_players": bool(row[5]),
-                "has_events": bool(row[6]),
-                "has_statistics": bool(row[7]),
-                "has_lineups": bool(row[8]),
-                "last_players_fetch_utc": _to_iso_or_none(row[9]),
-                "last_events_fetch_utc": _to_iso_or_none(row[10]),
-                "last_statistics_fetch_utc": _to_iso_or_none(row[11]),
-                "last_lineups_fetch_utc": _to_iso_or_none(row[12]),
-            },
-            "ts_utc": _utc_now_iso(),
-        }
+        fx = mcp_schemas.FixtureDetailStatus(
+            fixture_id=int(row[0]),
+            league_id=int(row[1]),
+            season=_to_int_or_none(row[2]),
+            date_utc=_to_iso_or_none(row[3]),
+            status_short=row[4],
+            has_players=bool(row[5]),
+            has_events=bool(row[6]),
+            has_statistics=bool(row[7]),
+            has_lineups=bool(row[8]),
+            last_players_fetch_utc=_to_iso_or_none(row[9]),
+            last_events_fetch_utc=_to_iso_or_none(row[10]),
+            last_statistics_fetch_utc=_to_iso_or_none(row[11]),
+            last_lineups_fetch_utc=_to_iso_or_none(row[12]),
+        )
+
+        return _ok(mcp_schemas.FixtureDetailStatusResponse(fixture=fx, ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_fixture_detail_status_failed", details=str(e))
 
 
 @app.tool()
-async def query_fixture_players(fixture_id: int, team_id: int | None = None, limit: int = 300) -> list:
+async def query_fixture_players(fixture_id: int, team_id: int | None = None, limit: int = 300) -> dict:
     """
     Query core.fixture_players for a fixture (optionally filter by team_id).
     """
@@ -1051,13 +1071,14 @@ async def query_fixture_players(fixture_id: int, team_id: int | None = None, lim
                     "updated_at_utc": _to_iso_or_none(r[5]),
                 }
             )
-        return out
+        items = [mcp_schemas.FixturePlayerRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.FixturePlayersQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_fixture_players_failed", details=str(e))]
+        return _ok_error("query_fixture_players_failed", details=str(e))
 
 
 @app.tool()
-async def query_fixture_events(fixture_id: int, limit: int = 300) -> list:
+async def query_fixture_events(fixture_id: int, limit: int = 300) -> dict:
     """
     Query core.fixture_events for a fixture.
     """
@@ -1080,13 +1101,14 @@ async def query_fixture_events(fixture_id: int, limit: int = 300) -> list:
                     "updated_at_utc": _to_iso_or_none(r[9]),
                 }
             )
-        return out
+        items = [mcp_schemas.FixtureEventRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.FixtureEventsQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_fixture_events_failed", details=str(e))]
+        return _ok_error("query_fixture_events_failed", details=str(e))
 
 
 @app.tool()
-async def query_fixture_statistics(fixture_id: int) -> list:
+async def query_fixture_statistics(fixture_id: int) -> dict:
     """
     Query core.fixture_statistics for a fixture (one row per team).
     """
@@ -1102,13 +1124,14 @@ async def query_fixture_statistics(fixture_id: int) -> list:
                     "updated_at_utc": _to_iso_or_none(r[3]),
                 }
             )
-        return out
+        items = [mcp_schemas.FixtureStatisticsRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.FixtureStatisticsQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_fixture_statistics_failed", details=str(e))]
+        return _ok_error("query_fixture_statistics_failed", details=str(e))
 
 
 @app.tool()
-async def query_fixture_lineups(fixture_id: int) -> list:
+async def query_fixture_lineups(fixture_id: int) -> dict:
     """
     Query core.fixture_lineups for a fixture (one row per team).
     """
@@ -1128,9 +1151,10 @@ async def query_fixture_lineups(fixture_id: int) -> list:
                     "updated_at_utc": _to_iso_or_none(r[7]),
                 }
             )
-        return out
+        items = [mcp_schemas.FixtureLineupRow.model_validate(x) for x in out]
+        return _ok(mcp_schemas.FixtureLineupsQuery(items=items, ts_utc=_utc_now_iso()))
     except Exception as e:
-        return [_ok_error("query_fixture_lineups_failed", details=str(e))]
+        return _ok_error("query_fixture_lineups_failed", details=str(e))
 
 
 @app.tool()
@@ -1159,13 +1183,17 @@ async def list_tracked_leagues() -> dict:
             cur["season"] = cur.get("season") or o.get("season")
             union[lid] = cur
 
-        return {
-            "ok": True,
-            "tracked_leagues": leagues,
-            "league_overrides": overrides,
-            "configured_leagues_union": sorted(union.values(), key=lambda d: int(d["league_id"])),
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.TrackedLeaguesResponse(
+                tracked_leagues=[mcp_schemas.TrackedLeagueRow.model_validate(x) for x in leagues],
+                league_overrides=[mcp_schemas.LeagueOverrideRow.model_validate(x) for x in overrides],
+                configured_leagues_union=[
+                    mcp_schemas.ConfiguredLeagueUnionRow.model_validate(x)
+                    for x in sorted(union.values(), key=lambda d: int(d["league_id"]))
+                ],
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("list_tracked_leagues_failed", details=str(e))
 
@@ -1287,7 +1315,13 @@ async def get_job_status(job_name: str | None = None) -> dict:
             else:
                 enriched.append({**j, **raw_ev, "last_seen_at_utc": None, "last_seen_source": None})
 
-        return {"ok": True, "jobs": enriched, "log_file": logs.get("log_file"), "ts_utc": _utc_now_iso()}
+        return _ok(
+            mcp_schemas.JobStatusResponse(
+                jobs=[mcp_schemas.JobStatusRow.model_validate(x) for x in enriched],
+                log_file=logs.get("log_file"),
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_job_status_failed", details=str(e))
 
@@ -1347,13 +1381,14 @@ async def get_backfill_progress(
                 }
             )
 
-        return {
-            "ok": True,
-            "filters": {"job_id": job_id_str, "season": season_int, "include_completed": bool(include_completed), "limit": safe_limit},
-            "summaries": summaries,
-            "tasks": tasks,
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.BackfillProgressResponse(
+                filters={"job_id": job_id_str, "season": season_int, "include_completed": bool(include_completed), "limit": safe_limit},
+                summaries=[mcp_schemas.BackfillSummaryRow.model_validate(x) for x in summaries],
+                tasks=[mcp_schemas.BackfillTaskRow.model_validate(x) for x in tasks],
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_backfill_progress_failed", details=str(e))
 
@@ -1371,22 +1406,17 @@ async def get_standings_refresh_progress(job_id: str = "daily_standings") -> dic
         jid = str(job_id or "daily_standings")
         row = await _db_fetchone_async(queries.STANDINGS_REFRESH_PROGRESS_QUERY, (jid,))
         if not row:
-            return {"ok": True, "job_id": jid, "exists": False, "progress": None, "ts_utc": _utc_now_iso()}
-        return {
-            "ok": True,
-            "job_id": jid,
-            "exists": True,
-            "progress": {
-                "cursor": _to_int_or_none(row[1]),
-                "total_pairs": _to_int_or_none(row[2]),
-                "last_run_at_utc": _to_iso_or_none(row[3]),
-                "last_error": row[4],
-                "lap_count": _to_int_or_none(row[5]),
-                "last_full_pass_at_utc": _to_iso_or_none(row[6]),
-                "updated_at_utc": _to_iso_or_none(row[7]),
-            },
-            "ts_utc": _utc_now_iso(),
-        }
+            return _ok(mcp_schemas.StandingsRefreshProgressResponse(job_id=jid, exists=False, progress=None, ts_utc=_utc_now_iso()))
+        progress = mcp_schemas.StandingsRefreshProgress(
+            cursor=_to_int_or_none(row[1]),
+            total_pairs=_to_int_or_none(row[2]),
+            last_run_at_utc=_to_iso_or_none(row[3]),
+            last_error=row[4],
+            lap_count=_to_int_or_none(row[5]),
+            last_full_pass_at_utc=_to_iso_or_none(row[6]),
+            updated_at_utc=_to_iso_or_none(row[7]),
+        )
+        return _ok(mcp_schemas.StandingsRefreshProgressResponse(job_id=jid, exists=True, progress=progress, ts_utc=_utc_now_iso()))
     except Exception as e:
         return _ok_error("get_standings_refresh_progress_failed", details=str(e))
 
@@ -1433,14 +1463,17 @@ async def get_raw_error_summary(
                 }
             )
 
-        return {
-            "ok": True,
-            "window": {"since_minutes": mins},
-            "filters": {"endpoint": ep, "top_endpoints_limit": safe_top},
-            "summary": summary,
-            "by_endpoint": endpoints,
-            "ts_utc": _utc_now_iso(),
-        }
+        summary_m = mcp_schemas.RawErrorSummaryRow.model_validate(summary) if summary is not None else None
+        endpoints_m = [mcp_schemas.RawErrorsByEndpointRow.model_validate(x) for x in endpoints]
+        return _ok(
+            mcp_schemas.RawErrorSummaryResponse(
+                window={"since_minutes": mins},
+                filters={"endpoint": ep, "top_endpoints_limit": safe_top},
+                summary=summary_m,
+                by_endpoint=endpoints_m,
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_raw_error_summary_failed", details=str(e))
 
@@ -1477,13 +1510,14 @@ async def get_raw_error_samples(
                 }
             )
 
-        return {
-            "ok": True,
-            "window": {"since_minutes": mins},
-            "filters": {"endpoint": ep, "limit": safe_limit},
-            "samples": samples,
-            "ts_utc": _utc_now_iso(),
-        }
+        return _ok(
+            mcp_schemas.RawErrorSamplesResponse(
+                window={"since_minutes": mins},
+                filters={"endpoint": ep, "limit": safe_limit},
+                samples=[mcp_schemas.RawErrorSampleRow.model_validate(x) for x in samples],
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_raw_error_samples_failed", details=str(e))
 
@@ -1543,7 +1577,14 @@ async def get_recent_log_errors(job_name: str | None = None, limit: int = 50) ->
     try:
         safe_limit = max(1, min(int(limit), 200))
         parsed = _parse_recent_log_errors(job_name=job_name, limit=safe_limit)
-        return {"ok": True, "job_name": job_name, "log_file": parsed.get("log_file"), "errors": parsed.get("errors") or [], "ts_utc": _utc_now_iso()}
+        return _ok(
+            mcp_schemas.RecentLogErrorsResponse(
+                job_name=job_name,
+                log_file=parsed.get("log_file"),
+                errors=[mcp_schemas.RecentLogErrorRow.model_validate(x) for x in (parsed.get("errors") or [])],
+                ts_utc=_utc_now_iso(),
+            )
+        )
     except Exception as e:
         return _ok_error("get_recent_log_errors_failed", details=str(e))
 

@@ -22,6 +22,11 @@ Prod network notu:
 - **Resolver çıktısı**: `config/resolved_tracked_leagues.yaml` (audit amaçlı)
 - **Rate limiter**: `config/rate_limiter.yaml` (soft cap + emergency stop)
 
+Notlar:
+- **Source of truth**: Prod runtime scope yalnızca `daily.yaml -> tracked_leagues` üzerinden belirlenir.
+- `league_overrides.yaml` ve `resolved_tracked_leagues.yaml` runtime için zorunlu değildir; **resolver/audit** amaçlıdır.
+- `tracked_leagues[].name` alanı **label-only**’dir. Unicode teknik olarak sorun değildir; ops kolaylığı için ASCII/İngilizce tutulabilir.
+
 ## 2.1 Günlük fixtures modeli: per_tracked_leagues (fixtures_fetch_mode)
 
 `daily_fixtures_by_date` job’ı artık **per_tracked_leagues** modundadır:
@@ -29,6 +34,13 @@ Prod network notu:
   - `fixtures_fetch_mode: per_tracked_leagues`
 - Davranış: yalnızca `config/jobs/daily.yaml -> tracked_leagues` içindeki ligler için fixtures çekilir.
 - Sonuç: tracked olmayan competition’lar CORE’a otomatik düşmez (bilinçli karar: scope kontrolü + quota güvenliği).
+
+FK güvenliği:
+- `core.fixtures` FK ile korunur (league/team/venue).
+- Repo fixtures yazmadan önce dependency guard ile gerekiyorsa:
+  - `/leagues?id=<league_id>` (CORE league upsert)
+  - `/teams?league=<league_id>&season=<season>` (+ `/teams?id=...` fallback)
+  - venues payload’dan çıkarılıp upsert edilir
 
 Deterministik kanıt (örnek):
 - RAW (league filter olmayan global çağrı):
@@ -56,6 +68,11 @@ Deterministik kanıt (örnek):
   - Aynı `(league_id, season)` için `/teams` bir kere başarılı ise tekrar çağrılmaz
 
 ## 4.1 MCP prod transport (Traefik + streamable-http)
+
+- MCP tool output’ları artık **schema-driven** (Pydantic) ve deterministiktir:
+  - Şemalar: `src/mcp/schemas.py`
+  - Tool’lar: `src/mcp/server.py`
+  - Ortak sözleşme: `ok` + `ts_utc` + tool’a özel alanlar (liste tool’larında `items`)
 
 - Prod env:
   - `MCP_TRANSPORT=streamable-http`

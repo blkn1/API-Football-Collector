@@ -34,7 +34,11 @@ Aşağıdaki tool’lar `src/mcp/server.py` içinde tanımlıdır.
 - **D) Job status**: `get_job_status()`
   - Beklenen minimum: `ok=true`, config job’ları listelenir; log varsa status set edilir
 - **E) CORE örnekleme**: `query_fixtures(limit=10)`
-  - Beklenen minimum: liste, alanlar: `id, league_id, date_utc, status, home_team, away_team`
+  - Beklenen minimum: **envelope** (schema‑driven), örnek shape:
+    - `ok=true`
+    - `items=[...]`
+    - `ts_utc=...`
+  - Item alanları (minimum): `id, league_id, date_utc, status, home_team, away_team`
 
 Ek ops gözlemler (Phase 1.5):
 - **Backfill progress**: `get_backfill_progress()`
@@ -195,8 +199,14 @@ Bu checklist, canlı + global-by-date kapalıyken (tracked lig + backfill modeli
 - `config/jobs/daily.yaml`:\n
   - `fixtures_fetch_mode: per_tracked_leagues`\n
   - `tracked_leagues[*].id` ve `tracked_leagues[*].season` dolu\n
+- (Öneri) `tracked_leagues[*].name` ASCII/İngilizce tutulabilir (label-only; davranış `id+season`).\n
 - ENV:\n
   - `SCHEDULER_TIMEZONE=Europe/Istanbul` (cron TR saatine göre)\n
+\n
+(Opsiyonel, audit):\n
+- Resolver zinciri kullanıyorsan:\n
+  - `config/league_targets.txt` + `config/league_overrides.yaml` güncel\n
+  - `python3 scripts/resolve_tracked_leagues.py` sonrası `config/resolved_tracked_leagues.yaml` üretilmiş (audit)\n
 
 ### 4.1.2 MCP doğrulama (redeploy sonrası)
 - `get_job_status()`:\n
@@ -226,6 +236,10 @@ ORDER BY job_id;
 ### 4.1.3.1 Cron beklemeden job doğrulama (Coolify terminal)
 Collector terminal (tek lig, quota-safe):
 - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+
+Yeni eklenen lig/kupa için fixtures doğrulama (tek lig):
+- `cd /app && ONLY_LEAGUE_ID=<LEAGUE_ID> JOB_ID=daily_fixtures_by_date python3 scripts/run_job_once.py`
+  - Not: API key/quota gerekir; job bugünün UTC tarihini kullanır (`/fixtures?league&season&date`).\n
 
 Postgres terminal (kanıt):
 - `psql -U postgres -d api_football -c "SELECT COUNT(*) FROM raw.api_responses WHERE endpoint='/players/topscorers' AND fetched_at > NOW() - INTERVAL '1 hour';"`

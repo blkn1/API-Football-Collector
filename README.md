@@ -112,6 +112,15 @@ Note: live polling (/fixtures?live=all) is intentionally disabled in this deploy
 pytest -q
 ```
 
+If you want to run everything **except** Docker/Postgres integration tests (safe on hosts without docker):
+
+```bash
+.venv/bin/python -m pytest -q -m 'not integration' tests
+```
+
+Notes:
+- Integration tests are marked with `@pytest.mark.integration` and are expected to require docker/postgres.
+
 If you’re running in Coolify and want a safe smoke-test locally first:
 - `python scripts/test_api.py` (FREE `/status`)
 - `pytest -q tests/unit/test_rate_limiter.py`
