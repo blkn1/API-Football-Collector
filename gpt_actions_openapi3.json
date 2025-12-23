@@ -295,12 +295,22 @@
         "required": ["ok", "fixture_id", "items"],
         "additionalProperties": true
       },
+      "FixtureStatisticKV": {
+        "type": "object",
+        "description": "One stat entry as stored in core.fixture_statistics.statistics (derived from /fixtures/statistics).",
+        "properties": {
+          "type": { "type": "string", "description": "API-Football stat label (e.g. 'Corner Kicks')." },
+          "value": { "anyOf": [{ "type": "integer" }, { "type": "string" }, { "type": "null" }], "description": "May be int-ish or percentage-like strings." }
+        },
+        "required": ["type"],
+        "additionalProperties": true
+      },
       "StatisticItem": {
         "type": "object",
         "properties": {
           "fixture_id": { "type": "integer" },
           "team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
-          "statistics": { "type": "object" },
+          "statistics": { "type": "array", "items": { "$ref": "#/components/schemas/FixtureStatisticKV" } },
           "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
         },
         "additionalProperties": true
@@ -487,6 +497,21 @@
         },
         "required": ["ok", "ts_utc", "league_id", "season", "decisions"],
         "additionalProperties": true
+      },
+      "TeamMetricsResponse": {
+        "type": "object",
+        "description": "Aggregated per-team features computed from completed fixtures and core.fixture_statistics (includes corner_kicks average when available).",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "team_id": { "type": "integer" },
+          "window": { "type": "object" },
+          "results": { "type": "object" },
+          "goals": { "type": "object" },
+          "match_stats_avg": { "type": "object" },
+          "fixtures_sample": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["ok", "team_id", "window", "results", "goals", "match_stats_avg", "fixtures_sample"],
+        "additionalProperties": true
       }
     }
   },
@@ -555,6 +580,24 @@
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } }
           },
           "400": { "description": "Invalid date range / parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/teams/{team_id}/metrics": {
+      "get": {
+        "summary": "Team metrics / feature summary (includes corner_kicks average when available)",
+        "operationId": "getTeamMetrics",
+        "parameters": [
+          { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "last_n", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 50 } },
+          { "name": "as_of_date", "in": "query", "required": false, "schema": { "type": "string", "format": "date" }, "description": "Optional UTC cutoff date (YYYY-MM-DD), end-of-day inclusive." }
+        ],
+        "responses": {
+          "200": { "description": "Team metrics payload", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamMetricsResponse" } } } },
+          "400": { "description": "Invalid parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
           "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
         },
