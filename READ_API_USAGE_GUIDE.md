@@ -23,6 +23,29 @@ Odak:
 
 ---
 
+## Strict query params (katı kurallar)
+
+Read API artık **katı query param** modunda çalışır:
+
+- Bir endpoint’in desteklemediği query param gönderirsen (örn. `/v1/fixtures?date=...&date_from=...`)
+- Sunucu **400** döner ve param’ı “sessizce yok saymaz”.
+
+Hata formatı (FastAPI HTTPException):
+
+```json
+{
+  "detail": {
+    "error": "unknown_query_params",
+    "unknown": ["date_from"],
+    "allowed": ["date", "league_id", "limit", "status"]
+  }
+}
+```
+
+Bu kural özellikle ActionsGPT/agent’ların “uydurma param” üretmesini engellemek için eklendi.
+
+---
+
 ## Güvenlik (prod): IP allowlist + Basic Auth
 
 Read API’de tüm uçlar `require_access` ile korunabilir:

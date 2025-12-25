@@ -21,6 +21,32 @@
         },
         "additionalProperties": true
       },
+      "UnknownQueryParamsError": {
+        "type": "object",
+        "description": "Returned when a client sends query parameters that are not supported by the endpoint.",
+        "properties": {
+          "error": { "type": "string", "enum": ["unknown_query_params"] },
+          "unknown": { "type": "array", "items": { "type": "string" } },
+          "allowed": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["error", "unknown", "allowed"],
+        "additionalProperties": true
+      },
+      "HTTPExceptionDetailEnvelope": {
+        "type": "object",
+        "description": "FastAPI HTTPException envelope. Many errors are returned as {\"detail\": ...}.",
+        "properties": {
+          "detail": {
+            "anyOf": [
+              { "type": "string" },
+              { "$ref": "#/components/schemas/UnknownQueryParamsError" },
+              { "type": "object" }
+            ]
+          }
+        },
+        "required": ["detail"],
+        "additionalProperties": true
+      },
       "Paging": {
         "type": "object",
         "properties": {
@@ -171,6 +197,134 @@
       "V1FixturesArray": {
         "type": "array",
         "items": { "$ref": "#/components/schemas/V1Fixture" }
+      },
+      "V1StandingItem": {
+        "type": "object",
+        "description": "Row returned by GET /v1/standings/{league_id}/{season}. Extra fields are allowed.",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "team_id": { "type": "integer" },
+          "team": { "type": "string" },
+          "rank": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "points": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "goals_diff": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "goals_for": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "goals_against": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "form": { "type": "string" },
+          "status": { "type": "string" },
+          "description": { "type": "string" },
+          "group": { "type": "string" },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "additionalProperties": true
+      },
+      "V1StandingsArray": { "type": "array", "items": { "$ref": "#/components/schemas/V1StandingItem" } },
+      "V1Team": {
+        "type": "object",
+        "description": "Team shape returned by GET /v1/teams. Extra fields are allowed.",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "code": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "country": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "founded": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "national": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
+          "logo": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "venue_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "additionalProperties": true
+      },
+      "V1TeamsArray": { "type": "array", "items": { "$ref": "#/components/schemas/V1Team" } },
+      "V1InjuryItem": {
+        "type": "object",
+        "description": "Row returned by GET /v1/injuries. Extra fields are allowed.",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "player_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "player_name": { "type": "string" },
+          "team_name": { "type": "string" },
+          "type": { "type": "string" },
+          "reason": { "type": "string" },
+          "severity": { "type": "string" },
+          "date": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "additionalProperties": true
+      },
+      "V1InjuriesArray": { "type": "array", "items": { "$ref": "#/components/schemas/V1InjuryItem" } },
+      "ReadCountryItem": {
+        "type": "object",
+        "properties": {
+          "country_name": { "type": "string" },
+          "country_code": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "country_flag": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "leagues_count": { "anyOf": [{ "type": "integer" }, { "type": "null" }] }
+        },
+        "additionalProperties": true
+      },
+      "ReadCountriesEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ReadCountryItem" } },
+          "paging": { "$ref": "#/components/schemas/Paging" }
+        },
+        "required": ["ok", "items"],
+        "additionalProperties": true
+      },
+      "ReadInjuryItem": {
+        "type": "object",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "player_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "player_name": { "type": "string" },
+          "team_name": { "type": "string" },
+          "type": { "type": "string" },
+          "reason": { "type": "string" },
+          "severity": { "type": "string" },
+          "date": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "additionalProperties": true
+      },
+      "ReadInjuriesEnvelope": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ReadInjuryItem" } },
+          "paging": { "$ref": "#/components/schemas/Paging" }
+        },
+        "required": ["ok", "items"],
+        "additionalProperties": true
+      },
+      "ReadH2HResponse": {
+        "type": "object",
+        "description": "Head-to-head fixtures + summary derived from core.fixtures.",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "teams": { "type": "object" },
+          "filters": { "type": "object" },
+          "summary_team1": { "type": "object" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/V1Fixture" } }
+        },
+        "required": ["ok", "items"],
+        "additionalProperties": true
+      },
+      "V1FixtureDetailsResponse": {
+        "type": "object",
+        "description": "Merged fixture details (events, lineups, statistics, players). Shape is intentionally flexible.",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "fixture_id": { "type": "integer" }
+        },
+        "required": ["ok", "fixture_id"],
+        "additionalProperties": true
       },
       "ReadLeague": {
         "type": "object",
@@ -522,11 +676,16 @@
     "/v1/health": {
       "get": {
         "summary": "Health check",
+        "description": "Strict query params: only listed query parameters are accepted; unknown parameters return 400.",
         "operationId": "getHealth",
         "responses": {
           "200": {
             "description": "Service health",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } }
+          },
+          "400": {
+            "description": "Unknown or invalid query parameters (strict mode)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
           }
         }
       }
@@ -534,15 +693,24 @@
     "/v1/quota": {
       "get": {
         "summary": "Quota status",
+        "description": "Strict query params: only listed query parameters are accepted; unknown parameters return 400.",
         "operationId": "getQuota",
         "responses": {
           "200": {
             "description": "Rate-limit information",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaResponse" } } }
           },
+          "400": {
+            "description": "Unknown or invalid query parameters (strict mode)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
+          },
           "401": {
             "description": "Unauthorized",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
+          },
+          "403": {
+            "description": "Forbidden (IP allowlist)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
           }
         }
       }
@@ -550,6 +718,7 @@
     "/v1/fixtures": {
       "get": {
         "summary": "List fixtures",
+        "description": "Strict query params: only date, league_id, status, limit are accepted. Unknown query params return 400.",
         "operationId": "getFixtures",
         "parameters": [
           { "name": "date", "in": "query", "schema": { "type": "string", "format": "date" } },
@@ -561,6 +730,18 @@
           "200": {
             "description": "List of fixtures (array, no envelope)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } }
+          },
+          "400": {
+            "description": "Unknown or invalid query parameters (strict mode)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
+          },
+          "403": {
+            "description": "Forbidden (IP allowlist)",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } }
           }
         }
       }
@@ -568,6 +749,7 @@
     "/v1/teams/{team_id}/fixtures": {
       "get": {
         "summary": "List fixtures for a team across all competitions within a UTC date range",
+        "description": "Strict query params: only from_date, to_date, status, limit are accepted. Unknown query params return 400.",
         "operationId": "getTeamFixtures",
         "parameters": [
           { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
@@ -581,9 +763,9 @@
             "description": "List of team fixtures (array, no envelope)",
             "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } }
           },
-          "400": { "description": "Invalid date range / parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown or invalid query parameters / invalid date range (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         },
         "security": [{ "basicAuth": [] }]
       }
@@ -591,6 +773,7 @@
     "/v1/teams/{team_id}/metrics": {
       "get": {
         "summary": "Team metrics / feature summary (includes corner_kicks average when available)",
+        "description": "Strict query params: only last_n, as_of_date are accepted. Unknown query params return 400.",
         "operationId": "getTeamMetrics",
         "parameters": [
           { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
@@ -599,9 +782,148 @@
         ],
         "responses": {
           "200": { "description": "Team metrics payload", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamMetricsResponse" } } } },
-          "400": { "description": "Invalid parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/fixtures/{fixture_id}/details": {
+      "get": {
+        "summary": "Fixture details (merged snapshot + normalized fallbacks)",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
+        "operationId": "getFixtureDetails",
+        "parameters": [{ "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": {
+          "200": { "description": "Fixture details payload", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixtureDetailsResponse" } } } },
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/h2h": {
+      "get": {
+        "summary": "Head-to-head fixtures (simple list)",
+        "description": "Strict query params: only home_team_id, away_team_id, limit are accepted. Unknown query params return 400.",
+        "operationId": "getH2H",
+        "parameters": [
+          { "name": "home_team_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "away_team_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 5, "minimum": 1, "maximum": 50 } }
+        ],
+        "responses": {
+          "200": { "description": "List of fixtures (array, no envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1FixturesArray" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/standings/{league_id}/{season}": {
+      "get": {
+        "summary": "Standings table (v1 list)",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
+        "operationId": "getStandingsV1",
+        "parameters": [
+          { "name": "league_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "season", "in": "path", "required": true, "schema": { "type": "integer" } }
+        ],
+        "responses": {
+          "200": { "description": "Standings list (array, no envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1StandingsArray" } } } },
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/teams": {
+      "get": {
+        "summary": "List teams",
+        "description": "Strict query params: only search, league_id, limit are accepted. Unknown query params return 400.",
+        "operationId": "getTeams",
+        "parameters": [
+          { "name": "search", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Teams list (array, no envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1TeamsArray" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/injuries": {
+      "get": {
+        "summary": "List injuries (v1 list)",
+        "description": "Strict query params: only league_id, season, team_id, player_id, limit are accepted. Unknown query params return 400.",
+        "operationId": "getInjuriesV1",
+        "parameters": [
+          { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "team_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "player_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Injuries list (array, no envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1InjuriesArray" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/sse/system-status": {
+      "get": {
+        "summary": "SSE: system status stream",
+        "description": "Strict query params: only interval_seconds is accepted. Unknown query params return 400.",
+        "operationId": "sseSystemStatus",
+        "parameters": [{ "name": "interval_seconds", "in": "query", "required": false, "schema": { "type": "integer", "default": 5, "minimum": 2, "maximum": 60 } }],
+        "responses": {
+          "200": { "description": "text/event-stream", "content": { "text/event-stream": { "schema": { "type": "string" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/sse/live-scores": {
+      "get": {
+        "summary": "SSE: live score updates stream",
+        "description": "Strict query params: only interval_seconds, limit are accepted. Unknown query params return 400.",
+        "operationId": "sseLiveScores",
+        "parameters": [
+          { "name": "interval_seconds", "in": "query", "required": false, "schema": { "type": "integer", "default": 3, "minimum": 2, "maximum": 30 } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 300, "minimum": 1, "maximum": 500 } }
+        ],
+        "responses": {
+          "200": { "description": "text/event-stream", "content": { "text/event-stream": { "schema": { "type": "string" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/ops": {
+      "get": {
+        "summary": "Ops dashboard (HTML)",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
+        "operationId": "opsDashboardHtml",
+        "responses": {
+          "200": { "description": "text/html", "content": { "text/html": { "schema": { "type": "string" } } } },
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         },
         "security": [{ "basicAuth": [] }]
       }
@@ -609,6 +931,7 @@
     "/read/leagues": {
       "get": {
         "summary": "List leagues",
+        "description": "Strict query params: only country, season, limit, offset are accepted. Unknown query params return 400.",
         "operationId": "readLeagues",
         "parameters": [
           { "name": "country", "in": "query", "schema": { "type": "string" } },
@@ -617,13 +940,36 @@
           { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 } }
         ],
         "responses": {
-          "200": { "description": "Leagues list (envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadLeaguesEnvelope" } } } }
+          "200": { "description": "Leagues list (envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadLeaguesEnvelope" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        }
+      }
+    },
+    "/read/countries": {
+      "get": {
+        "summary": "List countries present in core.leagues",
+        "description": "Strict query params: only season, q, limit, offset are accepted. Unknown query params return 400.",
+        "operationId": "readCountries",
+        "parameters": [
+          { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "q", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 200, "minimum": 1, "maximum": 500 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Countries list (ok + items + paging)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadCountriesEnvelope" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures": {
       "get": {
         "summary": "Get fixtures (curated)",
+        "description": "Strict query params: only league_id, country, season, date_from, date_to, team_id, status, limit, offset are accepted. Unknown query params return 400.",
         "operationId": "readFixtures",
         "parameters": [
           { "name": "league_id", "in": "query", "schema": { "type": "integer" } },
@@ -638,57 +984,76 @@
         ],
         "responses": {
           "200": { "description": "Curated fixtures (ok + items + paging)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadFixturesEnvelope" } } } },
-          "400": { "description": "Invalid parameters", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures/{fixture_id}": {
       "get": {
         "summary": "Get curated fixture by id",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
         "operationId": "readFixtureById",
         "parameters": [{ "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } }],
         "responses": {
           "200": { "description": "Curated fixture (ok + item)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadFixtureItemEnvelope" } } } },
-          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "404": { "description": "Not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures/{fixture_id}/events": {
       "get": {
         "summary": "Fixture events",
+        "description": "Strict query params: only limit is accepted. Unknown query params return 400.",
         "operationId": "readFixtureEvents",
         "parameters": [
           { "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } },
           { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 5000, "minimum": 1, "maximum": 10000 } }
         ],
         "responses": {
-          "200": { "description": "Events (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventsEnvelope" } } } }
+          "200": { "description": "Events (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventsEnvelope" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures/{fixture_id}/lineups": {
       "get": {
         "summary": "Fixture lineups",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
         "operationId": "readFixtureLineups",
         "parameters": [{ "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } }],
         "responses": {
-          "200": { "description": "Lineups (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LineupsEnvelope" } } } }
+          "200": { "description": "Lineups (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LineupsEnvelope" } } } },
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures/{fixture_id}/statistics": {
       "get": {
         "summary": "Fixture statistics",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
         "operationId": "readFixtureStatistics",
         "parameters": [{ "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } }],
         "responses": {
-          "200": { "description": "Statistics (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatisticsEnvelope" } } } }
+          "200": { "description": "Statistics (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StatisticsEnvelope" } } } },
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/fixtures/{fixture_id}/players": {
       "get": {
         "summary": "Fixture players",
+        "description": "Strict query params: only team_id, limit are accepted. Unknown query params return 400.",
         "operationId": "readFixturePlayers",
         "parameters": [
           { "name": "fixture_id", "in": "path", "required": true, "schema": { "type": "integer" } },
@@ -696,26 +1061,56 @@
           { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 5000, "minimum": 1, "maximum": 20000 } }
         ],
         "responses": {
-          "200": { "description": "Players (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayersEnvelope" } } } }
+          "200": { "description": "Players (ok + fixture_id + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlayersEnvelope" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/standings": {
       "get": {
         "summary": "Get league standings",
+        "description": "Strict query params: only league_id, season are accepted. Unknown query params return 400.",
         "operationId": "readStandings",
         "parameters": [
           { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
           { "name": "season", "in": "query", "required": true, "schema": { "type": "integer" } }
         ],
         "responses": {
-          "200": { "description": "Standings data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StandingsResponse" } } } }
+          "200": { "description": "Standings data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StandingsResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        }
+      }
+    },
+    "/read/injuries": {
+      "get": {
+        "summary": "Injuries (curated + paging)",
+        "description": "Strict query params: only league_id, country, season, team_id, player_id, limit, offset are accepted. Unknown query params return 400.",
+        "operationId": "readInjuries",
+        "parameters": [
+          { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "country", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "team_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "player_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 200, "minimum": 1, "maximum": 1000 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Injuries (ok + items + paging)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadInjuriesEnvelope" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/top_scorers": {
       "get": {
         "summary": "Top scorers by league and season",
+        "description": "Strict query params: only league_id, season, include_raw, limit, offset are accepted. Unknown query params return 400.",
         "operationId": "readTopScorers",
         "parameters": [
           { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
@@ -725,13 +1120,17 @@
           { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } }
         ],
         "responses": {
-          "200": { "description": "Top scorers data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TopScorersResponse" } } } }
+          "200": { "description": "Top scorers data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TopScorersResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/team_statistics": {
       "get": {
         "summary": "Team statistics by league and season",
+        "description": "Strict query params: only league_id, season, team_id, include_raw, limit, offset are accepted. Unknown query params return 400.",
         "operationId": "readTeamStatistics",
         "parameters": [
           { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
@@ -742,13 +1141,17 @@
           { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } }
         ],
         "responses": {
-          "200": { "description": "Team statistics data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamStatisticsResponse" } } } }
+          "200": { "description": "Team statistics data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamStatisticsResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/read/coverage": {
       "get": {
         "summary": "Coverage and freshness report",
+        "description": "Strict query params: only season, league_id, country, endpoint, limit, offset are accepted. Unknown query params return 400.",
         "operationId": "readCoverage",
         "parameters": [
           { "name": "season", "in": "query", "required": true, "schema": { "type": "integer" } },
@@ -759,23 +1162,50 @@
           { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0, "minimum": 0 } }
         ],
         "responses": {
-          "200": { "description": "Coverage data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CoverageResponse" } } } }
+          "200": { "description": "Coverage data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CoverageResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        }
+      }
+    },
+    "/read/h2h": {
+      "get": {
+        "summary": "Head-to-head fixtures + summary (curated)",
+        "description": "Strict query params: only team1_id, team2_id, league_id, season, limit are accepted. Unknown query params return 400.",
+        "operationId": "readH2H",
+        "parameters": [
+          { "name": "team1_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "team2_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "H2H (ok + summary + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadH2HResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/ops/api/system_status": {
       "get": {
         "summary": "System status",
+        "description": "Strict query params: no query parameters are accepted. Unknown query params return 400.",
         "operationId": "opsSystemStatus",
         "responses": {
           "200": { "description": "System status (ok + nested objects)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpsSystemStatusResponse" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         }
       }
     },
     "/ops/api/scope_policy": {
       "get": {
         "summary": "Explain scope policy decisions for a league (why an endpoint is out-of-scope)",
+        "description": "Strict query params: only league_id, season are accepted. Unknown query params return 400.",
         "operationId": "opsScopePolicy",
         "parameters": [
           { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
@@ -783,8 +1213,9 @@
         ],
         "responses": {
           "200": { "description": "Scope policy decisions (ok + decisions[])", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OpsScopePolicyResponse" } } } },
-          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
-          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden (IP allowlist)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
         },
         "security": [{ "basicAuth": [] }]
       }

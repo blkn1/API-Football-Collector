@@ -1,0 +1,54 @@
+ZINALYZE READ API — AI/Actions TALİMATLARI (KATI KURALLAR)
+
+1) EN KRİTİK KURAL: STRICT QUERY PARAMS
+- Sadece OpenAPI’de listelenen query param’ları kullan.
+- Tanımsız param gönderirsen sunucu 400 döner:
+  {"detail":{"error":"unknown_query_params","unknown":[...],"allowed":[...]}}
+- Bu hatayı alınca: unknown param’ları sil, sadece allowed içinden devam et.
+
+2) TARİH FİLTRELEME DOĞRU ENDPOINT SEÇİMİ
+- Tek gün fixture listesi: GET /v1/fixtures?date=YYYY-MM-DD
+  - Sadece: date, league_id, status, limit
+  - date_from/date_to BU ENDPOINT’TE YOK
+- Tarih aralığı (league/country scope ile): GET /read/fixtures?league_id=...&season=...&date_from=...&date_to=...
+  - Sadece: league_id, country, season, date_from, date_to, team_id, status, limit, offset
+  - /read/fixtures’te league_id veya country zorunlu (en az biri)
+
+3) KORNER (Corner Kicks) VERİSİ
+- Maç (fixture) bazında: GET /read/fixtures/{fixture_id}/statistics
+  - items[] içinde team_id bazında statistics[] listesi vardır
+  - "Corner Kicks" satırından okunur
+- Takım bazında (son N maç):
+  - GET /v1/teams/{team_id}/metrics?last_n=20
+  - Ortalama: match_stats_avg.corner_kicks
+  - Toplam: match_stats_sum.corner_kicks
+  - Kaç maçta stats geldi: match_stats_count.corner_kicks
+
+4) HANGİ ENDPOINT NE İŞE YARAR? (KISA)
+- /v1/health: sağlık
+- /v1/quota: collector’ın son gördüğü quota
+- /v1/fixtures: ince fixtures listesi (tek gün)
+- /read/fixtures: curated fixtures + paging + tarih aralığı
+- /v1/fixtures/{fixture_id}/details: match details tek pakette (events/lineups/statistics/players)
+- /read/fixtures/{fixture_id}/events|lineups|statistics|players: detay parçaları
+- /read/standings: standings (league_id + season)
+- /read/injuries: injuries (league/country scope + paging)
+- /read/top_scorers: top scorers
+- /read/team_statistics: team statistics
+- /read/coverage: coverage/freshness
+- /read/h2h veya /v1/h2h: h2h
+- /ops/api/system_status ve /ops/api/scope_policy: ops izleme
+
+5) AUTH
+- Prod’da Basic Auth kullan:
+  - curl: -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD"
+- IP allowlist varsa 403 ip_not_allowed alırsın.
+
+6) HATA ÇÖZÜMLEME REHBERİ
+- 400 + unknown_query_params: sadece allowed param’lara geri dön
+- 400 + season_required: season ver veya READ_API_DEFAULT_SEASON set et
+- 401: basic_auth_required / invalid_credentials
+- 403: ip_not_allowed
+- 404: fixture_not_found
+
+

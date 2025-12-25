@@ -56,6 +56,28 @@ def require_access(request: Request, creds: HTTPBasicCredentials | None = Depend
         raise HTTPException(status_code=401, detail="invalid_credentials", headers={"WWW-Authenticate": "Basic"})
 
 
+def require_only_query_params(allowed: set[str]):
+    """
+    Strict query param enforcement to prevent clients (incl. LLM tools) from sending unsupported params.
+    Unknown query params -> 400 with a machine-readable payload in HTTPException.detail.
+    """
+    allowed_set = {str(x) for x in (allowed or set())}
+
+    async def _dep(request: Request) -> None:
+        unknown = sorted({k for k in request.query_params.keys() if k not in allowed_set})
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "unknown_query_params",
+                    "unknown": unknown,
+                    "allowed": sorted(allowed_set),
+                },
+            )
+
+    return _dep
+
+
 def _to_int_or_none(x: Any) -> int | None:
     try:
         return int(x) if x is not None else None
@@ -191,7 +213,7 @@ async def _fetchall_async(sql_text: str, params: tuple[Any, ...]) -> list[tuple[
     return await asyncio.to_thread(_fetchall, sql_text, params)
 
 
-@app.get("/v1/health")
+@app.get("/v1/health", dependencies=[Depends(require_only_query_params(set()))])
 async def health() -> dict:
     try:
         row = await _fetchone_async("SELECT 1;", ())
@@ -200,7 +222,10 @@ async def health() -> dict:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 
 
-@app.get("/v1/quota", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/quota",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def quota() -> dict:
     row = await _fetchone_async(mcp_queries.LAST_QUOTA_HEADERS_QUERY, ())
     if not row:
@@ -214,7 +239,10 @@ async def quota() -> dict:
     }
 
 
-@app.get("/v1/fixtures", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/fixtures",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "date", "status", "limit"}))],
+)
 async def fixtures(league_id: int | None = None, date: str | None = None, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 200))
     filters: list[str] = []
@@ -254,7 +282,10 @@ async def fixtures(league_id: int | None = None, date: str | None = None, status
     return out
 
 
-@app.get("/v1/teams/{team_id}/fixtures", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/teams/{team_id}/fixtures",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"from_date", "to_date", "status", "limit"}))],
+)
 async def team_fixtures(
     team_id: int,
     from_date: str,
@@ -363,7 +394,10 @@ def _extract_team_match_stats(statistics_json: Any) -> dict[str, int | None]:
     return out
 
 
-@app.get("/v1/fixtures/{fixture_id}/details", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/fixtures/{fixture_id}/details",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def fixture_details(fixture_id: int) -> dict[str, Any]:
     """
     Return a merged view of fixture detail data.\n
@@ -471,7 +505,10 @@ async def fixture_details(fixture_id: int) -> dict[str, Any]:
     }
 
 
-@app.get("/v1/h2h", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/h2h",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"home_team_id", "away_team_id", "limit"}))],
+)
 async def h2h(home_team_id: int, away_team_id: int, limit: int = 5) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 50))
     rows = await _fetchall_async(
@@ -499,7 +536,10 @@ async def h2h(home_team_id: int, away_team_id: int, limit: int = 5) -> list[dict
     return out
 
 
-@app.get("/v1/teams/{team_id}/metrics", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/teams/{team_id}/metrics",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"last_n", "as_of_date"}))],
+)
 async def team_metrics(team_id: int, last_n: int = 20, as_of_date: str | None = None) -> dict[str, Any]:
     """
     Aggregated features for match prediction.\n
@@ -710,7 +750,10 @@ async def team_metrics(team_id: int, last_n: int = 20, as_of_date: str | None = 
     }
 
 
-@app.get("/v1/standings/{league_id}/{season}", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/standings/{league_id}/{season}",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def standings(league_id: int, season: int) -> list[dict[str, Any]]:
     rows = await _fetchall_async(mcp_queries.STANDINGS_QUERY, (int(league_id), int(season)))
     out: list[dict[str, Any]] = []
@@ -736,7 +779,10 @@ async def standings(league_id: int, season: int) -> list[dict[str, Any]]:
     return out
 
 
-@app.get("/v1/teams", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/teams",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"search", "league_id", "limit"}))],
+)
 async def teams(search: str | None = None, league_id: int | None = None, limit: int = 50) -> list[dict[str, Any]]:
     safe_limit = max(1, min(int(limit), 200))
     filters: list[str] = []
@@ -780,7 +826,10 @@ async def teams(search: str | None = None, league_id: int | None = None, limit: 
     return out
 
 
-@app.get("/v1/injuries", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/injuries",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "season", "team_id", "player_id", "limit"}))],
+)
 async def injuries(
     league_id: int | None = None,
     season: int | None = None,
@@ -1029,7 +1078,10 @@ LIMIT %s OFFSET %s
 """
 
 
-@app.get("/read/leagues", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/leagues",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"country", "season", "limit", "offset"}))],
+)
 async def read_leagues(
     country: str | None = None,
     season: int | None = None,
@@ -1083,7 +1135,10 @@ async def read_leagues(
     return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
 
-@app.get("/read/countries", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/countries",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"season", "q", "limit", "offset"}))],
+)
 async def read_countries(
     season: int | None = None,
     q: str | None = None,
@@ -1136,7 +1191,13 @@ async def read_countries(
         )
     return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
-@app.get("/read/fixtures", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures",
+    dependencies=[
+        Depends(require_access),
+        Depends(require_only_query_params({"league_id", "country", "season", "date_from", "date_to", "team_id", "status", "limit", "offset"})),
+    ],
+)
 async def read_fixtures(
     league_id: int | None = None,
     country: str | None = None,
@@ -1218,7 +1279,10 @@ async def read_fixtures(
     return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
 
-@app.get("/read/fixtures/{fixture_id}", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures/{fixture_id}",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def read_fixture(fixture_id: int) -> dict[str, Any]:
     # Reuse FIXTURES_READ_SQL with id filter, limit 1
     filters = "AND f.id = %s"
@@ -1251,7 +1315,10 @@ async def read_fixture(fixture_id: int) -> dict[str, Any]:
     }
 
 
-@app.get("/read/fixtures/{fixture_id}/events", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures/{fixture_id}/events",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"limit"}))],
+)
 async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, Any]:
     safe_limit = _safe_limit(limit, cap=10000)
     rows = await _fetchall_async(mcp_queries.FIXTURE_EVENTS_QUERY, (int(fixture_id), safe_limit))
@@ -1274,7 +1341,10 @@ async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, A
     return {"ok": True, "fixture_id": int(fixture_id), "items": items}
 
 
-@app.get("/read/fixtures/{fixture_id}/lineups", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures/{fixture_id}/lineups",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
     rows = await _fetchall_async(mcp_queries.FIXTURE_LINEUPS_QUERY, (int(fixture_id),))
     items: list[dict[str, Any]] = []
@@ -1294,7 +1364,10 @@ async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
     return {"ok": True, "fixture_id": int(fixture_id), "items": items}
 
 
-@app.get("/read/fixtures/{fixture_id}/statistics", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures/{fixture_id}/statistics",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
     rows = await _fetchall_async(mcp_queries.FIXTURE_STATISTICS_QUERY, (int(fixture_id),))
     items: list[dict[str, Any]] = []
@@ -1310,7 +1383,10 @@ async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
     return {"ok": True, "fixture_id": int(fixture_id), "items": items}
 
 
-@app.get("/read/fixtures/{fixture_id}/players", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/fixtures/{fixture_id}/players",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"team_id", "limit"}))],
+)
 async def read_fixture_players(
     fixture_id: int, team_id: int | None = None, limit: int = 5000
 ) -> dict[str, Any]:
@@ -1336,7 +1412,10 @@ async def read_fixture_players(
     return {"ok": True, "fixture_id": int(fixture_id), "items": items}
 
 
-@app.get("/read/standings", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/standings",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "season"}))],
+)
 async def read_standings(league_id: int, season: int | None = None) -> dict[str, Any]:
     s = _require_season(season)
     rows = await _fetchall_async(mcp_queries.STANDINGS_QUERY, (int(league_id), int(s)))
@@ -1363,7 +1442,10 @@ async def read_standings(league_id: int, season: int | None = None) -> dict[str,
     return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items}
 
 
-@app.get("/read/injuries", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/injuries",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "country", "season", "team_id", "player_id", "limit", "offset"}))],
+)
 async def read_injuries(
     league_id: int | None = None,
     country: str | None = None,
@@ -1439,7 +1521,10 @@ async def read_injuries(
     return {"ok": True, "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
 
-@app.get("/read/top_scorers", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/top_scorers",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "season", "include_raw", "limit", "offset"}))],
+)
 async def read_top_scorers(
     league_id: int,
     season: int | None = None,
@@ -1471,7 +1556,10 @@ async def read_top_scorers(
     return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
 
-@app.get("/read/team_statistics", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/team_statistics",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "season", "team_id", "include_raw", "limit", "offset"}))],
+)
 async def read_team_statistics(
     league_id: int,
     season: int | None = None,
@@ -1507,7 +1595,10 @@ async def read_team_statistics(
         )
     return {"ok": True, "league_id": int(league_id), "season": int(s), "items": items, "paging": {"limit": safe_limit, "offset": safe_offset}}
 
-@app.get("/read/coverage", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/coverage",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"season", "league_id", "country", "endpoint", "limit", "offset"}))],
+)
 async def read_coverage(
     league_id: int | None = None,
     country: str | None = None,
@@ -1571,7 +1662,10 @@ async def read_coverage(
     }
 
 
-@app.get("/read/h2h", dependencies=[Depends(require_access)])
+@app.get(
+    "/read/h2h",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"team1_id", "team2_id", "league_id", "season", "limit"}))],
+)
 async def read_h2h(
     team1_id: int,
     team2_id: int,
@@ -1686,7 +1780,10 @@ async def read_h2h(
     }
 
 
-@app.get("/v1/sse/system-status", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/sse/system-status",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"interval_seconds"}))],
+)
 async def sse_system_status(request: Request, interval_seconds: int = 5) -> Response:
     interval = max(2, min(int(interval_seconds), 60))
 
@@ -1706,7 +1803,10 @@ async def sse_system_status(request: Request, interval_seconds: int = 5) -> Resp
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
-@app.get("/v1/sse/live-scores", dependencies=[Depends(require_access)])
+@app.get(
+    "/v1/sse/live-scores",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"interval_seconds", "limit"}))],
+)
 async def sse_live_scores(request: Request, interval_seconds: int = 3, limit: int = 300) -> Response:
     interval = max(2, min(int(interval_seconds), 30))
     safe_limit = max(1, min(int(limit), 500))
@@ -1816,12 +1916,18 @@ OPS_DASHBOARD_HTML = """<!doctype html>
 """
 
 
-@app.get("/ops", dependencies=[Depends(require_access)])
+@app.get(
+    "/ops",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def ops_dashboard() -> Response:
     return Response(content=OPS_DASHBOARD_HTML, media_type="text/html")
 
 
-@app.get("/ops/api/system_status", dependencies=[Depends(require_access)])
+@app.get(
+    "/ops/api/system_status",
+    dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
+)
 async def ops_system_status() -> dict:
     # Import here (lazy) to avoid any startup coupling when ops panel isn't used.
     from src.mcp import server as mcp_server
@@ -1882,7 +1988,10 @@ async def ops_system_status() -> dict:
     }
 
 
-@app.get("/ops/api/scope_policy", dependencies=[Depends(require_access)])
+@app.get(
+    "/ops/api/scope_policy",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"league_id", "season"}))],
+)
 async def ops_scope_policy(league_id: int, season: int | None = None) -> dict:
     """
     Explain why certain endpoints are missing for a given league.
