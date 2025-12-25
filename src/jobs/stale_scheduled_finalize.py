@@ -285,7 +285,10 @@ async def run_stale_scheduled_finalize(*, client: APIClient, limiter: RateLimite
                         full_table_name="core.fixture_details",
                         rows=details_rows,
                         conflict_cols=["fixture_id"],
-                        update_cols=["events", "lineups", "statistics", "players", "updated_at"],
+                        # NOTE: upsert_core() already appends "updated_at = NOW()" to every UPSERT.
+                        # Including "updated_at" in update_cols causes Postgres:
+                        #   multiple assignments to same column "updated_at"
+                        update_cols=["events", "lineups", "statistics", "players"],
                         conn=conn,
                     )
             fixtures_upserted += len(fixtures_rows)
