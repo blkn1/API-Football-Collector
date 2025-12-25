@@ -79,6 +79,32 @@ async def test_query_fixtures_filters_and_shape(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_stale_scheduled_fixtures_status_shape(monkeypatch):
+    from src.mcp import server
+
+    async def _fake_fetchall(_sql: str, _params: tuple):
+        from datetime import datetime, timezone
+
+        now = datetime(2025, 12, 25, tzinfo=timezone.utc)
+        return [
+            # id, league_id, season, date, status_short, home_team, away_team, goals_home, goals_away, updated_at
+            (111, 206, 2025, now, "NS", "A", "B", None, None, now),
+        ]
+
+    monkeypatch.setattr(server, "_db_fetchall_async", _fake_fetchall)
+    monkeypatch.setattr(server, "_tracked_leagues_from_daily_config", lambda: [{"id": 206}])
+
+    out = await server.get_stale_scheduled_fixtures_status(threshold_minutes=180, lookback_days=3, tracked_only=True, limit=50)
+    assert out["ok"] is True
+    assert out["threshold_minutes"] == 180
+    assert out["lookback_days"] == 3
+    assert out["tracked_only"] is True
+    assert out["stale_count"] == 1
+    assert isinstance(out["fixtures"], list) and len(out["fixtures"]) == 1
+    assert out["fixtures"][0]["league_id"] == 206
+
+
+@pytest.mark.asyncio
 async def test_get_coverage_status_specific_league(monkeypatch, tmp_path: Path):
     from src.mcp import server
 

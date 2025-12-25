@@ -45,6 +45,24 @@ Ek ops gözlemler (Phase 1.5):
 - **RAW error health**: `get_raw_error_summary(since_minutes=60)`
 - **Recent error logs**: `get_recent_log_errors(limit=50)`
 - **Scope policy (quota optimizasyonu)**: `get_scope_policy(league_id=<LID>)`
+- **Stale scheduled (NS/TBD ama geçmiş kickoff)**: `get_stale_scheduled_fixtures_status(threshold_minutes=180, lookback_days=3)`
+
+### 1.6 Incident: “Geçmiş tarihte NS görünüyor ama FT olmalı”
+
+Semptom:
+- Read API `/v1/fixtures?date=YYYY-MM-DD` (veya `/read/fixtures?...&date_from/date_to`) geçmiş gün için fixture döner
+- ama `status_short=NS` / `TBD` kalmıştır (FT/AET/PEN’e dönmesi beklenir).
+
+Tipik kök sebep:
+- `daily_fixtures_by_date` sync’i UTC günün erken saatinde çalıştı ve fixtures NS iken yazdı
+- ama maçlar bittikten sonra status refresh yapılmadı.
+
+Çözüm:
+- `config/jobs/daily.yaml` içinde `stale_scheduled_finalize` job’ı **enabled** olmalı.
+- Job, stale fixture’ları `GET /fixtures?ids=...` ile yeniden çekip `core.fixtures`’e UPSERT eder (status’ları finalize eder).
+
+Doğrulama:
+- MCP: `get_stale_scheduled_fixtures_status(...)` → `stale_count` zamanla 0’a yaklaşmalı.
 
 ### 1.3 PASS / FAIL kriteri
 - **PASS**: A+B+D `ok=true` ve DB bağlantısı sağlıklı.

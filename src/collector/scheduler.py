@@ -24,6 +24,7 @@ from src.jobs.fixture_details import (
     run_fixture_details_backfill_season,
 )
 from src.jobs.stale_live_refresh import run_stale_live_refresh
+from src.jobs.stale_scheduled_finalize import run_stale_scheduled_finalize
 from src.jobs.backfill import (
     run_fixtures_backfill_league_season,
     run_standings_backfill_league_season,
@@ -248,6 +249,12 @@ def _build_runner(
                 )
             elif job.job_id == "stale_live_refresh":
                 await run_stale_live_refresh(
+                    client=client,
+                    limiter=limiter,
+                    config_path=_project_root() / "config" / "jobs" / "daily.yaml",
+                )
+            elif job.job_id == "stale_scheduled_finalize":
+                await run_stale_scheduled_finalize(
                     client=client,
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",

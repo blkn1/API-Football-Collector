@@ -439,6 +439,30 @@ STALE_LIVE_FIXTURES_QUERY = """
     LIMIT %s
 """
 
+# Stale scheduled fixtures: status is still NS/TBD but kickoff date is in the past.
+# Params: (status_short_array, threshold_minutes, lookback_days, limit)
+STALE_SCHEDULED_FIXTURES_QUERY = """
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.status_short,
+      th.name as home_team,
+      ta.name as away_team,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    JOIN core.teams th ON th.id = f.home_team_id
+    JOIN core.teams ta ON ta.id = f.away_team_id
+    WHERE f.status_short = ANY(%s)
+      AND f.date < NOW() - make_interval(mins => %s)
+      AND f.date >= NOW() - (%s::text || ' days')::interval
+    ORDER BY f.date ASC
+    LIMIT %s
+"""
+
 
 # --- Ops / monitoring helpers ---
 

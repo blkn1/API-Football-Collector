@@ -126,6 +126,7 @@ def _to_iso_or_none(dt: Any) -> str | None:
 
 
 LIVE_STATUSES = ("1H", "2H", "HT", "ET", "BT", "P", "LIVE", "SUSP", "INT")
+SCHEDULED_STATUSES = ("NS", "TBD")
 
 
 def _db_fetchall(sql_text: str, params: tuple[Any, ...]) -> list[tuple[Any, ...]]:
@@ -938,6 +939,69 @@ async def get_stale_live_fixtures_status(
         )
     except Exception as e:
         return _ok_error("get_stale_live_fixtures_status_failed", details=str(e))
+
+
+@app.tool()
+async def get_stale_scheduled_fixtures_status(
+    threshold_minutes: int = 180,
+    lookback_days: int = 3,
+    tracked_only: bool = True,
+    limit: int = 50,
+) -> dict:
+    """
+    Ops tool: find fixtures that still look "scheduled" (NS/TBD) but whose kickoff time is already in the past.
+
+    This typically indicates the daily fixtures sync ran early and no follow-up refresh/finalize job updated statuses.
+    """
+    try:
+        mins = max(30, min(int(threshold_minutes), 7 * 24 * 60))
+        days = max(1, min(int(lookback_days), 14))
+        safe_limit = max(1, min(int(limit), 200))
+
+        rows = await _db_fetchall_async(queries.STALE_SCHEDULED_FIXTURES_QUERY, (list(SCHEDULED_STATUSES), int(mins), int(days), int(safe_limit)))
+
+        tracked_set: set[int] = set()
+        if tracked_only:
+            tracked_set = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
+            if not tracked_set:
+                return _ok_error("tracked_leagues_required", details="tracked_only=true requires tracked_leagues in daily config.")
+
+        out: list[dict[str, Any]] = []
+        ignored_untracked = 0
+        for r in rows:
+            league_id = int(r[1])
+            if tracked_only and league_id not in tracked_set:
+                ignored_untracked += 1
+                continue
+            out.append(
+                {
+                    "id": int(r[0]),
+                    "league_id": league_id,
+                    "season": _to_int_or_none(r[2]),
+                    "date_utc": _to_iso_or_none(r[3]),
+                    "status": r[4],
+                    "home_team": r[5],
+                    "away_team": r[6],
+                    "goals_home": _to_int_or_none(r[7]),
+                    "goals_away": _to_int_or_none(r[8]),
+                    "updated_at_utc": _to_iso_or_none(r[9]),
+                }
+            )
+
+        fixtures_items = [mcp_schemas.FixtureRow.model_validate(x) for x in out]
+        return _ok(
+            mcp_schemas.StaleScheduledFixturesStatus(
+                threshold_minutes=int(mins),
+                lookback_days=int(days),
+                tracked_only=bool(tracked_only),
+                stale_count=len(fixtures_items),
+                ignored_untracked=int(ignored_untracked),
+                fixtures=fixtures_items,
+                ts_utc=_utc_now_iso(),
+            )
+        )
+    except Exception as e:
+        return _ok_error("get_stale_scheduled_fixtures_status_failed", details=str(e))
 
 
 @app.tool()

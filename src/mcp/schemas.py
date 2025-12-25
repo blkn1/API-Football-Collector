@@ -176,6 +176,15 @@ class StaleLiveFixturesStatus(OkEnvelope):
     fixtures: list[FixtureRow]
 
 
+class StaleScheduledFixturesStatus(OkEnvelope):
+    threshold_minutes: int
+    lookback_days: int
+    tracked_only: bool
+    stale_count: int
+    ignored_untracked: int
+    fixtures: list[FixtureRow]
+
+
 class StandingsRow(MCPModel):
     league_id: int
     season: int
