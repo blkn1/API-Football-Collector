@@ -222,31 +222,45 @@ async def run_stale_scheduled_finalize(*, client: APIClient, limiter: RateLimite
             body=env,
         )
 
-        try:
-            fixture_rows, details_rows = transform_fixtures(env)
-        except Exception as e:
-            logger.error("stale_scheduled_finalize_transform_failed", err=str(e), ids=len(batch))
-            continue
-
         # FK guard: ensure leagues/teams/venues exist before upserting fixtures.
+        # Group by (league_id, season) because ensure_fixtures_dependencies is league+season scoped.
         try:
-            await ensure_fixtures_dependencies(
-                client=client,
-                limiter=limiter,
-                fixtures_envelope=env,
-                config_path=config_path,
-            )
+            grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+            for it in env.get("response") or []:
+                try:
+                    lid = int((it.get("league") or {}).get("id") or -1)
+                    s = int((it.get("league") or {}).get("season") or 0)
+                except Exception:
+                    continue
+                if lid > 0 and s > 0:
+                    grouped.setdefault((lid, s), []).append(it)
+
+            for (lid, s), items in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
+                await ensure_fixtures_dependencies(
+                    league_id=lid,
+                    season=s,
+                    fixtures_envelope={**env, "response": items},
+                    client=client,
+                    limiter=limiter,
+                    log_venues=False,
+                )
         except Exception as e:
             logger.error("stale_scheduled_finalize_dependency_failed", err=str(e), ids=len(batch))
             continue
 
         try:
+            fixtures_rows, details_rows = transform_fixtures(env)
+        except Exception as e:
+            logger.error("stale_scheduled_finalize_transform_failed", err=str(e), ids=len(batch))
+            continue
+
+        try:
             with get_transaction() as conn:
-                fixtures_upserted += upsert_core(
-                    table="core.fixtures",
-                    rows=fixture_rows,
-                    pk_columns=["id"],
-                    update_columns=[
+                upsert_core(
+                    full_table_name="core.fixtures",
+                    rows=fixtures_rows,
+                    conflict_cols=["id"],
+                    update_cols=[
                         "league_id",
                         "season",
                         "round",
@@ -268,13 +282,13 @@ async def run_stale_scheduled_finalize(*, client: APIClient, limiter: RateLimite
                 )
                 if details_rows:
                     upsert_core(
-                        table="core.fixture_details",
+                        full_table_name="core.fixture_details",
                         rows=details_rows,
-                        pk_columns=["fixture_id"],
-                        update_columns=["events", "lineups", "statistics", "players", "updated_at"],
+                        conflict_cols=["fixture_id"],
+                        update_cols=["events", "lineups", "statistics", "players", "updated_at"],
                         conn=conn,
                     )
-                conn.commit()
+            fixtures_upserted += len(fixtures_rows)
         except Exception as e:
             logger.error("stale_scheduled_finalize_db_failed", err=str(e), ids=len(batch))
             continue
