@@ -1320,6 +1320,19 @@ async def read_fixture(fixture_id: int) -> dict[str, Any]:
     dependencies=[Depends(require_access), Depends(require_only_query_params({"limit"}))],
 )
 async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, Any]:
+    # Önce snapshot'ı kontrol et
+    snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (int(fixture_id),))
+    if snapshot_row and snapshot_row[1] is not None:  # events kolonu (index 1)
+        events_data = snapshot_row[1]
+        safe_limit = _safe_limit(limit, cap=10000)
+        return {
+            "ok": True,
+            "fixture_id": int(fixture_id),
+            "items": events_data[:safe_limit] if isinstance(events_data, list) else events_data,
+            "source": "core.fixture_details",
+        }
+    
+    # Fallback: normalized tablo
     safe_limit = _safe_limit(limit, cap=10000)
     rows = await _fetchall_async(mcp_queries.FIXTURE_EVENTS_QUERY, (int(fixture_id), safe_limit))
     items: list[dict[str, Any]] = []
@@ -1338,7 +1351,7 @@ async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, A
                 "updated_at_utc": _to_iso_or_none(r[9]),
             }
         )
-    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items, "source": "core.fixture_events"}
 
 
 @app.get(
@@ -1346,6 +1359,17 @@ async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, A
     dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
 )
 async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
+    # Önce snapshot'ı kontrol et
+    snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (int(fixture_id),))
+    if snapshot_row and snapshot_row[2] is not None:  # lineups kolonu (index 2)
+        return {
+            "ok": True,
+            "fixture_id": int(fixture_id),
+            "items": snapshot_row[2],  # lineups JSONB'den direkt döndür
+            "source": "core.fixture_details",
+        }
+    
+    # Fallback: normalized tablo
     rows = await _fetchall_async(mcp_queries.FIXTURE_LINEUPS_QUERY, (int(fixture_id),))
     items: list[dict[str, Any]] = []
     for r in rows:
@@ -1361,7 +1385,7 @@ async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
                 "updated_at_utc": _to_iso_or_none(r[7]),
             }
         )
-    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items, "source": "core.fixture_lineups"}
 
 
 @app.get(
