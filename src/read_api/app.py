@@ -1369,6 +1369,17 @@ async def read_fixture_lineups(fixture_id: int) -> dict[str, Any]:
     dependencies=[Depends(require_access), Depends(require_only_query_params(set()))],
 )
 async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
+    # Önce snapshot'ı kontrol et
+    snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (int(fixture_id),))
+    if snapshot_row and snapshot_row[3] is not None:  # statistics kolonu (index 3)
+        return {
+            "ok": True,
+            "fixture_id": int(fixture_id),
+            "items": snapshot_row[3],  # statistics JSONB'den direkt döndür
+            "source": "core.fixture_details",
+        }
+    
+    # Fallback: normalized tablo
     rows = await _fetchall_async(mcp_queries.FIXTURE_STATISTICS_QUERY, (int(fixture_id),))
     items: list[dict[str, Any]] = []
     for r in rows:
@@ -1380,7 +1391,7 @@ async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
                 "updated_at_utc": _to_iso_or_none(r[3]),
             }
         )
-    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items, "source": "core.fixture_statistics"}
 
 
 @app.get(
@@ -1390,6 +1401,22 @@ async def read_fixture_statistics(fixture_id: int) -> dict[str, Any]:
 async def read_fixture_players(
     fixture_id: int, team_id: int | None = None, limit: int = 5000
 ) -> dict[str, Any]:
+    # Önce snapshot'ı kontrol et
+    snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (int(fixture_id),))
+    if snapshot_row and snapshot_row[4] is not None:  # players kolonu (index 4)
+        players_data = snapshot_row[4]
+        # team_id filtresi varsa uygula
+        if team_id is not None and isinstance(players_data, list):
+            players_data = [p for p in players_data if isinstance(p, dict) and p.get("team_id") == team_id]
+        safe_limit = _safe_limit(limit, cap=20000)
+        return {
+            "ok": True,
+            "fixture_id": int(fixture_id),
+            "items": players_data[:safe_limit] if isinstance(players_data, list) else players_data,
+            "source": "core.fixture_details",
+        }
+    
+    # Fallback: normalized tablo
     safe_limit = _safe_limit(limit, cap=20000)
     if team_id is not None:
         sql_text = mcp_queries.FIXTURE_PLAYERS_QUERY.format(team_filter="AND team_id = %s")
@@ -1409,7 +1436,7 @@ async def read_fixture_players(
                 "updated_at_utc": _to_iso_or_none(r[5]),
             }
         )
-    return {"ok": True, "fixture_id": int(fixture_id), "items": items}
+    return {"ok": True, "fixture_id": int(fixture_id), "items": items, "source": "core.fixture_players"}
 
 
 @app.get(
