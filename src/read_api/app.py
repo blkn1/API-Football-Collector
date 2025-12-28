@@ -17,6 +17,7 @@ from src.collector.api_client import APIClient
 from src.collector.rate_limiter import RateLimiter
 from src.utils.config import load_api_config, load_rate_limiter_config
 from src.transforms.fixtures import transform_fixtures
+from src.utils.dependencies import ensure_fixtures_dependencies
 
 
 app = FastAPI(title="api-football-read-api", version="v1")
@@ -1927,6 +1928,34 @@ async def read_h2h(
             response_headers=result.headers,
             body=envelope,
         )
+
+        # FK guard: ensure leagues/teams/venues exist before upserting fixtures.
+        # Group by (league_id, season) because ensure_fixtures_dependencies is league+season scoped.
+        try:
+            grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
+            for it in envelope.get("response") or []:
+                try:
+                    lid = int((it.get("league") or {}).get("id") or -1)
+                    s = int((it.get("league") or {}).get("season") or 0)
+                except Exception:
+                    continue
+                if lid > 0 and s > 0:
+                    grouped.setdefault((lid, s), []).append(it)
+
+            for (lid, s), items in sorted(grouped.items(), key=lambda x: (x[0][0], x[0][1])):
+                await ensure_fixtures_dependencies(
+                    league_id=lid,
+                    season=s,
+                    fixtures_envelope={**envelope, "response": items},
+                    client=client,
+                    limiter=limiter,
+                    log_venues=False,
+                )
+        except Exception as e:
+            # Log but don't fail - some leagues might not be fetchable
+            import traceback
+            error_trace = traceback.format_exc()
+            print(f"Warning: Failed to ensure dependencies for h2h fixtures: {error_trace}", flush=True)
 
         # Transform and store in CORE
         fixtures_rows, details_rows = transform_fixtures(envelope)
