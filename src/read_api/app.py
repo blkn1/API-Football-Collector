@@ -1916,8 +1916,9 @@ async def read_h2h(
                 detail=f"API returned errors: {errors}",
             )
 
-        # Store RAW response
-        upsert_raw(
+        # Store RAW response (run in thread pool to avoid blocking)
+        await asyncio.to_thread(
+            upsert_raw,
             endpoint="/fixtures/headtohead",
             requested_params=api_params,
             status_code=result.status_code,
@@ -1929,39 +1930,43 @@ async def read_h2h(
         fixtures_rows, details_rows = transform_fixtures(envelope)
 
         if fixtures_rows:
-            with get_transaction() as conn:
-                upsert_core(
-                    full_table_name="core.fixtures",
-                    rows=fixtures_rows,
-                    conflict_cols=["id"],
-                    update_cols=[
-                        "league_id",
-                        "season",
-                        "round",
-                        "date",
-                        "api_timestamp",
-                        "referee",
-                        "timezone",
-                        "venue_id",
-                        "home_team_id",
-                        "away_team_id",
-                        "status_short",
-                        "status_long",
-                        "elapsed",
-                        "goals_home",
-                        "goals_away",
-                        "score",
-                    ],
-                    conn=conn,
-                )
-                if details_rows:
+            # Run DB operations in thread pool to avoid blocking async event loop
+            def _upsert_fixtures():
+                with get_transaction() as conn:
                     upsert_core(
-                        full_table_name="core.fixture_details",
-                        rows=details_rows,
-                        conflict_cols=["fixture_id"],
-                        update_cols=["events", "lineups", "statistics", "players"],
+                        full_table_name="core.fixtures",
+                        rows=fixtures_rows,
+                        conflict_cols=["id"],
+                        update_cols=[
+                            "league_id",
+                            "season",
+                            "round",
+                            "date",
+                            "api_timestamp",
+                            "referee",
+                            "timezone",
+                            "venue_id",
+                            "home_team_id",
+                            "away_team_id",
+                            "status_short",
+                            "status_long",
+                            "elapsed",
+                            "goals_home",
+                            "goals_away",
+                            "score",
+                        ],
                         conn=conn,
                     )
+                    if details_rows:
+                        upsert_core(
+                            full_table_name="core.fixture_details",
+                            rows=details_rows,
+                            conflict_cols=["fixture_id"],
+                            update_cols=["events", "lineups", "statistics", "players"],
+                            conn=conn,
+                        )
+            
+            await asyncio.to_thread(_upsert_fixtures)
 
         # Now fetch from DB with pagination
         filters_db: list[str] = []
@@ -2067,6 +2072,10 @@ async def read_h2h(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        # Log full traceback for debugging
+        print(f"Error in read_h2h: {error_trace}", flush=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to fetch h2h data: {str(e)}",
