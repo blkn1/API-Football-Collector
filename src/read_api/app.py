@@ -105,10 +105,12 @@ def get_rate_limiter() -> RateLimiter:
     global _rate_limiter
     if _rate_limiter is None:
         rl_cfg = load_rate_limiter_config()
+        # RateLimiter uses max_tokens (bucket capacity) and refill_rate (tokens per second)
+        # Config provides minute_soft_limit (safe working cap per minute)
+        # refill_rate = minute_soft_limit / 60.0 (tokens per second)
         _rate_limiter = RateLimiter(
-            token_bucket_per_minute=rl_cfg.token_bucket_per_minute,
-            minute_soft_limit=rl_cfg.minute_soft_limit,
-            daily_limit=rl_cfg.daily_limit,
+            max_tokens=rl_cfg.minute_soft_limit,
+            refill_rate=float(rl_cfg.minute_soft_limit) / 60.0,
             emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
         )
     return _rate_limiter
