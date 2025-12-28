@@ -1172,14 +1172,16 @@
     "/read/h2h": {
       "get": {
         "summary": "Head-to-head fixtures + summary (curated)",
-        "description": "Strict query params: only team1_id, team2_id, league_id, season, limit are accepted. Unknown query params return 400.",
+        "description": "Strict query params: only team1_id, team2_id, league_id, season, limit, offset, force_api are accepted. Unknown query params return 400.",
         "operationId": "readH2H",
         "parameters": [
           { "name": "team1_id", "in": "query", "required": true, "schema": { "type": "integer" } },
           { "name": "team2_id", "in": "query", "required": true, "schema": { "type": "integer" } },
           { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
           { "name": "season", "in": "query", "required": false, "schema": { "type": "integer" } },
-          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 200 } }
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 200 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } },
+          { "name": "force_api", "in": "query", "required": false, "schema": { "type": "boolean", "default": false }, "description": "If true, always fetch from API-Football instead of using DB cache" }
         ],
         "responses": {
           "200": { "description": "H2H (ok + summary + items)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ReadH2HResponse" } } } },
