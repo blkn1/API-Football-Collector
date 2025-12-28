@@ -12,7 +12,11 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from src.mcp import queries as mcp_queries
-from src.utils.db import get_db_connection
+from src.utils.db import get_db_connection, get_transaction, upsert_core, upsert_raw
+from src.collector.api_client import APIClient
+from src.collector.rate_limiter import RateLimiter
+from src.utils.config import load_api_config, load_rate_limiter_config
+from src.transforms.fixtures import transform_fixtures
 
 
 app = FastAPI(title="api-football-read-api", version="v1")
@@ -76,6 +80,38 @@ def require_only_query_params(allowed: set[str]):
             )
 
     return _dep
+
+
+# Singleton instances for API client and rate limiter (lazy initialization)
+_api_client: APIClient | None = None
+_rate_limiter: RateLimiter | None = None
+
+
+def get_api_client() -> APIClient:
+    """Get or create singleton APIClient instance."""
+    global _api_client
+    if _api_client is None:
+        api_cfg = load_api_config()
+        _api_client = APIClient(
+            base_url=api_cfg.base_url,
+            api_key_env=api_cfg.api_key_env,
+            timeout_seconds=api_cfg.timeout_seconds,
+        )
+    return _api_client
+
+
+def get_rate_limiter() -> RateLimiter:
+    """Get or create singleton RateLimiter instance."""
+    global _rate_limiter
+    if _rate_limiter is None:
+        rl_cfg = load_rate_limiter_config()
+        _rate_limiter = RateLimiter(
+            token_bucket_per_minute=rl_cfg.token_bucket_per_minute,
+            minute_soft_limit=rl_cfg.minute_soft_limit,
+            daily_limit=rl_cfg.daily_limit,
+            emergency_stop_threshold=rl_cfg.emergency_stop_threshold,
+        )
+    return _rate_limiter
 
 
 def _to_int_or_none(x: Any) -> int | None:
@@ -1715,7 +1751,7 @@ async def read_coverage(
 
 @app.get(
     "/read/h2h",
-    dependencies=[Depends(require_access), Depends(require_only_query_params({"team1_id", "team2_id", "league_id", "season", "limit"}))],
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"team1_id", "team2_id", "league_id", "season", "limit", "offset", "force_api"}))],
 )
 async def read_h2h(
     team1_id: int,
@@ -1723,112 +1759,318 @@ async def read_h2h(
     league_id: int | None = None,
     season: int | None = None,
     limit: int = 20,
+    offset: int = 0,
+    force_api: bool = False,
 ) -> dict[str, Any]:
     """
     Head-to-head fixtures + summary (W/D/L, goals) derived from core.fixtures.
     Optionally filter by league_id and/or season.
+    
+    If force_api=true or DB results are insufficient, fetches from API-Football /fixtures/headtohead
+    and stores results in core.fixtures before returning.
+    
+    Parameters:
+    - limit: Maximum number of results (default: 20, max: 200)
+    - offset: Pagination offset (default: 0)
+    - force_api: If true, always fetch from API-Football instead of using DB cache
     """
     safe_limit = _safe_limit(limit, cap=200)
+    safe_offset = _safe_offset(offset)
 
-    filters: list[str] = []
-    params: list[Any] = [int(team1_id), int(team2_id), int(team2_id), int(team1_id)]
+    # First, try to get results from DB (unless force_api is true)
+    if not force_api:
+        filters: list[str] = []
+        params: list[Any] = [int(team1_id), int(team2_id), int(team2_id), int(team1_id)]
+
+        if league_id is not None:
+            filters.append("AND f.league_id = %s")
+            params.append(int(league_id))
+
+        if season is not None:
+            filters.append("AND f.season = %s")
+            params.append(int(season))
+
+        sql_text = f"""
+        SELECT
+          f.id,
+          f.league_id,
+          f.season,
+          f.date,
+          f.status_short,
+          f.home_team_id,
+          th.name as home_team_name,
+          f.away_team_id,
+          ta.name as away_team_name,
+          f.goals_home,
+          f.goals_away,
+          f.updated_at
+        FROM core.fixtures f
+        JOIN core.teams th ON f.home_team_id = th.id
+        JOIN core.teams ta ON f.away_team_id = ta.id
+        WHERE (
+          (f.home_team_id = %s AND f.away_team_id = %s)
+          OR
+          (f.home_team_id = %s AND f.away_team_id = %s)
+        )
+        {' '.join(filters)}
+        ORDER BY f.date DESC
+        LIMIT %s OFFSET %s
+        """
+        params.append(safe_limit)
+        params.append(safe_offset)
+        rows = await _fetchall_async(sql_text, tuple(params))
+
+        # If we have enough results, return them
+        if len(rows) >= safe_limit:
+            items: list[dict[str, Any]] = []
+            played = wins = draws = losses = 0
+            gf = ga = 0
+            for r in rows:
+                fid = int(r[0])
+                hid = _to_int_or_none(r[5])
+                aid = _to_int_or_none(r[7])
+                gh = _to_int_or_none(r[9])
+                ga_ = _to_int_or_none(r[10])
+                items.append(
+                    {
+                        "id": fid,
+                        "league_id": int(r[1]),
+                        "season": _to_int_or_none(r[2]),
+                        "date_utc": _to_iso_or_none(r[3]),
+                        "status": r[4],
+                        "home_team_id": hid,
+                        "home_team": r[6],
+                        "away_team_id": aid,
+                        "away_team": r[8],
+                        "goals_home": gh,
+                        "goals_away": ga_,
+                        "updated_at_utc": _to_iso_or_none(r[11]),
+                    }
+                )
+
+                if hid is None or aid is None or gh is None or ga_ is None:
+                    continue
+                played += 1
+                team1_is_home = int(hid) == int(team1_id)
+                team1_goals = int(gh) if team1_is_home else int(ga_)
+                team2_goals = int(ga_) if team1_is_home else int(gh)
+                gf += team1_goals
+                ga += team2_goals
+                if team1_goals > team2_goals:
+                    wins += 1
+                elif team1_goals < team2_goals:
+                    losses += 1
+                else:
+                    draws += 1
+
+            return {
+                "ok": True,
+                "teams": {"team1_id": int(team1_id), "team2_id": int(team2_id)},
+                "filters": {"league_id": int(league_id) if league_id is not None else None, "season": int(season) if season is not None else None},
+                "summary_team1": {
+                    "played": played,
+                    "wins": wins,
+                    "draws": draws,
+                    "losses": losses,
+                    "goals_for": gf,
+                    "goals_against": ga,
+                    "goals_for_avg": (round(gf / played, 4) if played else None),
+                    "goals_against_avg": (round(ga / played, 4) if played else None),
+                },
+                "items": items,
+                "source": "database",
+            }
+
+    # Fetch from API-Football /fixtures/headtohead
+    client = get_api_client()
+    limiter = get_rate_limiter()
+
+    # API-Football headtohead endpoint format: h2h=team1-team2
+    h2h_param = f"{int(team1_id)}-{int(team2_id)}"
+    api_params: dict[str, Any] = {"h2h": h2h_param}
 
     if league_id is not None:
-        filters.append("AND f.league_id = %s")
-        params.append(int(league_id))
-
+        api_params["league"] = int(league_id)
     if season is not None:
-        filters.append("AND f.season = %s")
-        params.append(int(season))
+        api_params["season"] = int(season)
 
-    sql_text = f"""
-    SELECT
-      f.id,
-      f.league_id,
-      f.season,
-      f.date,
-      f.status_short,
-      f.home_team_id,
-      th.name as home_team_name,
-      f.away_team_id,
-      ta.name as away_team_name,
-      f.goals_home,
-      f.goals_away,
-      f.updated_at
-    FROM core.fixtures f
-    JOIN core.teams th ON f.home_team_id = th.id
-    JOIN core.teams ta ON f.away_team_id = ta.id
-    WHERE (
-      (f.home_team_id = %s AND f.away_team_id = %s)
-      OR
-      (f.home_team_id = %s AND f.away_team_id = %s)
-    )
-    {' '.join(filters)}
-    ORDER BY f.date DESC
-    LIMIT %s
-    """
-    params.append(safe_limit)
-    rows = await _fetchall_async(sql_text, tuple(params))
+    try:
+        # Acquire rate limiter token
+        limiter.acquire_token()
+        
+        # Call API
+        result = await client.get("/fixtures/headtohead", params=api_params)
+        limiter.update_from_headers(result.headers)
 
-    items: list[dict[str, Any]] = []
-    # Summary from team1 perspective
-    played = wins = draws = losses = 0
-    gf = ga = 0
-    for r in rows:
-        fid = int(r[0])
-        hid = _to_int_or_none(r[5])
-        aid = _to_int_or_none(r[7])
-        gh = _to_int_or_none(r[9])
-        ga_ = _to_int_or_none(r[10])
-        items.append(
-            {
-                "id": fid,
-                "league_id": int(r[1]),
-                "season": _to_int_or_none(r[2]),
-                "date_utc": _to_iso_or_none(r[3]),
-                "status": r[4],
-                "home_team_id": hid,
-                "home_team": r[6],
-                "away_team_id": aid,
-                "away_team": r[8],
-                "goals_home": gh,
-                "goals_away": ga_,
-                "updated_at_utc": _to_iso_or_none(r[11]),
-            }
+        if result.status_code != 200 or not result.data:
+            raise HTTPException(
+                status_code=500,
+                detail=f"API request failed: status={result.status_code}",
+            )
+
+        envelope = result.data
+        errors = envelope.get("errors") or {}
+        if errors:
+            raise HTTPException(
+                status_code=400,
+                detail=f"API returned errors: {errors}",
+            )
+
+        # Store RAW response
+        upsert_raw(
+            endpoint="/fixtures/headtohead",
+            requested_params=api_params,
+            status_code=result.status_code,
+            response_headers=result.headers,
+            body=envelope,
         )
 
-        # Only compute on completed results where goals are present
-        if hid is None or aid is None or gh is None or ga_ is None:
-            continue
-        played += 1
-        team1_is_home = int(hid) == int(team1_id)
-        team1_goals = int(gh) if team1_is_home else int(ga_)
-        team2_goals = int(ga_) if team1_is_home else int(gh)
-        gf += team1_goals
-        ga += team2_goals
-        if team1_goals > team2_goals:
-            wins += 1
-        elif team1_goals < team2_goals:
-            losses += 1
-        else:
-            draws += 1
+        # Transform and store in CORE
+        fixtures_rows, details_rows = transform_fixtures(envelope)
 
-    return {
-        "ok": True,
-        "teams": {"team1_id": int(team1_id), "team2_id": int(team2_id)},
-        "filters": {"league_id": int(league_id) if league_id is not None else None, "season": int(season) if season is not None else None},
-        "summary_team1": {
-            "played": played,
-            "wins": wins,
-            "draws": draws,
-            "losses": losses,
-            "goals_for": gf,
-            "goals_against": ga,
-            "goals_for_avg": (round(gf / played, 4) if played else None),
-            "goals_against_avg": (round(ga / played, 4) if played else None),
-        },
-        "items": items,
-    }
+        if fixtures_rows:
+            with get_transaction() as conn:
+                upsert_core(
+                    full_table_name="core.fixtures",
+                    rows=fixtures_rows,
+                    conflict_cols=["id"],
+                    update_cols=[
+                        "league_id",
+                        "season",
+                        "round",
+                        "date",
+                        "api_timestamp",
+                        "referee",
+                        "timezone",
+                        "venue_id",
+                        "home_team_id",
+                        "away_team_id",
+                        "status_short",
+                        "status_long",
+                        "elapsed",
+                        "goals_home",
+                        "goals_away",
+                        "score",
+                    ],
+                    conn=conn,
+                )
+                if details_rows:
+                    upsert_core(
+                        full_table_name="core.fixture_details",
+                        rows=details_rows,
+                        conflict_cols=["fixture_id"],
+                        update_cols=["events", "lineups", "statistics", "players"],
+                        conn=conn,
+                    )
+
+        # Now fetch from DB with pagination
+        filters_db: list[str] = []
+        params_db: list[Any] = [int(team1_id), int(team2_id), int(team2_id), int(team1_id)]
+
+        if league_id is not None:
+            filters_db.append("AND f.league_id = %s")
+            params_db.append(int(league_id))
+
+        if season is not None:
+            filters_db.append("AND f.season = %s")
+            params_db.append(int(season))
+
+        sql_text_db = f"""
+        SELECT
+          f.id,
+          f.league_id,
+          f.season,
+          f.date,
+          f.status_short,
+          f.home_team_id,
+          th.name as home_team_name,
+          f.away_team_id,
+          ta.name as away_team_name,
+          f.goals_home,
+          f.goals_away,
+          f.updated_at
+        FROM core.fixtures f
+        JOIN core.teams th ON f.home_team_id = th.id
+        JOIN core.teams ta ON f.away_team_id = ta.id
+        WHERE (
+          (f.home_team_id = %s AND f.away_team_id = %s)
+          OR
+          (f.home_team_id = %s AND f.away_team_id = %s)
+        )
+        {' '.join(filters_db)}
+        ORDER BY f.date DESC
+        LIMIT %s OFFSET %s
+        """
+        params_db.append(safe_limit)
+        params_db.append(safe_offset)
+        rows_db = await _fetchall_async(sql_text_db, tuple(params_db))
+
+        items: list[dict[str, Any]] = []
+        played = wins = draws = losses = 0
+        gf = ga = 0
+        for r in rows_db:
+            fid = int(r[0])
+            hid = _to_int_or_none(r[5])
+            aid = _to_int_or_none(r[7])
+            gh = _to_int_or_none(r[9])
+            ga_ = _to_int_or_none(r[10])
+            items.append(
+                {
+                    "id": fid,
+                    "league_id": int(r[1]),
+                    "season": _to_int_or_none(r[2]),
+                    "date_utc": _to_iso_or_none(r[3]),
+                    "status": r[4],
+                    "home_team_id": hid,
+                    "home_team": r[6],
+                    "away_team_id": aid,
+                    "away_team": r[8],
+                    "goals_home": gh,
+                    "goals_away": ga_,
+                    "updated_at_utc": _to_iso_or_none(r[11]),
+                }
+            )
+
+            if hid is None or aid is None or gh is None or ga_ is None:
+                continue
+            played += 1
+            team1_is_home = int(hid) == int(team1_id)
+            team1_goals = int(gh) if team1_is_home else int(ga_)
+            team2_goals = int(ga_) if team1_is_home else int(gh)
+            gf += team1_goals
+            ga += team2_goals
+            if team1_goals > team2_goals:
+                wins += 1
+            elif team1_goals < team2_goals:
+                losses += 1
+            else:
+                draws += 1
+
+        return {
+            "ok": True,
+            "teams": {"team1_id": int(team1_id), "team2_id": int(team2_id)},
+            "filters": {"league_id": int(league_id) if league_id is not None else None, "season": int(season) if season is not None else None},
+            "summary_team1": {
+                "played": played,
+                "wins": wins,
+                "draws": draws,
+                "losses": losses,
+                "goals_for": gf,
+                "goals_against": ga,
+                "goals_for_avg": (round(gf / played, 4) if played else None),
+                "goals_against_avg": (round(ga / played, 4) if played else None),
+            },
+            "items": items,
+            "source": "api",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch h2h data: {str(e)}",
+        )
 
 
 @app.get(

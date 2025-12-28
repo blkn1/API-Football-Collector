@@ -24,6 +24,7 @@ baseline_enabled_endpoints:
   - /fixtures/lineups
   - /fixtures/players
   - /fixtures/statistics
+  - /fixtures/headtohead
   - /injuries
 
 # Defaults based on competition type from core.leagues.type (API-Football "League" vs "Cup").
