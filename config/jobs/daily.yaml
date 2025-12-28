@@ -167,19 +167,20 @@ jobs:
 
 # Maintenance: finalize fixtures that are still "NS/TBD" even though their kickoff time is in the past.
 # This fixes cases where daily_fixtures_by_date ran early (UTC morning) and never re-polled to transition NS -> FT.
+# Optimized: 60min threshold + every 30min check = max 1.5h delay for NS->FT transition
 - job_id: stale_scheduled_finalize
   type: incremental_daily
   enabled: true
   priority: LOW
   endpoint: /fixtures
   params:
-    stale_threshold_minutes: 180   # consider NS/TBD stale if fixture.date < now - 180 minutes
+    stale_threshold_minutes: 60   # consider NS/TBD stale if fixture.date < now - 60 minutes (reduced from 180)
     lookback_days: 3              # only look at recent history
     batch_size: 20                # API-Football /fixtures ids max 20
     max_fixtures_per_run: 200     # cap work per run (safety)
   interval:
     type: cron
-    cron: "20 * * * *"            # hourly at :20
+    cron: "*/30 * * * *"          # every 30 minutes (increased frequency from hourly)
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
