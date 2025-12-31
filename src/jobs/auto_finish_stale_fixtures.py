@@ -104,7 +104,7 @@ def _select_stale_fixture_ids(
     threshold_hours: int,
     safety_lag_hours: int,
     limit: int,
-    tracked_league_ids: set[int],
+    tracked_league_ids: set[int] | None = None,
 ) -> list[int]:
     """
     Select fixtures that are in stale intermediate states but haven't been updated recently.
@@ -118,8 +118,7 @@ def _select_stale_fixture_ids(
     sql = """
     SELECT f.id, f.league_id, f.status_short, f.date, f.updated_at
     FROM core.fixtures f
-    WHERE f.league_id = ANY(%s)
-      AND f.status_short = ANY(%s)
+    WHERE f.status_short = ANY(%s)
       AND f.date < NOW() - (%s::text || ' hours')::interval
       AND f.updated_at < NOW() - (%s::text || ' hours')::interval
     ORDER BY f.date ASC
