@@ -26,6 +26,7 @@ jobs:
     season: null
     min_records: 1
     max_lag_minutes: 1440
+
 - job_id: daily_fixtures_by_date
   type: incremental_daily
   enabled: true
@@ -37,6 +38,8 @@ jobs:
     type: cron
     cron: "0 6 * * *"
   target_layer: raw+core+mart
+  dependencies:
+
 - job_id: injuries_hourly
   type: incremental_daily
   enabled: true
@@ -54,6 +57,7 @@ jobs:
     endpoint: /injuries
     min_records: 1
     max_lag_minutes: 120
+
 - job_id: fixture_details_recent_finalize
   type: incremental_daily
   enabled: true
@@ -70,6 +74,7 @@ jobs:
     endpoint: /fixtures/details
     min_records: 1
     max_lag_minutes: 240
+
 - job_id: fixture_details_backfill_90d
   type: incremental_daily
   enabled: false
@@ -95,7 +100,6 @@ jobs:
   params: {}
   interval:
     type: cron
-    # Stagger with fixtures_backfill_league_season to spread load across the hour
     cron: "5-59/10 * * * *"
   target_layer: raw+core
   dependencies:
@@ -113,10 +117,12 @@ jobs:
   params: {}
   interval:
     type: cron
-    cron: "40 6 * * *"   # TR 06:40 (scheduler timezone)
+    # TR 06:40 (scheduler timezone) - sync after Turkish leagues fixtures fetch
+    cron: "40 6 * * *"
   target_layer: raw+core+mart
   dependencies:
   - bootstrap_leagues
+  - bootstrap_teams
   coverage_target:
     endpoint: /players/topscorers
     league_id: null
@@ -132,7 +138,7 @@ jobs:
   params: {}
   interval:
     type: cron
-    # Every 10 minutes, offset to spread load (uses TEAM_STATS_MAX_TASKS_PER_RUN + TEAM_STATS_REFRESH_HOURS)
+    # Staggered with fixtures_backfill_season to spread load across the hour.
     cron: "7-59/10 * * * *"
   target_layer: raw+core+mart
   dependencies:
@@ -145,9 +151,11 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
-# Maintenance: auto-finish stale fixtures without API calls (DB-only).
-# Prevents stale live statuses (NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT) from persisting.
-# Uses double-threshold safety: date_utc < N hours ago AND updated_at < M hours ago.
+# DISABLED: Auto-finish stale fixtures (DB-only, 0 API calls).
+# This prevents "stale live status" from polluting live dashboards.
+# Reason: Replaced by auto_finish_stale_fixtures job which is more efficient.
+# Maintenance: finalize fixtures that are still "NS/TBD" even though their kickoff time is in the past.
+# This fixes cases where daily_fixtures_by_date ran early (UTC morning) and never re-polled to transition NS -> FT.
 - job_id: auto_finish_stale_fixtures
   type: incremental_daily
   enabled: true
@@ -165,46 +173,44 @@ jobs:
   dependencies:
   - daily_fixtures_by_date
 
-# Maintenance: refresh stale "live" fixtures that haven't updated in a while.
+# DISABLED: refresh stale "live" fixtures that haven't updated in a while.
 # This prevents "stale live status" from polluting live dashboards and MCP live scans.
-# Enabled: works in tandem with auto_finish_stale_fixtures (auto_finish handles old cases, this handles recent ones).
+# Auto-finish handles this efficiently (DB-only, 0 API calls).
 - job_id: stale_live_refresh
   type: incremental_daily
-  enabled: true
+  enabled: false
   priority: LOW
   endpoint: /fixtures
   params:
-    stale_threshold_minutes: 15  # More aggressive: auto_finish handles older fixtures
-    batch_size: 20   # API-Football /fixtures ids max 20
-    # Which league scope should "stale live cleanup" use?
-    # - daily: config/jobs/daily.yaml -> tracked_leagues
+    stale_threshold_minutes: 15
+    batch_size: 20
     scope_source: daily
   interval:
     type: cron
-    cron: "*/5 * * * *"  # Every 5 minutes for better coverage
+    cron: "*/5 * * * *"
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
 
 # Maintenance: finalize fixtures that are still "NS/TBD" even though their kickoff time is in the past.
-# This fixes cases where daily_fixtures_by_date ran early (UTC morning) and never re-polled to transition NS -> FT.
-# Optimized: 60min threshold + every 30min check = max 1.5h delay for NS->FT transition
+# Optimized: 60min threshold + every 30min check = max 1.5h delay for NS->FT transition.
 - job_id: stale_scheduled_finalize
   type: incremental_daily
   enabled: true
   priority: LOW
   endpoint: /fixtures
   params:
-    stale_threshold_minutes: 60   # consider NS/TBD stale if fixture.date < now - 60 minutes (reduced from 180)
-    lookback_days: 3              # only look at recent history
-    batch_size: 20                # API-Football /fixtures ids max 20
-    max_fixtures_per_run: 200     # cap work per run (safety)
+    stale_threshold_minutes: 60
+    lookback_days: 3
+    batch_size: 20
+    max_fixtures_per_run: 200
   interval:
     type: cron
-    cron: "*/30 * * * *"          # every 30 minutes (increased frequency from hourly)
+    cron: "*/30 * * * *"
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
+
 - job_id: fixtures_backfill_league_season
   type: incremental_daily
   enabled: true
@@ -213,13 +219,14 @@ jobs:
   params: {}
   interval:
     type: cron
-    # Runs every 10 minutes, aligned on :00, :10, :20 ... (details backfill runs on :05, :15, ...)
+    # Runs every 10 minutes, aligned on :00, :10, :20 ... (details backfill follows)
     cron: "0-59/10 * * * *"
   target_layer: raw+core
   coverage_target:
     endpoint: /fixtures_backfill
     min_records: 1
     max_lag_minutes: 1440
+
 - job_id: standings_backfill_league_season
   type: incremental_daily
   enabled: false
@@ -235,8 +242,6 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
-# Ops monitor: Detect when tracked leagues roll into the next season (e.g. 2025 -> 2026)
-# and emit an actionable log telling exactly what to change in this file.
 - job_id: season_rollover_watch
   type: incremental_daily
   enabled: true
@@ -245,8 +250,9 @@ jobs:
   params: {}
   interval:
     type: cron
-    cron: '5 1 * * *'  # daily 01:05 UTC
+    cron: '5 1 * * *'  # daily 01:05 UTC (production safe: after daily fixtures fetch completes)
   target_layer: raw
+
 tracked_leagues:
 - id: 39
   name: Premier League
@@ -327,10 +333,10 @@ tracked_leagues:
   name: League One
   season: 2025
 - id: 184
-  name: League Two
+  name: League Cup
   season: 2025
 - id: 185
-  name: League Cup
+  name: A-League
   season: 2025
 - id: 188
   name: A-League
@@ -357,10 +363,10 @@ tracked_leagues:
   name: HNL
   season: 2025
 - id: 218
-  name: Bundesliga
+  name: 2. Liga
   season: 2025
 - id: 219
-  name: 2. Liga
+  name: 3. Liga
   season: 2025
 - id: 241
   name: Copa Colombia
@@ -381,10 +387,10 @@ tracked_leagues:
   name: FKF Premier League
   season: 2025
 - id: 281
-  name: Primera División
+  name: Ligat Ha'al
   season: 2025
 - id: 283
-  name: Liga I
+  name: Super Liga
   season: 2025
 - id: 286
   name: Super Liga
@@ -405,10 +411,10 @@ tracked_leagues:
   name: Division 1
   season: 2025
 - id: 308
-  name: Division 1
+  name: 1a Divisão
   season: 2025
 - id: 312
-  name: 1a Divisió
+  name: 1. Hrvatska
   season: 2025
 - id: 315
   name: Premijer Liga
@@ -423,37 +429,37 @@ tracked_leagues:
   name: Primera División
   season: 2025
 - id: 345
-  name: Czech Liga
+  name: Division di Honor
   season: 2025
 - id: 370
-  name: Primera Division
+  name: Football League - Highland League
   season: 2025
 - id: 380
-  name: Premier League
+  name: USL Super League
   season: 2025
 - id: 381
-  name: HKFA 1st Division
+  name: 3. Liga
   season: 2025
 - id: 390
-  name: Premier League
+  name: Ligat Ha'al
   season: 2025
 - id: 393
-  name: Premier League
+  name: Serie C - Girone C
   season: 2025
 - id: 396
-  name: Primera Division
+  name: Tercera División RFEF - Group 5
   season: 2025
 - id: 399
-  name: NPFL
-  season: 2026
+  name: Tercera División RFEF - Group 4
+  season: 2025
 - id: 407
-  name: Championship
+  name: Tercera División RFEF - Group 3
   season: 2025
 - id: 408
-  name: Premiership
+  name: Tercera División RFEF - Group 2
   season: 2025
 - id: 419
-  name: Premyer Liqa
+  name: Tercera División RFEF - Group 1
   season: 2025
 - id: 492
   name: Tweede Divisie
@@ -465,8 +471,10 @@ tracked_leagues:
   name: Premier League
   season: 2025
 - id: 585
-  name: Premier League
-  season: 2025
+  name: Pro League
+  status: DEPRECATED
+  name: Pro League
+  season: 2026
 - id: 677
   name: QSL Cup
   season: 2025
