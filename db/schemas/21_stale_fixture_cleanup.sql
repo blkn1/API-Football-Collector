@@ -1,14 +1,14 @@
--- One-time migration: Auto-finish existing stale fixtures in the database.
+-- One-time migration: Auto-finish existing stale fixtures in database.
 --
 -- Purpose: Clean up fixtures that are stuck in live/intermediate states (NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT)
 -- even though they should have finished hours ago.
 --
 -- Safety measures:
--- 1. Double-threshold: date_utc < NOW() - 3 hours AND updated_at < NOW() - 6 hours
+-- 1. Double-threshold: date < NOW() - 3 hours AND updated_at < NOW() - 6 hours
 -- 2. Only affects tracked leagues (manually verify league_ids in your daily.yaml)
 -- 3. RETURNING clause allows you to audit changes before committing
 --
--- IMPORTANT: Review the output before running in production!
+-- IMPORTANT: Review output before running in production!
 -- Adjust tracked_league_ids array if needed to match your config/jobs/daily.yaml tracked_leagues list.
 
 -- Tracked league IDs (from config/jobs/daily.yaml at time of creation)
@@ -36,7 +36,7 @@ WHERE
   -- Stale intermediate states (not final statuses)
   AND f.status_short IN ('NS', 'HT', '2H', '1H', 'LIVE', 'BT', 'ET', 'P', 'SUSP', 'INT')
   -- Double-threshold safety check
-  AND f.date_utc < NOW() - INTERVAL '3 hours'
+  AND f.date < NOW() - INTERVAL '3 hours'
   AND f.updated_at < NOW() - INTERVAL '6 hours'
 RETURNING
   f.id,
@@ -44,23 +44,23 @@ RETURNING
   f.season,
   f.status_short AS old_status,
   f.status_long AS old_status_long,
-  f.date_utc,
+  f.date,
   f.updated_at AS old_updated_at;
 
 -- Expected output analysis:
--- 1. Review the league_ids array to ensure it matches your tracked_leagues
--- 2. Check the count of returned rows (should be reasonable, not thousands)
--- 3. Verify the date_utc and updated_at timestamps are indeed old
--- 4. If everything looks correct, the UPDATE is already committed
+-- 1. Review --> league_ids array to ensure it matches your tracked_leagues
+-- 2. Check --> count of returned rows (should be reasonable, not thousands)
+-- 3. Verify --> date and updated_at timestamps are indeed old
+-- 4. If everything looks correct, --> UPDATE is already committed
 -- 5. If you see unexpected rows, you may need to rollback (if in transaction)
 
 -- Rollback SQL (if needed):
--- Note: Since the original status values are lost after UPDATE, you can only rollback
--- if you saved the RETURNING output and manually reconstruct the UPDATE statement.
+-- Note: Since original status values are lost after UPDATE, you can only rollback
+-- if you saved --> RETURNING output and manually reconstruct--> UPDATE statement.
 -- Best practice: Run this in a transaction first to test:
 --   BEGIN;
---   -- Run the UPDATE above
---   -- Review the output
+--   -- Run --> UPDATE above
+--   -- Review --> output
 --   -- If satisfied: COMMIT;
 --   -- If not: ROLLBACK;
 
@@ -73,7 +73,6 @@ RETURNING
 -- WHERE
 --   f.league_id = ANY(tl.league_ids)
 --   AND f.status_short IN ('NS', 'HT', '2H', '1H', 'LIVE', 'BT', 'ET', 'P', 'SUSP', 'INT')
---   AND f.date_utc < NOW() - INTERVAL '3 hours'
+--   AND f.date < NOW() - INTERVAL '3 hours'
 --   AND f.updated_at < NOW() - INTERVAL '6 hours';
 -- Expected: 0 rows remaining
-

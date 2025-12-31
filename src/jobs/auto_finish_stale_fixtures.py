@@ -110,19 +110,19 @@ def _select_stale_fixture_ids(
     Select fixtures that are in stale intermediate states but haven't been updated recently.
 
     We use a double-threshold safety check:
-    1. date_utc < NOW() - threshold_hours: The fixture was scheduled to start N hours ago
+    1. date < NOW() - threshold_hours: The fixture was scheduled to start N hours ago
     2. updated_at < NOW() - safety_lag_hours: The fixture hasn't been updated in M hours
 
     This prevents accidentally finishing a live match that's been recently updated.
     """
     sql = """
-    SELECT f.id, f.league_id, f.status_short, f.date_utc, f.updated_at
+    SELECT f.id, f.league_id, f.status_short, f.date, f.updated_at
     FROM core.fixtures f
     WHERE f.league_id = ANY(%s)
       AND f.status_short = ANY(%s)
-      AND f.date_utc < NOW() - (%s::text || ' hours')::interval
+      AND f.date < NOW() - (%s::text || ' hours')::interval
       AND f.updated_at < NOW() - (%s::text || ' hours')::interval
-    ORDER BY f.date_utc ASC
+    ORDER BY f.date ASC
     LIMIT %s
     """
     with get_transaction() as conn:
@@ -165,7 +165,7 @@ def _auto_finish_fixtures(
         status_long = 'Match Finished (Auto-finished)',
         updated_at = NOW()
     WHERE id = ANY(%s)
-    RETURNING id, league_id, season, status_short, date_utc
+    RETURNING id, league_id, season, status_short, date, updated_at
     """
 
     with get_transaction() as conn:
@@ -228,4 +228,3 @@ def run_auto_finish_stale_fixtures(*, config_path: Path) -> None:
         leagues_affected=result["leagues_affected"],
         dry_run=cfg.dry_run,
     )
-
