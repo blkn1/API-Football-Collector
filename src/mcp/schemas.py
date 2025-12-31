@@ -185,6 +185,37 @@ class StaleScheduledFixturesStatus(OkEnvelope):
     fixtures: list[FixtureRow]
 
 
+class StaleFixtureRow(MCPModel):
+    id: int
+    league_id: int
+    league_name: str | None = None
+    season: int | None = None
+    status_short: str
+    status_long: str | None = None
+    date_utc: str | None = None
+    updated_at_utc: str | None = None
+    hours_since_date_utc: float | None = None
+    hours_since_updated: float | None = None
+    is_tracked: bool
+
+
+class StaleFixturesReport(OkEnvelope):
+    threshold_hours: int
+    safety_lag_hours: int
+    league_filter: int | None = None
+    stale_count: int
+    fixtures: list[StaleFixtureRow]
+
+
+class AutoFinishStats(OkEnvelope):
+    window_hours: int
+    league_filter: int | None = None
+    total_auto_finished: int
+    unique_leagues_affected: int
+    is_tracked_league: bool | None = None
+    hourly_stats: list[dict[str, Any]]
+
+
 class StandingsRow(MCPModel):
     league_id: int
     season: int

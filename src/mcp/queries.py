@@ -572,3 +572,39 @@ RAW_ERROR_SAMPLES_QUERY = """
 """
 
 
+STALE_FIXTURES_REPORT = """
+    SELECT
+      f.id,
+      f.league_id,
+      l.name AS league_name,
+      f.season,
+      f.status_short,
+      f.status_long,
+      f.date,
+      f.updated_at,
+      EXTRACT(EPOCH FROM (NOW() - f.date)) / 3600 AS hours_since_date_utc,
+      EXTRACT(EPOCH FROM (NOW() - f.updated_at)) / 3600 AS hours_since_updated
+    FROM core.fixtures f
+    JOIN core.leagues l ON f.league_id = l.id
+    WHERE f.status_short IN ('NS', 'HT', '2H', '1H', 'LIVE', 'BT', 'ET', 'P', 'SUSP', 'INT')
+      AND f.date < NOW() - (%s::text || ' hours')::interval
+      AND f.updated_at < NOW() - (%s::text || ' hours')::interval
+      AND (%s::int IS NULL OR f.league_id = %s::int)
+    ORDER BY f.date ASC
+    LIMIT %s
+"""
+
+AUTO_FINISH_STATS = """
+    SELECT
+      COUNT(*) AS auto_finished_count,
+      COUNT(DISTINCT league_id) AS leagues_affected,
+      DATE_TRUNC('hour', updated_at) AS hour_bucket
+    FROM core.fixtures
+    WHERE status_short = 'FT'
+      AND status_long = 'Match Finished (Auto-finished)'
+      AND updated_at >= NOW() - (%s::text || ' hours')::interval
+      AND (%s::int IS NULL OR league_id = %s::int)
+    GROUP BY DATE_TRUNC('hour', updated_at)
+    ORDER BY hour_bucket DESC
+"""
+

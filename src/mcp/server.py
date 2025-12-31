@@ -1005,6 +1005,118 @@ async def get_stale_scheduled_fixtures_status(
 
 
 @app.tool()
+async def stale_fixtures_report(
+    threshold_hours: int = 2,
+    safety_lag_hours: int = 3,
+    league_id: int | None = None,
+    limit: int = 100,
+) -> dict:
+    """
+    Ops tool: report fixtures in stale intermediate states (NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT)
+    that would be auto-finished by the auto_finish_stale_fixtures job.
+
+    Uses double-threshold safety:
+    - date_utc < NOW() - threshold_hours: Fixture was scheduled N hours ago
+    - updated_at < NOW() - safety_lag_hours: Fixture hasn't been updated in M hours
+    """
+    try:
+        hours_threshold = max(1, min(int(threshold_hours), 7 * 24))
+        hours_safety = max(1, min(int(safety_lag_hours), 7 * 24))
+        safe_limit = max(1, min(int(limit), 500))
+
+        league_id_val = int(league_id) if league_id is not None else None
+
+        rows = await _db_fetchall_async(
+            queries.STALE_FIXTURES_REPORT,
+            (int(hours_threshold), int(hours_safety), league_id_val, league_id_val, safe_limit),
+        )
+
+        tracked_set: set[int] = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
+
+        out: list[dict[str, Any]] = []
+        for r in rows:
+            out.append(
+                {
+                    "id": int(r[0]),
+                    "league_id": int(r[1]),
+                    "league_name": r[2],
+                    "season": _to_int_or_none(r[3]),
+                    "status_short": r[4],
+                    "status_long": r[5],
+                    "date_utc": _to_iso_or_none(r[6]),
+                    "updated_at_utc": _to_iso_or_none(r[7]),
+                    "hours_since_date_utc": round(float(r[8]), 2) if r[8] is not None else None,
+                    "hours_since_updated": round(float(r[9]), 2) if r[9] is not None else None,
+                    "is_tracked": int(r[1]) in tracked_set,
+                }
+            )
+
+        return _ok(
+            mcp_schemas.StaleFixturesReport(
+                threshold_hours=int(hours_threshold),
+                safety_lag_hours=int(hours_safety),
+                league_filter=league_id_val,
+                stale_count=len(out),
+                fixtures=out,
+                ts_utc=_utc_now_iso(),
+            )
+        )
+    except Exception as e:
+        return _ok_error("stale_fixtures_report_failed", details=str(e))
+
+
+@app.tool()
+async def auto_finish_stats(hours: int = 24, league_id: int | None = None) -> dict:
+    """
+    Ops tool: stats on auto-finished fixtures in the last N hours.
+
+    Shows how many fixtures were auto-finished by the auto_finish_stale_fixtures job,
+    grouped by hour bucket and league.
+    """
+    try:
+        hours_val = max(1, min(int(hours), 7 * 24))
+        league_id_val = int(league_id) if league_id is not None else None
+
+        rows = await _db_fetchall_async(
+            queries.AUTO_FINISH_STATS,
+            (int(hours_val), league_id_val, league_id_val),
+        )
+
+        hourly_stats: list[dict[str, Any]] = []
+        total_count = 0
+        total_leagues = set()
+
+        for r in rows:
+            count = int(r[0])
+            total_count += count
+            leagues = int(r[1])
+            total_leagues.add(leagues)
+            hourly_stats.append(
+                {
+                    "hour_bucket_utc": _to_iso_or_none(r[2]),
+                    "auto_finished_count": count,
+                    "leagues_affected": leagues,
+                }
+            )
+
+        tracked_set: set[int] = {int(x["id"]) for x in _tracked_leagues_from_daily_config()}
+
+        return _ok(
+            mcp_schemas.AutoFinishStats(
+                window_hours=int(hours_val),
+                league_filter=league_id_val,
+                total_auto_finished=total_count,
+                unique_leagues_affected=len(total_leagues),
+                is_tracked_league=league_id_val in tracked_set if league_id_val else None,
+                hourly_stats=hourly_stats,
+                ts_utc=_utc_now_iso(),
+            )
+        )
+    except Exception as e:
+        return _ok_error("auto_finish_stats_failed", details=str(e))
+
+
+@app.tool()
 async def query_standings(league_id: int, season: int) -> dict:
     """
     Query standings (core.standings) for a league+season.

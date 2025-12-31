@@ -253,10 +253,10 @@ async def _fetchall_async(sql_text: str, params: tuple[Any, ...]) -> list[tuple[
 
 
 @app.get("/v1/health", dependencies=[Depends(require_only_query_params(set()))])
-async def health() -> dict:
+async def health() -> Response:
     try:
         row = await _fetchone_async("SELECT 1;", ())
-        return {"ok": True, "db": bool(row and row[0] == 1)}
+        return JSONResponse(content={"ok": True, "db": bool(row and row[0] == 1)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(e)})
 

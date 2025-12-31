@@ -145,22 +145,43 @@ jobs:
     min_records: 1
     max_lag_minutes: 1440
 
+# Maintenance: auto-finish stale fixtures without API calls (DB-only).
+# Prevents stale live statuses (NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT) from persisting.
+# Uses double-threshold safety: date_utc < N hours ago AND updated_at < M hours ago.
+- job_id: auto_finish_stale_fixtures
+  type: incremental_daily
+  enabled: true
+  priority: LOW
+  endpoint: none  # DB-only job, no API calls
+  params:
+    threshold_hours: 2
+    safety_lag_hours: 3
+    max_fixtures_per_run: 1000
+    dry_run: false
+  interval:
+    type: cron
+    cron: "0 * * * *"  # Every hour
+  target_layer: core
+  dependencies:
+  - daily_fixtures_by_date
+
 # Maintenance: refresh stale "live" fixtures that haven't updated in a while.
 # This prevents "stale live status" from polluting live dashboards and MCP live scans.
+# Enabled: works in tandem with auto_finish_stale_fixtures (auto_finish handles old cases, this handles recent ones).
 - job_id: stale_live_refresh
   type: incremental_daily
-  enabled: false
+  enabled: true
   priority: LOW
   endpoint: /fixtures
   params:
-    stale_threshold_minutes: 30
+    stale_threshold_minutes: 15  # More aggressive: auto_finish handles older fixtures
     batch_size: 20   # API-Football /fixtures ids max 20
     # Which league scope should "stale live cleanup" use?
     # - daily: config/jobs/daily.yaml -> tracked_leagues
     scope_source: daily
   interval:
     type: cron
-    cron: "*/10 * * * *"
+    cron: "*/5 * * * *"  # Every 5 minutes for better coverage
   target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date

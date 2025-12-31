@@ -46,6 +46,8 @@ Ek ops gözlemler (Phase 1.5):
 - **Recent error logs**: `get_recent_log_errors(limit=50)`
 - **Scope policy (quota optimizasyonu)**: `get_scope_policy(league_id=<LID>)`
 - **Stale scheduled (NS/TBD ama geçmiş kickoff)**: `get_stale_scheduled_fixtures_status(threshold_minutes=180, lookback_days=3)`
+- **Stale fixtures (live durumunda kalmış maçlar)**: `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)`
+- **Auto-finish stats**: `auto_finish_stats(hours=24)`
 
 ### 1.6 Incident: “Geçmiş tarihte NS görünüyor ama FT olmalı”
 
@@ -241,10 +243,16 @@ Bu checklist, canlı + global-by-date kapalıyken (tracked lig + backfill modeli
   - `daily_fixtures_by_date` enabled ve cron `0 6 * * *`\n
   - `fixtures_backfill_league_season` enabled ve cron `0-59/10 * * * *`\n
   - `fixture_details_backfill_season` enabled ve cron `5-59/10 * * * *`\n
-  - `stale_live_refresh` disabled\n
+  - `auto_finish_stale_fixtures` enabled ve cron `0 * * * *` (yeni)\n
+  - `stale_live_refresh` enabled ve cron `*/5 * * * *` (re-enabled, daha agresif: 15m threshold, 5m cron)\n
 - `get_daily_fixtures_by_date_status(since_minutes=240)`:\n
   - `running=true` (06:00–08:00 arası)\n
   - `requests>0`\n
+- `auto_finish_stats(hours=24)`:\n
+  - `total_auto_finished` > 0 beklenir (son 24 saatte en az birkaç maç)\n
+  - `unique_leagues_affected` tracked league sayısının altında olmalı\n
+- `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)`:\n
+  - `stale_count` zamanla düşmeli (auto_finish ile)\n
 - `get_backfill_progress(job_id="fixtures_backfill_league_season")`:\n
   - `completed_tasks` zamanla artmalı (her gün kademeli)\n
 - `get_rate_limit_status()`:\n
@@ -376,17 +384,37 @@ Idempotency kontrolü (DB):\n
   - İlgili endpoint için `get_last_sync_time()` ve RAW error summary.
 
 ### 5.8 “Canlı gibi takılı kalan” maçlar (stale live status)
+
+Hibrit yaklaşım (auto-finish + stale_refresh):
+
+**Aşama 1: Auto-finish (DB-only, API çağrısı yok)**
 - Belirti:
   - Claude/MCP canlı taramasında “stale” görünen fixtures (örn. `1H/2H/HT/INT/SUSP`) ve `updated_at` çok eski.
-  - MCP: `get_stale_live_fixtures_status(threshold_minutes=30, tracked_only=true, scope_source="daily")` → `stale_count>0`
-- Otomatik çözüm (mevcut sistem):
+  - MCP: `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)` → `stale_count>0`
+- Otomatik çözüm:
+  - `auto_finish_stale_fixtures` job’ı DB’de direkt status’u `FT’ye çevirir (API çağrısı yok).
+  - Güvenlik: Double-threshold kontrolü (`date_utc < now-2h` VE `updated_at < now-3h`).
+  - Scope: `config/jobs/daily.yaml -> tracked_leagues`.
+- Aksiyon:
+  - `auto_finish_stats(hours=24)` ile kaç maç auto-finished’i kontrol et.
+  - Beklenen: Her saat başı 50-500 arası maç FT’ye geçmeli.
+
+**Aşama 2: Stale refresh (API çağrılı, kalan durumlar için)**
+- Belirti:
+  - Auto-finish’e girmeyen ama yine de stale durumdaki maçlar (örn. 1-2 saat önce güncellenmiş).
+  - MCP: `get_stale_live_fixtures_status(threshold_minutes=15, tracked_only=true, scope_source="daily")` → `stale_count>0`
+- Otomatik çözüm:
   - `stale_live_refresh` job’ı bu fixture id’lerini seçer ve `/fixtures?ids=...` ile tekrar çekip CORE’daki status’ü düzeltir.
-  - Scope: bu deployment’ta `scope_source="daily"` → `config/jobs/daily.yaml -> tracked_leagues`.
+  - Scope: `scope_source="daily"` → `config/jobs/daily.yaml -> tracked_leagues`.
 - Aksiyon:
   - `get_job_status(job_name="stale_live_refresh")` ile job loglarını doğrula.
   - Eğer `stale_count` uzun süre düşmüyorsa:
     - Quota / 429 var mı kontrol et: `get_raw_error_summary(since_minutes=60)`
     - DB’de fixture `updated_at` ilerliyor mu kontrol et.
+
+**Doğrulama:**
+- Auto-finish sonrası: `stale_fixtures_report()` → `stale_count` zamanla 0’a yaklaşmalı.
+- Stale refresh sonrası: `get_stale_live_fixtures_status()` → `stale_count` çok düşük kalmalı (<10).
 
 ---
 
