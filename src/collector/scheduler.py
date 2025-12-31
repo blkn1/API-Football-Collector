@@ -25,6 +25,7 @@ from src.jobs.fixture_details import (
 )
 from src.jobs.stale_live_refresh import run_stale_live_refresh
 from src.jobs.stale_scheduled_finalize import run_stale_scheduled_finalize
+from src.jobs.auto_finish_stale_fixtures import run_auto_finish_stale_fixtures
 from src.jobs.backfill import (
     run_fixtures_backfill_league_season,
     run_standings_backfill_league_season,
@@ -259,6 +260,9 @@ def _build_runner(
                     limiter=limiter,
                     config_path=_project_root() / "config" / "jobs" / "daily.yaml",
                 )
+            elif job.job_id == "auto_finish_stale_fixtures":
+                # DB-only job, handles all stale fixtures efficiently
+                await run_auto_finish_stale_fixtures(config_path=_project_root() / "config" / "jobs" / "daily.yaml")
             elif job.job_id == "top_scorers_daily":
                 await run_top_scorers_daily(
                     client=client,
