@@ -10,7 +10,10 @@ import yaml
 
 from src.collector.api_client import APIClient, APIClientError, APIResult, RateLimitError
 from src.collector.rate_limiter import EmergencyStopError, RateLimiter
-from src.jobs.fixture_details import _fetch_and_store_fixture_details, _missing_detail_endpoints_for_fixture
+from src.jobs.fixture_details import (
+    _fetch_and_store_fixture_details,
+    _missing_or_stale_detail_endpoints_for_fixture,
+)
 from src.transforms.fixtures import transform_fixtures
 from src.utils.db import get_transaction, upsert_core, upsert_raw
 from src.utils.dependencies import ensure_fixtures_dependencies
@@ -403,27 +406,29 @@ async def run_auto_finish_verification(
                 conn.commit()
             fixtures_verified += len(fixtures_rows)
 
-            # Fetch details for verified fixtures (only missing endpoints)
+            # Fetch details for verified fixtures (missing OR stale endpoints)
             verified_fixture_ids = [row["id"] for row in fixtures_rows]
             for fixture_id in verified_fixture_ids:
                 try:
-                    # Check which endpoints are missing before fetching
-                    missing_endpoints = _missing_detail_endpoints_for_fixture(fixture_id=fixture_id)
-                    if not missing_endpoints:
-                        # All endpoints already present, skip
+                    # Check which endpoints are missing or stale before fetching
+                    missing_or_stale = _missing_or_stale_detail_endpoints_for_fixture(
+                        fixture_id=fixture_id,
+                        stale_minutes=int(os.getenv("FIXTURE_DETAILS_STALE_MINUTES", "15")),
+                    )
+                    if not missing_or_stale:
+                        # All endpoints present and fresh, skip
                         continue
 
-                    # _fetch_and_store_fixture_details already checks for missing endpoints
-                    # and skips if all endpoints are present
+                    # _fetch_and_store_fixture_details already checks and skips if nothing to do
                     await _fetch_and_store_fixture_details(
                         client=client,
                         limiter=limiter,
                         fixture_id=fixture_id,
                     )
-                    # Count fixtures that had details fetched (at least one endpoint was missing)
+                    # Count fixtures that had details fetched (at least one endpoint was missing/stale)
                     details_fetched_count += 1
                     # Count exact number of endpoints fetched
-                    details_endpoints_fetched += len(missing_endpoints)
+                    details_endpoints_fetched += len(missing_or_stale)
                 except EmergencyStopError:
                     # Quota exhausted, stop processing
                     raise

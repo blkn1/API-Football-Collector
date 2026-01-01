@@ -128,26 +128,50 @@ async def _safe_get_envelope(
     raise RuntimeError(f"api_errors:{label}:max_retries_exceeded")
 
 
-def _missing_detail_endpoints_for_fixture(*, fixture_id: int) -> set[str]:
+def _missing_or_stale_detail_endpoints_for_fixture(
+    *, fixture_id: int, stale_minutes: int = 15
+) -> set[str]:
     """
-    Return which per-fixture endpoints are missing in RAW for a fixture.
-    This lets us avoid re-calling endpoints that are already persisted.
+    Return per-fixture endpoints that are missing OR stale in RAW.
+
+    Staleness rule:
+    - If no RAW row exists for an endpoint -> considered missing
+    - If last fetched_at is older than `stale_minutes` -> considered stale
+
+    This prevents kısmi/boş response'ların kalıcı hale gelmesini engeller
+    (ör. 200 + empty response durumları).
     """
     sql = """
-    SELECT DISTINCT r.endpoint
+    SELECT r.endpoint, MAX(r.fetched_at) AS last_fetch
     FROM raw.api_responses r
     WHERE r.endpoint = ANY(%s)
       AND (r.requested_params->>'fixture')::bigint = %s
+    GROUP BY r.endpoint
     """
-    present: set[str] = set()
+    now = _utc_now()
+    stale_cutoff = now - timedelta(minutes=int(stale_minutes))
+    stale: set[str] = set()
     with get_db_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(sql, (list(DETAIL_ENDPOINTS), int(fixture_id)))
-            for (ep,) in cur.fetchall():
-                if ep:
-                    present.add(str(ep))
+            rows = cur.fetchall()
         conn.commit()
-    return set(DETAIL_ENDPOINTS) - present
+    # Build lookup of endpoint -> last_fetch
+    last_fetch: dict[str, datetime | None] = {str(ep): ts for ep, ts in rows}
+
+    for ep in DETAIL_ENDPOINTS:
+        lf = last_fetch.get(ep)
+        if lf is None:
+            stale.add(ep)  # missing
+            continue
+        try:
+            lf_dt = lf if isinstance(lf, datetime) else None
+        except Exception:
+            lf_dt = None
+        if lf_dt is None or lf_dt < stale_cutoff:
+            stale.add(ep)
+
+    return stale
 
 
 def _select_backfill_fixtures(*, days: int, limit: int, config_path: Path) -> list[FixtureWorkItem]:
@@ -313,8 +337,11 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
     - /fixtures/statistics
     - /fixtures/lineups
     """
-    missing = _missing_detail_endpoints_for_fixture(fixture_id=int(fixture_id))
-    if not missing:
+    # Force refresh if data missing OR stale (last fetch older than stale_minutes).
+    missing_or_stale = _missing_or_stale_detail_endpoints_for_fixture(
+        fixture_id=int(fixture_id), stale_minutes=int(os.getenv("FIXTURE_DETAILS_STALE_MINUTES", "15"))
+    )
+    if not missing_or_stale:
         return
 
     endpoints = [
@@ -325,7 +352,7 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
     ]
 
     for endpoint, transform_fn, table, conflict_cols, update_cols in endpoints:
-        if endpoint not in missing:
+        if endpoint not in missing_or_stale:
             continue
         params = {"fixture": int(fixture_id)}
         label = f"{endpoint}(fixture={fixture_id})"
@@ -348,6 +375,20 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
             response_headers=res.headers,
             body=env,
         )
+
+        # Empty response guard: if API returned 0 results / empty response, log and retry later
+        resp_len = len(env.get("response") or [])
+        if int(env.get("results") or 0) == 0 or resp_len == 0:
+            logger.warning(
+                "fixture_detail_empty_response",
+                fixture_id=fixture_id,
+                endpoint=endpoint,
+                status_code=res.status_code,
+                results=env.get("results"),
+                response_len=resp_len,
+            )
+            # Do not upsert CORE for empty payload; staleness logic will retry after stale window.
+            continue
 
         rows = transform_fn(envelope=env, fixture_id=int(fixture_id))
         if rows:

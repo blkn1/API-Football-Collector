@@ -1359,20 +1359,58 @@ async def read_fixture(fixture_id: int) -> dict[str, Any]:
     dependencies=[Depends(require_access), Depends(require_only_query_params({"limit"}))],
 )
 async def read_fixture_events(fixture_id: int, limit: int = 5000) -> dict[str, Any]:
-    # Önce snapshot'ı kontrol et
+    # Snapshot + freshness-aware fallback to normalized table
     snapshot_row = await _fetchone_async(mcp_queries.FIXTURE_DETAILS_SNAPSHOT_QUERY, (int(fixture_id),))
-    if snapshot_row and snapshot_row[1] is not None:  # events kolonu (index 1)
-        events_data = snapshot_row[1]
-        safe_limit = _safe_limit(limit, cap=10000)
+    snapshot_events = snapshot_row[1] if snapshot_row else None
+    snapshot_updated_at = snapshot_row[5] if snapshot_row else None
+
+    # Normalized table stats
+    table_stats = await _fetchone_async(
+        """
+        SELECT COUNT(*) AS cnt, MAX(updated_at) AS last_upd
+        FROM core.fixture_events
+        WHERE fixture_id = %s
+        """,
+        (int(fixture_id),),
+    )
+    table_count = int(table_stats[0]) if table_stats and table_stats[0] is not None else 0
+    table_last_upd = table_stats[1] if table_stats else None
+
+    # Last RAW fetch time for events
+    last_raw_row = await _fetchone_async(
+        """
+        SELECT MAX(fetched_at) FROM raw.api_responses
+        WHERE endpoint = '/fixtures/events'
+          AND (requested_params->>'fixture')::bigint = %s
+        """,
+        (int(fixture_id),),
+    )
+    last_raw_events = last_raw_row[0] if last_raw_row else None
+
+    safe_limit = _safe_limit(limit, cap=10000)
+
+    def _snapshot_len(ev: Any) -> int:
+        try:
+            return len(ev) if isinstance(ev, list) else 0
+        except Exception:
+            return 0
+
+    # Decide source: if normalized has more rows or is fresher than snapshot, use normalized.
+    use_normalized = False
+    if table_count > _snapshot_len(snapshot_events):
+        use_normalized = True
+    elif last_raw_events and snapshot_updated_at and last_raw_events > snapshot_updated_at:
+        use_normalized = True
+
+    if not use_normalized and snapshot_events is not None:
         return {
             "ok": True,
             "fixture_id": int(fixture_id),
-            "items": events_data[:safe_limit] if isinstance(events_data, list) else events_data,
+            "items": snapshot_events[:safe_limit] if isinstance(snapshot_events, list) else snapshot_events,
             "source": "core.fixture_details",
         }
-    
-    # Fallback: normalized tablo
-    safe_limit = _safe_limit(limit, cap=10000)
+
+    # Fallback or preferred: normalized table
     rows = await _fetchall_async(mcp_queries.FIXTURE_EVENTS_QUERY, (int(fixture_id), safe_limit))
     items: list[dict[str, Any]] = []
     for r in rows:
