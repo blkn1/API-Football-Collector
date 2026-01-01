@@ -259,6 +259,19 @@ async def run_auto_finish_verification(
 
         fixtures_rows, _ = transform_fixtures(env)
 
+        # Handle empty response (fixture not found in API or invalid)
+        if not fixtures_rows:
+            response_count = len(env.get("response") or [])
+            logger.warning(
+                "auto_finish_verification_empty_response",
+                fixture_ids=batch,
+                response_count=response_count,
+                api_status_code=res.status_code,
+            )
+            # If fixture not found in API, we can't verify it
+            # Leave needs_score_verification = TRUE for manual review
+            continue
+
         try:
             with get_transaction() as conn:
                 upsert_core(
