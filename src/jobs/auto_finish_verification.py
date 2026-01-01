@@ -232,6 +232,15 @@ async def run_auto_finish_verification(
             body=env,
         )
 
+        # Log batch fetch result for observability
+        response_count = len(env.get("response") or [])
+        logger.info(
+            "auto_finish_verification_batch_fetched",
+            fixture_ids=batch,
+            response_count=response_count,
+            api_status_code=res.status_code,
+        )
+
         # Ensure dependencies exist (FK integrity) grouped per league+season
         try:
             grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
