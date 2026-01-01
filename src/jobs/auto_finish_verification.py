@@ -288,59 +288,76 @@ async def run_auto_finish_verification(
                 response_count=response_count,
                 api_status_code=res.status_code,
             )
-            # Check if this fixture has been attempted multiple times (cooldown logic)
-            # Only clear flag if last attempt was 24+ hours ago (persistent not-found)
+            # Handle empty response with cooldown logic
+            # Strategy:
+            # 1. Get current updated_at to check if this is a retry (24+ hours since last attempt)
+            # 2. Always update updated_at to track this attempt
+            # 3. If this is a retry (24+ hours since last attempt), clear flag
             try:
                 with get_transaction() as conn:
                     with conn.cursor() as cur:
-                        # Check which fixtures have been attempted 24+ hours ago
+                        # Get current updated_at for these fixtures to check if this is a retry
                         cur.execute(
                             """
-                            SELECT id
+                            SELECT id, updated_at
                             FROM core.fixtures
                             WHERE id = ANY(%s)
                               AND needs_score_verification = TRUE
-                              AND updated_at < NOW() - INTERVAL '24 hours'
                             """,
                             (batch,),
                         )
-                        old_attempts = [int(r[0]) for r in cur.fetchall()]
+                        fixture_states = {int(r[0]): r[1] for r in cur.fetchall()}
+                        
+                        # Check which fixtures were attempted 24+ hours ago (retry after cooldown)
+                        now_utc = datetime.now(timezone.utc)
+                        old_attempts = []
+                        for fid in batch:
+                            if fid in fixture_states:
+                                last_updated = fixture_states[fid]
+                                if isinstance(last_updated, datetime):
+                                    hours_since = (now_utc - last_updated.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                                else:
+                                    # Handle timezone-aware datetime from DB
+                                    hours_since = (now_utc - last_updated).total_seconds() / 3600
+                                
+                                if hours_since >= 24:
+                                    old_attempts.append(fid)
+                        
+                        # Always update updated_at to track this attempt
+                        cur.execute(
+                            """
+                            UPDATE core.fixtures
+                            SET updated_at = NOW()
+                            WHERE id = ANY(%s)
+                              AND needs_score_verification = TRUE
+                            """,
+                            (batch,),
+                        )
                         
                         if old_attempts:
-                            # Clear flag for fixtures that have been attempted 24+ hours ago
-                            # This indicates persistent not-found (not a temporary API issue)
+                            # Clear flag for persistent not-found (24+ hours since last attempt)
                             cur.execute(
                                 """
                                 UPDATE core.fixtures
-                                SET needs_score_verification = FALSE,
-                                    updated_at = NOW()
+                                SET needs_score_verification = FALSE
                                 WHERE id = ANY(%s)
                                 """,
                                 (old_attempts,),
                             )
-                            conn.commit()
                             logger.info(
                                 "auto_finish_verification_flag_cleared_not_found",
                                 fixture_ids=old_attempts,
                                 reason="persistent_not_found_after_24h_cooldown",
                             )
                         else:
-                            # Update updated_at to track attempt, but keep flag for retry
-                            cur.execute(
-                                """
-                                UPDATE core.fixtures
-                                SET updated_at = NOW()
-                                WHERE id = ANY(%s)
-                                  AND needs_score_verification = TRUE
-                                """,
-                                (batch,),
-                            )
-                            conn.commit()
+                            # First attempt or within cooldown - keep flag, just track attempt
                             logger.info(
                                 "auto_finish_verification_attempt_tracked",
                                 fixture_ids=batch,
                                 reason="empty_response_cooldown_24h",
                             )
+                        
+                        conn.commit()
             except Exception as e:
                 logger.error(
                     "auto_finish_verification_empty_response_handling_failed",
