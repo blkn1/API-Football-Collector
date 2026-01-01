@@ -278,7 +278,26 @@ async def run_auto_finish_verification(
                 api_status_code=res.status_code,
             )
             # If fixture not found in API, we can't verify it
-            # Leave needs_score_verification = TRUE for manual review
+            # Clear the flag to prevent repeated attempts, but log the issue
+            try:
+                with get_transaction() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE core.fixtures SET needs_score_verification = FALSE WHERE id = ANY(%s)",
+                            (batch,),
+                        )
+                    conn.commit()
+                logger.info(
+                    "auto_finish_verification_flag_cleared_not_found",
+                    fixture_ids=batch,
+                    reason="fixture_not_found_in_api",
+                )
+            except Exception as e:
+                logger.error(
+                    "auto_finish_verification_flag_clear_failed",
+                    fixture_ids=batch,
+                    err=str(e),
+                )
             continue
 
         try:
