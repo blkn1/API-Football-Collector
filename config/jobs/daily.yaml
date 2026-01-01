@@ -160,16 +160,34 @@ jobs:
   type: incremental_daily
   enabled: true
   priority: LOW
-  endpoint: none  # DB-only job, no API calls
+  endpoint: none  # DB-only job by default, but can optionally fetch from API if try_fetch_first=true
   params:
     threshold_hours: 2
     safety_lag_hours: 3
     max_fixtures_per_run: 1000
     dry_run: false
+    try_fetch_first: false  # Set to true to attempt API fetch before auto-finishing (uses quota)
   interval:
     type: cron
     cron: "0 * * * *"  # Every hour
   target_layer: core
+  dependencies:
+  - daily_fixtures_by_date
+
+# Verification job: Refresh auto-finished matches flagged for verification when quota allows
+- job_id: auto_finish_verification
+  type: incremental_daily
+  enabled: true
+  priority: LOW
+  endpoint: /fixtures
+  params:
+    min_daily_quota: 50000  # Only run when quota is healthy
+    batch_size: 20
+    max_fixtures_per_run: 200
+  interval:
+    type: cron
+    cron: "*/30 * * * *"  # Every 30 minutes
+  target_layer: raw+core
   dependencies:
   - daily_fixtures_by_date
 
