@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from src.utils.db import get_transaction
+from src.collector.api_client import APIClient, APIClientError, RateLimitError
+from src.collector.rate_limiter import EmergencyStopError, RateLimiter
+from src.transforms.fixtures import transform_fixtures
+from src.utils.db import get_transaction, upsert_core
 from src.utils.logging import get_logger
 
 
@@ -27,6 +31,7 @@ class AutoFinishConfig:
     max_fixtures_per_run: int
     scoped_league_ids: set[int]
     dry_run: bool
+    try_fetch_first: bool
 
 
 def _load_daily_tracked_league_ids(cfg: dict[str, Any], *, config_path: Path) -> set[int]:
@@ -53,6 +58,7 @@ def _load_config(config_path: Path) -> AutoFinishConfig:
     safety_lag = 3  # 3 hours since last update (safety check)
     max_fixtures = 1000
     dry_run = False
+    try_fetch_first = False  # Default: DB-only (no API calls) to maintain current behavior
 
     for j in cfg.get("jobs") or []:
         if not isinstance(j, dict):
@@ -81,6 +87,11 @@ def _load_config(config_path: Path) -> AutoFinishConfig:
                     dry_run = bool(params.get("dry_run"))
             except Exception:
                 pass
+            try:
+                if params.get("try_fetch_first") is not None:
+                    try_fetch_first = bool(params.get("try_fetch_first"))
+            except Exception:
+                pass
         break
 
     # Guardrails
@@ -96,6 +107,7 @@ def _load_config(config_path: Path) -> AutoFinishConfig:
         max_fixtures_per_run=max_fixtures,
         scoped_league_ids=scoped,
         dry_run=dry_run,
+        try_fetch_first=try_fetch_first,
     )
 
 
@@ -118,7 +130,8 @@ def _select_stale_fixture_ids(
     sql = """
     SELECT f.id, f.league_id, f.status_short, f.date, f.updated_at
     FROM core.fixtures f
-    WHERE f.status_short = ANY(%s)
+    WHERE f.league_id = ANY(%s)
+      AND f.status_short = ANY(%s)
       AND f.date < NOW() - (%s::text || ' hours')::interval
       AND f.updated_at < NOW() - (%s::text || ' hours')::interval
     ORDER BY f.date ASC
@@ -129,10 +142,10 @@ def _select_stale_fixture_ids(
             cur.execute(
                 sql,
                 (
-                    sorted(list(tracked_league_ids)),
+                    sorted(list(tracked_league_ids or [])),
                     list(STALE_STATUSES),
-                    int(threshold_hours),
-                    int(safety_lag_hours),
+                    str(threshold_hours),
+                    str(safety_lag_hours),
                     int(limit),
                 ),
             )
@@ -141,13 +154,73 @@ def _select_stale_fixture_ids(
     return [int(r[0]) for r in rows]
 
 
+def _chunk(ids: list[int], *, size: int) -> list[list[int]]:
+    """Split list into chunks of specified size."""
+    if size <= 0:
+        return [ids]
+    return [ids[i : i + size] for i in range(0, len(ids), size)]
+
+
+async def _try_fetch_fixtures_batch_from_api(
+    *,
+    fixture_ids: list[int],
+    client: APIClient,
+    limiter: RateLimiter,
+) -> dict[int, dict[str, Any]]:
+    """
+    Batch fetch fixtures from API.
+    
+    Returns dict mapping fixture_id -> transformed_fixture_data for successful fetches.
+    Returns empty dict if API call fails (quota, network, etc.).
+    """
+    fetched_data: dict[int, dict[str, Any]] = {}
+    
+    for batch in _chunk(fixture_ids, size=20):
+        ids_param = "-".join(str(int(x)) for x in batch)
+        params = {"ids": ids_param}
+        label = f"/fixtures(ids={ids_param})"
+        
+        try:
+            limiter.acquire_token()
+            res = await client.get("/fixtures", params=params)
+            limiter.update_from_headers(res.headers)
+            env = res.data or {}
+            errors = env.get("errors") or {}
+            
+            if errors:
+                logger.warning("auto_finish_api_errors", label=label, errors=errors)
+                continue
+                
+            # Transform and store by fixture_id
+            fixtures_rows, _ = transform_fixtures(env)
+            for row in fixtures_rows:
+                fetched_data[row["id"]] = row
+                
+        except EmergencyStopError as e:
+            logger.warning("auto_finish_emergency_stop", err=str(e))
+            break
+        except RateLimitError as e:
+            logger.warning("auto_finish_rate_limited", err=str(e))
+            await asyncio.sleep(5)
+            continue
+        except (APIClientError, RuntimeError) as e:
+            logger.warning("auto_finish_api_failed", err=str(e), ids=len(batch))
+            continue
+    
+    return fetched_data
+
+
 def _auto_finish_fixtures(
     *,
     fixture_ids: list[int],
     dry_run: bool,
+    fetched_data: dict[int, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Update stale fixtures to FT status.
+    
+    If fetched_data is provided (from API), UPSERT with fresh data and set needs_score_verification = FALSE.
+    Otherwise, update status directly and set needs_score_verification = TRUE.
 
     Returns summary statistics including leagues affected.
     """
@@ -158,37 +231,95 @@ def _auto_finish_fixtures(
         logger.info("auto_finish_dry_run", fixture_count=len(fixture_ids))
         return {"updated_count": 0, "leagues_affected": 0, "dry_run": True}
 
-    sql = """
-    UPDATE core.fixtures
-    SET status_short = 'FT',
-        status_long = 'Match Finished (Auto-finished)',
-        updated_at = NOW()
-    WHERE id = ANY(%s)
-    RETURNING id, league_id, season, status_short, date, updated_at
-    """
+    fetched_ids = set(fetched_data.keys()) if fetched_data else set()
+    missing_ids = [fid for fid in fixture_ids if fid not in fetched_ids]
 
-    with get_transaction() as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, (list(fixture_ids),))
-            rows = cur.fetchall()
-            conn.commit()
+    updated_count = 0
+    leagues_affected_set: set[int] = set()
 
-    # Calculate leagues affected
-    leagues_affected = len(set(int(r[1]) for r in rows))
+    # Update fixtures with fresh API data
+    if fetched_data:
+        for fixture_id, row in fetched_data.items():
+            try:
+                with get_transaction() as conn:
+                    upsert_core(
+                        full_table_name="core.fixtures",
+                        rows=[row],
+                        conflict_cols=["id"],
+                        update_cols=[
+                            "league_id",
+                            "season",
+                            "round",
+                            "date",
+                            "api_timestamp",
+                            "referee",
+                            "timezone",
+                            "venue_id",
+                            "home_team_id",
+                            "away_team_id",
+                            "status_short",
+                            "status_long",
+                            "elapsed",
+                            "goals_home",
+                            "goals_away",
+                            "score",
+                        ],
+                        conn=conn,
+                    )
+                    # Set needs_score_verification = FALSE for successfully fetched fixtures
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            "UPDATE core.fixtures SET needs_score_verification = FALSE WHERE id = %s",
+                            (fixture_id,),
+                        )
+                    conn.commit()
+                updated_count += 1
+                leagues_affected_set.add(row["league_id"])
+            except Exception as e:
+                logger.error("auto_finish_upsert_failed", fixture_id=fixture_id, err=str(e))
+                # Fallback: mark as needing verification
+                missing_ids.append(fixture_id)
+
+    # Update missing/failed fixtures with current score + verification flag
+    if missing_ids:
+        sql = """
+        UPDATE core.fixtures
+        SET status_short = 'FT',
+            status_long = 'Match Finished (Auto-finished)',
+            needs_score_verification = TRUE,
+            updated_at = NOW()
+        WHERE id = ANY(%s)
+        RETURNING id, league_id, season, status_short, date, updated_at
+        """
+        with get_transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (list(missing_ids),))
+                rows = cur.fetchall()
+                conn.commit()
+        updated_count += len(rows)
+        leagues_affected_set.update(int(r[1]) for r in rows)
 
     return {
-        "updated_count": len(rows),
-        "leagues_affected": leagues_affected,
+        "updated_count": updated_count,
+        "leagues_affected": len(leagues_affected_set),
         "dry_run": False,
+        "fetched_from_api": len(fetched_ids),
+        "marked_for_verification": len(missing_ids),
     }
 
 
-def run_auto_finish_stale_fixtures(*, config_path: Path) -> None:
+async def run_auto_finish_stale_fixtures(
+    *,
+    config_path: Path,
+    client: APIClient | None = None,
+    limiter: RateLimiter | None = None,
+) -> None:
     """
-    Maintenance job (DB-only, no API calls):
+    Maintenance job:
     - Find fixtures in stale intermediate states (NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT)
-    - Apply double-threshold safety check (date_utc < N hours ago AND updated_at < M hours ago)
-    - Update status to FT directly in database
+    - Apply double-threshold safety check (date < N hours ago AND updated_at < M hours ago)
+    - If try_fetch_first=True and API available: batch fetch fresh data, UPSERT with verification flag = FALSE
+    - Otherwise: Update status to FT directly in database, set verification flag = TRUE
     - Log statistics
 
     This job is safe to run because:
@@ -196,6 +327,7 @@ def run_auto_finish_stale_fixtures(*, config_path: Path) -> None:
     2. It uses two independent time thresholds
     3. It's transaction-wrapped (rollback on error)
     4. It respects max_fixtures_per_run limit
+    5. API fetch is opt-in via config (default: False)
     """
     cfg = _load_config(config_path)
 
@@ -216,7 +348,31 @@ def run_auto_finish_stale_fixtures(*, config_path: Path) -> None:
         )
         return
 
-    result = _auto_finish_fixtures(fixture_ids=stale_ids, dry_run=cfg.dry_run)
+    fetched_data: dict[int, dict[str, Any]] = {}
+    
+    # Try to fetch fresh data if enabled and API available
+    if cfg.try_fetch_first and client is not None and limiter is not None:
+        try:
+            fetched_data = await _try_fetch_fixtures_batch_from_api(
+                fixture_ids=stale_ids,
+                client=client,
+                limiter=limiter,
+            )
+            logger.info(
+                "auto_finish_fetch_attempt",
+                total=len(stale_ids),
+                fetched=len(fetched_data),
+                failed=len(stale_ids) - len(fetched_data),
+            )
+        except Exception as e:
+            logger.warning("auto_finish_fetch_error", err=str(e))
+            # Continue with DB-only update for all fixtures
+
+    result = _auto_finish_fixtures(
+        fixture_ids=stale_ids,
+        dry_run=cfg.dry_run,
+        fetched_data=fetched_data if fetched_data else None,
+    )
 
     logger.info(
         "auto_finish_complete",
@@ -225,5 +381,7 @@ def run_auto_finish_stale_fixtures(*, config_path: Path) -> None:
         selected=len(stale_ids),
         updated_count=result["updated_count"],
         leagues_affected=result["leagues_affected"],
+        fetched_from_api=result.get("fetched_from_api", 0),
+        marked_for_verification=result.get("marked_for_verification", 0),
         dry_run=cfg.dry_run,
     )
