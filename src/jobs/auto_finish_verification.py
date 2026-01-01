@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -106,8 +107,12 @@ def _select_verification_fixture_ids(
     Select fixtures that need score verification.
     These are auto-finished matches that were marked with needs_score_verification = TRUE.
     
-    Excludes fixtures that were last attempted more than 24 hours ago (cooldown period
-    to avoid clearing flag too aggressively for temporary API issues).
+    Includes:
+    - Fixtures never attempted (updated_at is old, from auto-finish time)
+    - Fixtures attempted 24+ hours ago (retry after cooldown)
+    
+    Excludes fixtures attempted in last 24 hours (cooldown period to avoid
+    clearing flag too aggressively for temporary API issues).
     """
     sql = """
     SELECT f.id
@@ -115,9 +120,9 @@ def _select_verification_fixture_ids(
     WHERE f.league_id = ANY(%s)
       AND f.needs_score_verification = TRUE
       AND f.status_short = 'FT'
-      -- Cooldown: only retry if last attempt was less than 24 hours ago
-      -- This prevents clearing flag too aggressively for temporary API issues
-      AND (f.updated_at >= NOW() - INTERVAL '24 hours' OR f.updated_at < NOW() - INTERVAL '48 hours')
+      -- Include: never attempted (old updated_at) OR attempted 24+ hours ago
+      -- Exclude: attempted in last 24 hours (cooldown)
+      AND (f.updated_at < NOW() - INTERVAL '24 hours')
     ORDER BY f.date DESC
     LIMIT %s
     """
