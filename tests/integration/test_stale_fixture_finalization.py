@@ -10,8 +10,6 @@ from pathlib import Path
 import pytest
 import psycopg2
 
-import asyncio
-
 from src.jobs.auto_finish_stale_fixtures import run_auto_finish_stale_fixtures
 from src.utils.db import get_db_connection
 
@@ -196,7 +194,7 @@ def test_auto_finish_stale_fixtures_integration(tmp_path: Path):
         )
 
         # Run auto_finish job
-        asyncio.run(run_auto_finish_stale_fixtures(config_path=test_config))
+        run_auto_finish_stale_fixtures(config_path=test_config)
 
         # Verify results
         with get_db_connection() as conn:
@@ -222,3 +220,4 @@ def test_auto_finish_stale_fixtures_integration(tmp_path: Path):
 
     finally:
         subprocess.run(["docker", "rm", "-f", container], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
