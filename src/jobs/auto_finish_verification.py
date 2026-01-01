@@ -105,6 +105,9 @@ def _select_verification_fixture_ids(
     """
     Select fixtures that need score verification.
     These are auto-finished matches that were marked with needs_score_verification = TRUE.
+    
+    Excludes fixtures that were last attempted more than 24 hours ago (cooldown period
+    to avoid clearing flag too aggressively for temporary API issues).
     """
     sql = """
     SELECT f.id
@@ -112,6 +115,9 @@ def _select_verification_fixture_ids(
     WHERE f.league_id = ANY(%s)
       AND f.needs_score_verification = TRUE
       AND f.status_short = 'FT'
+      -- Cooldown: only retry if last attempt was less than 24 hours ago
+      -- This prevents clearing flag too aggressively for temporary API issues
+      AND (f.updated_at >= NOW() - INTERVAL '24 hours' OR f.updated_at < NOW() - INTERVAL '48 hours')
     ORDER BY f.date DESC
     LIMIT %s
     """
@@ -277,24 +283,62 @@ async def run_auto_finish_verification(
                 response_count=response_count,
                 api_status_code=res.status_code,
             )
-            # If fixture not found in API, we can't verify it
-            # Clear the flag to prevent repeated attempts, but log the issue
+            # Check if this fixture has been attempted multiple times (cooldown logic)
+            # Only clear flag if last attempt was 24+ hours ago (persistent not-found)
             try:
                 with get_transaction() as conn:
                     with conn.cursor() as cur:
+                        # Check which fixtures have been attempted 24+ hours ago
                         cur.execute(
-                            "UPDATE core.fixtures SET needs_score_verification = FALSE WHERE id = ANY(%s)",
+                            """
+                            SELECT id
+                            FROM core.fixtures
+                            WHERE id = ANY(%s)
+                              AND needs_score_verification = TRUE
+                              AND updated_at < NOW() - INTERVAL '24 hours'
+                            """,
                             (batch,),
                         )
-                    conn.commit()
-                logger.info(
-                    "auto_finish_verification_flag_cleared_not_found",
-                    fixture_ids=batch,
-                    reason="fixture_not_found_in_api",
-                )
+                        old_attempts = [int(r[0]) for r in cur.fetchall()]
+                        
+                        if old_attempts:
+                            # Clear flag for fixtures that have been attempted 24+ hours ago
+                            # This indicates persistent not-found (not a temporary API issue)
+                            cur.execute(
+                                """
+                                UPDATE core.fixtures
+                                SET needs_score_verification = FALSE,
+                                    updated_at = NOW()
+                                WHERE id = ANY(%s)
+                                """,
+                                (old_attempts,),
+                            )
+                            conn.commit()
+                            logger.info(
+                                "auto_finish_verification_flag_cleared_not_found",
+                                fixture_ids=old_attempts,
+                                reason="persistent_not_found_after_24h_cooldown",
+                            )
+                        else:
+                            # Update updated_at to track attempt, but keep flag for retry
+                            cur.execute(
+                                """
+                                UPDATE core.fixtures
+                                SET updated_at = NOW()
+                                WHERE id = ANY(%s)
+                                  AND needs_score_verification = TRUE
+                                """,
+                                (batch,),
+                            )
+                            conn.commit()
+                            logger.info(
+                                "auto_finish_verification_attempt_tracked",
+                                fixture_ids=batch,
+                                reason="empty_response_cooldown_24h",
+                            )
             except Exception as e:
                 logger.error(
-                    "auto_finish_verification_flag_clear_failed",
+                    "auto_finish_verification_empty_response_handling_failed",
                     fixture_ids=batch,
                     err=str(e),
                 )
