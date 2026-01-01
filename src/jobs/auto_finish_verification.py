@@ -9,6 +9,7 @@ import yaml
 
 from src.collector.api_client import APIClient, APIClientError, APIResult, RateLimitError
 from src.collector.rate_limiter import EmergencyStopError, RateLimiter
+from src.jobs.fixture_details import _fetch_and_store_fixture_details, _missing_detail_endpoints_for_fixture
 from src.transforms.fixtures import transform_fixtures
 from src.utils.db import get_transaction, upsert_core, upsert_raw
 from src.utils.dependencies import ensure_fixtures_dependencies
@@ -195,6 +196,8 @@ async def run_auto_finish_verification(
 
     total_requests = 0
     fixtures_verified = 0
+    details_fetched_count = 0
+    details_endpoints_fetched = 0
 
     for batch in _chunk(verification_ids, size=cfg.batch_size):
         ids_param = "-".join(str(int(x)) for x in batch)
@@ -292,6 +295,41 @@ async def run_auto_finish_verification(
                         )
                 conn.commit()
             fixtures_verified += len(fixtures_rows)
+
+            # Fetch details for verified fixtures (only missing endpoints)
+            verified_fixture_ids = [row["id"] for row in fixtures_rows]
+            for fixture_id in verified_fixture_ids:
+                try:
+                    # Check which endpoints are missing before fetching
+                    missing_endpoints = _missing_detail_endpoints_for_fixture(fixture_id=fixture_id)
+                    if not missing_endpoints:
+                        # All endpoints already present, skip
+                        continue
+
+                    # _fetch_and_store_fixture_details already checks for missing endpoints
+                    # and skips if all endpoints are present
+                    await _fetch_and_store_fixture_details(
+                        client=client,
+                        limiter=limiter,
+                        fixture_id=fixture_id,
+                    )
+                    # Count fixtures that had details fetched (at least one endpoint was missing)
+                    details_fetched_count += 1
+                    # Count exact number of endpoints fetched
+                    details_endpoints_fetched += len(missing_endpoints)
+                except EmergencyStopError:
+                    # Quota exhausted, stop processing
+                    raise
+                except Exception as e:
+                    # Details fetch failed, but verification succeeded
+                    # Log warning but don't fail the verification
+                    logger.warning(
+                        "auto_finish_verification_details_fetch_failed",
+                        fixture_id=fixture_id,
+                        err=str(e),
+                    )
+                    continue
+
         except Exception as e:
             logger.error("auto_finish_verification_db_failed", err=str(e), ids=len(batch))
             continue
@@ -302,6 +340,8 @@ async def run_auto_finish_verification(
         selected=len(verification_ids),
         api_requests=total_requests,
         fixtures_verified=fixtures_verified,
+        details_fetched_count=details_fetched_count,
+        details_endpoints_fetched=details_endpoints_fetched,
         daily_remaining=q.daily_remaining,
         minute_remaining=q.minute_remaining,
     )

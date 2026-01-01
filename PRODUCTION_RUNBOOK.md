@@ -1,6 +1,13 @@
-## Production Runbook (v3)
+## Production Runbook (v3.1)
 
-Bu runbook; çalışan collector + Postgres + MCP + Read API stack’inde **deploy sonrası doğrulama**, **günlük operasyon**, ve **incident** (quota/coverage/data gap) akışlarını tek yerde toplar.
+Bu runbook; çalışan collector + Postgres + MCP + Read API stack'inde **deploy sonrası doğrulama**, **günlük operasyon**, ve **incident** (quota/coverage/data gap) akışlarını tek yerde toplar.
+
+**v3.1 Değişiklikleri:**
+- Auto-finish SQL bug fix (league_id WHERE clause, parametre sırası)
+- Schema: `needs_score_verification` kolonu eklendi
+- Auto-finish enhancement: `try_fetch_first` parametresi (opsiyonel API fetch)
+- Verification job: `auto_finish_verification` (quota guard ile)
+- Correction script: `fix_auto_finished_scores.py` (one-time data fix)
 
 ### 0) Servisler ve roller
 - **collector**: config-driven job scheduler, quota-safe API çağrıları, RAW→CORE→MART yazımı
@@ -243,7 +250,8 @@ Bu checklist, canlı + global-by-date kapalıyken (tracked lig + backfill modeli
   - `daily_fixtures_by_date` enabled ve cron `0 6 * * *`\n
   - `fixtures_backfill_league_season` enabled ve cron `0-59/10 * * * *`\n
   - `fixture_details_backfill_season` enabled ve cron `5-59/10 * * * *`\n
-  - `auto_finish_stale_fixtures` enabled ve cron `0 * * * *` (yeni)\n
+  - `auto_finish_stale_fixtures` enabled ve cron `0 * * * *` (SQL bug fix v3.1, try_fetch_first support)\n
+- `auto_finish_verification` enabled ve cron `*/30 * * * *` (v3.1, quota guard ile)\n
   - `stale_live_refresh` enabled ve cron `*/5 * * * *` (re-enabled, daha agresif: 15m threshold, 5m cron)\n
 - `get_daily_fixtures_by_date_status(since_minutes=240)`:\n
   - `running=true` (06:00–08:00 arası)\n
@@ -251,6 +259,9 @@ Bu checklist, canlı + global-by-date kapalıyken (tracked lig + backfill modeli
 - `auto_finish_stats(hours=24)`:\n
   - `total_auto_finished` > 0 beklenir (son 24 saatte en az birkaç maç)\n
   - `unique_leagues_affected` tracked league sayısının altında olmalı\n
+- `get_job_status(job_name="auto_finish_verification")`:\n
+  - Job enabled ve cron `*/30 * * * *` olmalı\n
+  - `last_event` güncel olmalı (quota guard nedeniyle bazen skip edilebilir)\n
 - `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)`:\n
   - `stale_count` zamanla düşmeli (auto_finish ile)\n
 - `get_backfill_progress(job_id="fixtures_backfill_league_season")`:\n
@@ -385,19 +396,38 @@ Idempotency kontrolü (DB):\n
 
 ### 5.8 “Canlı gibi takılı kalan” maçlar (stale live status)
 
-Hibrit yaklaşım (auto-finish + stale_refresh):
+Hibrit yaklaşım (auto-finish + verification + stale_refresh):
 
 **Aşama 1: Auto-finish (DB-only, API çağrısı yok)**
 - Belirti:
   - Claude/MCP canlı taramasında “stale” görünen fixtures (örn. `1H/2H/HT/INT/SUSP`) ve `updated_at` çok eski.
   - MCP: `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)` → `stale_count>0`
 - Otomatik çözüm:
-  - `auto_finish_stale_fixtures` job’ı DB’de direkt status’u `FT’ye çevirir (API çağrısı yok).
-  - Güvenlik: Double-threshold kontrolü (`date_utc < now-2h` VE `updated_at < now-3h`).
+  - `auto_finish_stale_fixtures` job’ı DB’de direkt status’u `FT`'ye çevirir.
+  - **Yeni özellik (v3.1)**: `try_fetch_first=true` ise önce API’den batch fetch dener, başarısız olursa DB-only update yapar.
+  - Güvenlik: Double-threshold kontrolü (`date < now-2h` VE `updated_at < now-3h`).
+  - SQL bug fix (v3.1): `league_id` WHERE clause eklendi, parametre sırası düzeltildi.
   - Scope: `config/jobs/daily.yaml -> tracked_leagues`.
+  - Verification flag: Auto-finished fixture’lara `needs_score_verification = TRUE` set edilir (API fetch başarısızsa).
 - Aksiyon:
   - `auto_finish_stats(hours=24)` ile kaç maç auto-finished’i kontrol et.
   - Beklenen: Her saat başı 50-500 arası maç FT’ye geçmeli.
+  - Log’larda `auto_finish_complete` mesajında `fetched_from_api` ve `marked_for_verification` sayıları görünür.
+
+**Aşama 1.5: Verification job (auto-finished maçların skorlarını doğrulama)**
+- Belirti:
+  - Auto-finished maçların skorları yanlış olabilir (API bağlantısı kesildiğinde eski skorla kapatılmış).
+  - MCP: `get_job_status(job_name="auto_finish_verification")` → job çalışıyor mu?
+- Otomatik çözüm:
+  - `auto_finish_verification` job’ı `needs_score_verification = TRUE` olan fixture’ları seçer.
+  - Batch fetch: `GET /fixtures?ids=...` (max 20 per request).
+  - UPSERT CORE ile güncel skorları yazar, `needs_score_verification = FALSE` yapar.
+  - Quota guard: Sadece `daily_remaining >= min_daily_quota` (default: 50000) olduğunda çalışır.
+  - Sıklık: Her 30 dakikada bir (cron `*/30 * * * *`).
+- Aksiyon:
+  - Log’larda `auto_finish_verification_complete` mesajını kontrol et.
+  - `fixtures_verified` sayısı zamanla artmalı.
+  - Quota düşükse `auto_finish_verification_quota_guard` mesajı görünür (normal).
 
 **Aşama 2: Stale refresh (API çağrılı, kalan durumlar için)**
 - Belirti:
@@ -414,7 +444,13 @@ Hibrit yaklaşım (auto-finish + stale_refresh):
 
 **Doğrulama:**
 - Auto-finish sonrası: `stale_fixtures_report()` → `stale_count` zamanla 0’a yaklaşmalı.
+- Verification sonrası: `get_job_status(job_name="auto_finish_verification")` → `last_event` güncel olmalı.
 - Stale refresh sonrası: `get_stale_live_fixtures_status()` → `stale_count` çok düşük kalmalı (<10).
+
+**Manuel düzeltme (one-time script):**
+- Geçmiş auto-finished maçları düzeltmek için:
+  - `python scripts/fix_auto_finished_scores.py [--dry-run] [--date-from YYYY-MM-DD]`
+  - Batch fetch ile skorları karşılaştırır ve düzeltir.
 
 ---
 

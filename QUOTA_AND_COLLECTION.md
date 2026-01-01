@@ -1,6 +1,11 @@
-# Quota + Collection Cadence (Production)
+# Quota + Collection Cadence (Production v3.1)
 
-Bu doküman, **75.000/gün** quota ile sistemin **hangi job’ın ne sıklıkta** çalıştığını, **hangi ENV ile hızının ayarlandığını**, ve **yaklaşık istek tüketimini** açıklar.
+Bu doküman, **75.000/gün** quota ile sistemin **hangi job'ın ne sıklıkta** çalıştığını, **hangi ENV ile hızının ayarlandığını**, ve **yaklaşık istek tüketimini** açıklar.
+
+**v3.1 Değişiklikleri:**
+- Auto-finish SQL bug fix ve enhancement (try_fetch_first support)
+- Verification job eklendi (auto_finish_verification, quota guard ile)
+- Schema: `needs_score_verification` kolonu (score verification tracking)
 
 ## 1) Quota varsayımları
 
@@ -91,18 +96,24 @@ Backfill sezonları (SeçenekB, lig bazlı doğru sezon):
 
 Bu deployment, live pipeline olmadan bile maçların FT'ye geçebilmesi için **hibrit yaklaşım** kullanır:
 
-**Aşama 1: Auto-finish (DB-only, API çağrısı yok)**
+**Aşama 1: Auto-finish (DB-only, opsiyonel API fetch)**
 - Job: `auto_finish_stale_fixtures`
 - Sıklık: **Her saat başı** (cron `0 * * * *`)
 - Threshold: `threshold_hours=2`, `safety_lag_hours=3`
 - Logic:
-  - DB'de direkt status güncelleme: `status_short = 'FT'`
+  - **Varsayılan (try_fetch_first=false)**: DB'de direkt status güncelleme: `status_short = 'FT'`, `needs_score_verification = TRUE`
+  - **Opsiyonel (try_fetch_first=true)**: Önce batch API fetch dener (`GET /fixtures?ids=...`, max 20 per request)
+    - Başarılı: UPSERT ile güncel skorları yazar, `needs_score_verification = FALSE`
+    - Başarısız: DB-only update yapar, `needs_score_verification = TRUE`
   - Double-threshold güvenlik:
-    - `date_utc < NOW() - 2 hours` (maç 2 saatten önce başlamış)
+    - `date < NOW() - 2 hours` (maç 2 saatten önce başlamış)
     - `updated_at < NOW() - 3 hours` (son güncelleme 3 saatten önce)
+  - SQL bug fix (v3.1): `league_id = ANY(%s)` WHERE clause eklendi, parametre sırası düzeltildi
   - Scope: `config/jobs/daily.yaml -> tracked_leagues`
   - Batch limit: `max_fixtures_per_run=1000` (default)
-  - API çağrısı: **YOK** (quota tüketimi 0)
+- API çağrısı:
+  - `try_fetch_first=false` (default): **YOK** (quota tüketimi 0)
+  - `try_fetch_first=true`: Batch fetch (100 fixture = 5 request, quota tüketimi ~5-50 req/run)
 - Coverage: NS, HT, 2H, 1H, LIVE, BT, ET, P, SUSP, INT durumları
 - Güvenlik: Transaction wrapper (rollback on error), dry-run mode
 
@@ -118,6 +129,21 @@ Bu deployment, live pipeline olmadan bile maçların FT'ye geçebilmesi için **
 - Coverage: 1H, 2H, HT, ET, BT, P, LIVE, SUSP, INT (auto-finish'ten kalanlar)
 - API çağrısı: Var (quota tüketimi <50/run beklenir)
 
+**Aşama 1.5: Verification job (auto-finished maçların skorlarını doğrulama)**
+- Job: `auto_finish_verification`
+- Sıklık: **Her 30 dakikada bir** (cron `*/30 * * * *`)
+- Threshold: `min_daily_quota=50000` (quota guard)
+- Logic:
+  - `needs_score_verification = TRUE` ve `status_short = 'FT'` olan fixture'ları seçer
+  - Batch fetch: `GET /fixtures?ids=...` (max 20 per request)
+  - RAW + CORE UPSERT ile güncel skorları yazar
+  - Başarılı olanlarda `needs_score_verification = FALSE` yapar
+  - Quota guard: Sadece `daily_remaining >= min_daily_quota` olduğunda çalışır
+- API çağrısı: Var (batch fetch, beklenen <200 req/day)
+- Quota tüketimi:
+  - Worst-case (her run 200 fixture): 480 req/day
+  - Gerçek beklenen: **<200 req/day** (quota guard sayesinde)
+
 **Aşama 3: Stale scheduled finalize (NS/TBD durumları için)**
 - Job: `stale_scheduled_finalize`
 - Sıklık: **Her 30 dakikada bir** (cron `*/30 * * * *`)
@@ -129,14 +155,16 @@ Bu deployment, live pipeline olmadan bile maçların FT'ye geçebilmesi için **
 - API çağrısı: Var
 
 **Hibrit yaklaşım avantajları:**
-- Auto-finish: **Quota verimli** (API çağrısı yok), en çok stale'ı halleder
+- Auto-finish: **Quota verimli** (default: API çağrısı yok), en çok stale'ı halleder
+- Verification: **Skor doğrulama** (quota guard ile güvenli, batch fetch ile verimli)
 - Stale refresh: **Kalan durumlar** için güvenlik ağı (recent updates için)
 - Stale scheduled: **NS/TBD** için özel coverage
-- Overall: Live pipeline olmadan da sistemin kendi kendini FT'ye geçirebilmesi
+- Overall: Live pipeline olmadan da sistemin kendi kendini FT'ye geçirebilmesi ve skorları doğrulayabilmesi
 
 **Monitoring:**
 - MCP: `stale_fixtures_report(threshold_hours=2, safety_lag_hours=3)` → auto-finish öncesi stale'ları gör
 - MCP: `auto_finish_stats(hours=24)` → son 24 saatte kaç maç auto-finished'i gör
+- MCP: `get_job_status(job_name="auto_finish_verification")` → verification job durumu
 - MCP: `get_stale_live_fixtures_status(threshold_minutes=15)` → stale refresh kalanlarını gör
 
 ## 4) Hız kontrolü (Coolify ENV)
@@ -168,9 +196,20 @@ Notlar:
 **Auto-finish (quota-efficient):**
 - Job: `auto_finish_stale_fixtures`
 - Sıklık: **1 saatte 1 kez** (cron `0 * * * *`)
-- API çağrısı: **YOK** (DB-only update)
-- Quota tüketimi: **0 req/hour** ≈ **0 req/day**
-- İş yükü: DB write-only (UPSERT core.fixtures)
+- API çağrısı:
+  - `try_fetch_first=false` (default): **YOK** (DB-only update)
+  - `try_fetch_first=true`: Batch fetch (100 fixture = 5 request)
+- Quota tüketimi:
+  - Default: **0 req/hour** ≈ **0 req/day**
+  - `try_fetch_first=true`: **~5-50 req/hour** ≈ **120-1200 req/day** (değişken)
+- İş yükü: DB write-only (UPSERT core.fixtures) veya API fetch + DB UPSERT
+
+**Verification (quota-guarded):**
+- Job: `auto_finish_verification`
+- Sıklık: **30 dakikada 1 kez** (cron `*/30 * * * *`)
+- Quota guard: Sadece `daily_remaining >= 50000` olduğunda çalışır
+- API çağrısı: Batch fetch (max 20 ids per request)
+- Quota tüketimi: **<200 req/day** (quota guard sayesinde kontrollü)
 
 **Stale refresh (API-based):**
 - Job: `stale_live_refresh`
@@ -194,16 +233,27 @@ Notlar:
   - Gerçek beklenen (NS/TBD nadir): **<30 req/day**
 
 **Overall quota impact (hibrit):**
-- Total daily: **<130 req/day** (auto-finish: 0 + stale_refresh: <100 + stale_scheduled: <30)
+- Total daily (default, try_fetch_first=false):
+  - Auto-finish: **0 req/day**
+  - Verification: **<200 req/day** (quota guard ile)
+  - Stale refresh: **<100 req/day**
+  - Stale scheduled: **<30 req/day**
+  - **Toplam: <330 req/day** (<0.5% of daily quota)
+- Total daily (try_fetch_first=true):
+  - Auto-finish: **120-1200 req/day** (değişken)
+  - Verification: **<200 req/day**
+  - Stale refresh: **<100 req/day**
+  - Stale scheduled: **<30 req/day**
+  - **Toplam: <1530 req/day** (<2.1% of daily quota)
 - Daily budget: 75,000 req/day
-- Usage: **<0.2% of daily quota** (çok verimli)
-- Compare (previous stale_live_refresh disabled): **%0 quota**
-- Benefit: Auto-finish ile en çok stale'ı API çağrısı olmadan halleder
+- Usage: **<2.1% of daily quota** (çok verimli)
+- Benefit: Auto-finish ile en çok stale'ı API çağrısı olmadan halleder, verification ile skorları doğrular
 
 **Quota optimization:**
-- Auto-finish: **API çağrısı yok** → quota verimliliği maksimum
+- Auto-finish: **Default: API çağrısı yok** → quota verimliliği maksimum
+- Verification: **Quota guard** ile sadece quota bolken çalışır → güvenli
 - Stale refresh: Sadece auto-finish'ten kalan durumlar için → minimum API kullanımı
-- Hibrit yaklaşım: Live pipeline olmadan da sistemin kendi kendini FT'ye geçirebilmesi
+- Hibrit yaklaşım: Live pipeline olmadan da sistemin kendi kendini FT'ye geçirebilmesi ve skorları doğrulayabilmesi
 
 ### 4.4 Fixture details
 Bu job’lar per-fixture 4 endpoint çağırır:
