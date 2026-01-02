@@ -6,6 +6,7 @@ Bu doküman, **75.000/gün** quota ile sistemin **hangi job'ın ne sıklıkta** 
 - Auto-finish SQL bug fix ve enhancement (try_fetch_first support)
 - Verification job eklendi (auto_finish_verification, quota guard ile)
 - Schema: `needs_score_verification` kolonu (score verification tracking)
+- Schema: `verification_state/verification_attempt_count/verification_last_attempt_at` (pending/verified/not_found)
 
 ## 1) Quota varsayımları
 
@@ -134,11 +135,12 @@ Bu deployment, live pipeline olmadan bile maçların FT'ye geçebilmesi için **
 - Sıklık: **Her 30 dakikada bir** (cron `*/30 * * * *`)
 - Threshold: `min_daily_quota=50000` (quota guard)
 - Logic:
-  - `needs_score_verification = TRUE` ve `status_short = 'FT'` olan fixture'ları seçer
+  - `verification_state = "pending"` (veya legacy `needs_score_verification = TRUE`) ve `status_short = 'FT'` olan fixture'ları seçer
   - Batch fetch: `GET /fixtures?ids=...` (max 20 per request)
   - RAW + CORE UPSERT ile güncel skorları yazar
-  - Başarılı olanlarda `needs_score_verification = FALSE` yapar
+  - Başarılı olanlarda `verification_state = "verified"` yapar
   - Quota guard: Sadece `daily_remaining >= min_daily_quota` olduğunda çalışır
+  - Upstream kalıcı boş dönerse (200 + `response=[]`), belirli denemeden sonra `verification_state="not_found"` olur (quota-safe, loop yok)
 - API çağrısı: Var (batch fetch, beklenen <200 req/day)
 - Quota tüketimi:
   - Worst-case (her run 200 fixture): 480 req/day

@@ -655,6 +655,18 @@ Pratik yaklaşım (iteratif):
 - `status=NS` ise goals ve score doğal olarak null döner.
 - Detaylar (events/statistics/lineups/players) maç oynandıktan sonra ve details job’ları koştuktan sonra dolmaya başlar.
 
+### Neden bazı FT maçlar “pending/not_found” görünebilir?
+`/read/fixtures` ve `/read/fixtures/{fixture_id}` artık verification alanlarını da döner:
+- `needs_score_verification`
+- `verification_state` (`pending|verified|not_found|blocked`)
+- `verification_attempt_count`
+- `verification_last_attempt_at_utc`
+
+Anlamı:
+- **pending**: maç FT görünüyor ama upstream API’dan tekrar doğrulama bekliyor (job retry/cooldown ile dener)
+- **verified**: upstream’dan doğrulanmış
+- **not_found**: upstream API 200 dönse bile `response=[]` veriyor (kaynak veri yok → bizim tarafta “doğru skor/events” üretilemez)
+
 ### Neden coverage bazen “stale” ama sorun yok?
 - Lig tatilde/off-season olabilir.
 - Bu durumda `/read/coverage` içindeki `flags.no_matches_scheduled` sana “false-positive olabilir” sinyalini verir.

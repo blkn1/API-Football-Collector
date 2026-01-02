@@ -132,8 +132,11 @@ This repo includes “evidence-based” validation helpers:
 
 - **End-to-end DB validation (no API quota used)**:
   - `cd /app && sh scripts/e2e_validate.sh`
+- **Integrity audit (read-only, production DB)**:
+  - `cd /app && python3 scripts/integrity_audit.py`
 - **Run a single job once (skip cron)**:
   - `cd /app && ONLY_LEAGUE_ID=39 JOB_ID=top_scorers_daily python3 scripts/run_job_once.py`
+  - `cd /app && JOB_ID=auto_finish_verification python3 scripts/run_job_once.py`
 
 Important: Coolify’s “postgres terminal” is a shell. To run SQL, use `psql`, e.g.:
 

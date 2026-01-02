@@ -5,6 +5,7 @@ Bu runbook; çalışan collector + Postgres + MCP + Read API stack'inde **deploy
 **v3.1 Değişiklikleri:**
 - Auto-finish SQL bug fix (league_id WHERE clause, parametre sırası)
 - Schema: `needs_score_verification` kolonu eklendi
+- Schema: `verification_state/verification_attempt_count/verification_last_attempt_at` eklendi (pending/verified/not_found)
 - Auto-finish enhancement: `try_fetch_first` parametresi (opsiyonel API fetch)
 - Verification job: `auto_finish_verification` (quota guard ile)
 - Correction script: `fix_auto_finished_scores.py` (one-time data fix)
@@ -409,6 +410,7 @@ Hibrit yaklaşım (auto-finish + verification + stale_refresh):
   - SQL bug fix (v3.1): `league_id` WHERE clause eklendi, parametre sırası düzeltildi.
   - Scope: `config/jobs/daily.yaml -> tracked_leagues`.
   - Verification flag: Auto-finished fixture’lara `needs_score_verification = TRUE` set edilir (API fetch başarısızsa).
+  - Ayrıca: `verification_state = "pending"` ile takip edilir; denemeler `verification_attempt_count` ve `verification_last_attempt_at` ile ölçülür.
 - Aksiyon:
   - `auto_finish_stats(hours=24)` ile kaç maç auto-finished’i kontrol et.
   - Beklenen: Her saat başı 50-500 arası maç FT’ye geçmeli.
@@ -419,11 +421,12 @@ Hibrit yaklaşım (auto-finish + verification + stale_refresh):
   - Auto-finished maçların skorları yanlış olabilir (API bağlantısı kesildiğinde eski skorla kapatılmış).
   - MCP: `get_job_status(job_name="auto_finish_verification")` → job çalışıyor mu?
 - Otomatik çözüm:
-  - `auto_finish_verification` job’ı `needs_score_verification = TRUE` olan fixture’ları seçer.
+  - `auto_finish_verification` job’ı `verification_state="pending"` (veya legacy `needs_score_verification=TRUE`) olan fixture’ları seçer.
   - Batch fetch: `GET /fixtures?ids=...` (max 20 per request).
-  - UPSERT CORE ile güncel skorları yazar, `needs_score_verification = FALSE` yapar.
+  - UPSERT CORE ile güncel skorları yazar, `verification_state="verified"` yapar.
   - Quota guard: Sadece `daily_remaining >= min_daily_quota` (default: 50000) olduğunda çalışır.
   - Sıklık: Her 30 dakikada bir (cron `*/30 * * * *`).
+  - Upstream 200 + `response=[]` (results=0) gibi kalıcı boş durumda: belirli deneme sayısından sonra `verification_state="not_found"` olur (pipeline bug değil; kaynak veri yok demektir).
 - Aksiyon:
   - Log’larda `auto_finish_verification_complete` mesajını kontrol et.
   - `fixtures_verified` sayısı zamanla artmalı.

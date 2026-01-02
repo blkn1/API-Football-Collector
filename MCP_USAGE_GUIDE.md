@@ -403,6 +403,123 @@ Amaç: “job çalıştı mı?” değil; **RAW→CORE pipeline tamamlandı mı?
 
 ---
 
+## Playbook 5: Verification job sonrası events kontrolü
+
+**Sorun**: Auto-finished maçların events'ları eksik. Verification job çalıştıktan sonra events'ların düzgün çekildiğini nasıl doğrularım?
+
+### 5.A MCP ile fixture detay durumunu kontrol et
+
+```python
+# 1. Fixture'ın hangi detayları var?
+get_fixture_detail_status(fixture_id=1396373)
+
+# Response:
+# {
+#   "ok": true,
+#   "fixture": {
+#     "fixture_id": 1396373,
+#     "has_players": true,
+#     "has_events": true,      # ✅ Events var
+#     "has_statistics": true,
+#     "has_lineups": true,
+#     "last_events_fetch_utc": "2026-01-01T03:30:00Z"
+#   }
+# }
+```
+
+### 5.B Events'ları listele
+
+```python
+# 2. Events'ları detaylı göster
+query_fixture_events(fixture_id=1396373, limit=100)
+
+# Response:
+# {
+#   "ok": true,
+#   "items": [
+#     {
+#       "fixture_id": 1396373,
+#       "time_elapsed": 15,
+#       "time_extra": null,
+#       "type": "Card",
+#       "detail": "Yellow Card",
+#       "team_id": 211,
+#       "player_id": 161939,
+#       ...
+#     },
+#     ...
+#   ]
+# }
+```
+
+### 5.C Verification job'ın son çalışmasını kontrol et
+
+```python
+# 3. Verification job durumu
+get_job_status(job_name="auto_finish_verification")
+
+# Response:
+# {
+#   "ok": true,
+#   "jobs": [
+#     {
+#       "job_id": "auto_finish_verification",
+#       "enabled": true,
+#       "last_event_ts_utc": "2026-01-01T03:30:00Z",
+#       "last_seen_at_utc": "2026-01-01T03:30:00Z",
+#       ...
+#     }
+#   ]
+# }
+```
+
+### 5.D PostgreSQL ile kontrol (terminal)
+
+```bash
+# 1. Belirli bir fixture'ın events'larını listele
+psql -U postgres -d api_football -c "
+SELECT time_elapsed, time_extra, type, detail, comments
+FROM core.fixture_events
+WHERE fixture_id = 1396373
+ORDER BY time_elapsed NULLS LAST, time_extra NULLS LAST;
+"
+
+# 2. Son 24 saatte verification edilmiş fixture'lar
+psql -U postgres -d api_football -c "
+SELECT 
+    f.id,
+    f.league_id,
+    f.goals_home || '-' || f.goals_away AS score,
+    (SELECT COUNT(*) FROM core.fixture_events e WHERE e.fixture_id = f.id) AS events_count,
+    f.updated_at
+FROM core.fixtures f
+WHERE f.status_short = 'FT'
+  AND f.updated_at >= NOW() - INTERVAL '24 hours'
+  AND EXISTS (SELECT 1 FROM core.fixture_events e WHERE e.fixture_id = f.id)
+ORDER BY f.updated_at DESC
+LIMIT 10;
+"
+```
+
+### 5.E Python script ile kontrol
+
+```bash
+# Belirli bir fixture için
+python scripts/check_fixture_events.py 1396373
+
+# Son 24 saatte verification edilmiş fixture'lar
+python scripts/check_fixture_events.py
+```
+
+**Beklenen sonuç**:
+- ✅ `has_events = true` (MCP'de)
+- ✅ Events sayısı > 0 (SQL'de)
+- ✅ `last_events_fetch_utc` verification job çalışma zamanına yakın (MCP'de)
+- ✅ `verification_state = "verified"` (verification tamamlandı)
+- ⚠️ Eğer upstream API 200 + `response=[]` dönüyorsa: `verification_state = "not_found"` görülebilir (bu bir pipeline bug değil, kaynak veri yok demektir)
+
+---
+
 ## Backfill ve standings batching: “tam tur bitti mi?”
 
 - **Backfill**
