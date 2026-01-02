@@ -667,6 +667,57 @@ Anlamı:
 - **verified**: upstream’dan doğrulanmış
 - **not_found**: upstream API 200 dönse bile `response=[]` veriyor (kaynak veri yok → bizim tarafta “doğru skor/events” üretilemez)
 
+## Veri kalite / operasyon filtreleri (Read API)
+
+Read API artık `/read/fixtures` üzerinde “kalite/operasyon” amaçlı filtreleri destekler.
+Bu filtreler **Read API’nin kendisi için güvenlik değildir** (Read API zaten auth ile korunur); amaç:
+- “Eksik var mı?” hızlı tarama
+- “Kaynak API boş mu dönüyor?” ayırımı
+- “Details (events/lineups/statistics/players) dolu mu?” kontrol
+
+### 1) Verification filtreleri
+
+`GET /read/fixtures?...` için yeni query params:
+- `needs_score_verification=true|false`
+- `verification_state=pending|verified|not_found|blocked`
+- `min_verification_attempt_count=<int>`
+
+Örnekler:
+
+```bash
+# 1) Kaynak API boş döndüğü için 'not_found' olmuş fixture'ları bul
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=274&season=2025&status=FT&verification_state=not_found&limit=200&offset=0"
+
+# 2) Hâlâ pending olanları bul (retry bekleyen)
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=274&season=2025&status=FT&verification_state=pending&limit=200&offset=0"
+
+# 3) En az 2 kez denenmiş pending'leri bul
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=274&season=2025&status=FT&verification_state=pending&min_verification_attempt_count=2&limit=200&offset=0"
+```
+
+### 2) Details var/yok filtreleri
+
+`GET /read/fixtures?...` için yeni query params:
+- `has_events=true|false`
+- `has_lineups=true|false`
+- `has_statistics=true|false`
+- `has_players=true|false`
+
+Örnekler:
+
+```bash
+# 1) FT maçlarda events eksik olanları bul
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=39&season=2025&status=FT&has_events=false&limit=200&offset=0"
+
+# 2) FT + verified ama events yok (pipeline gap avı)
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/read/fixtures?league_id=39&season=2025&status=FT&verification_state=verified&has_events=false&limit=200&offset=0"
+```
+
 ### Neden coverage bazen “stale” ama sorun yok?
 - Lig tatilde/off-season olabilir.
 - Bu durumda `/read/coverage` içindeki `flags.no_matches_scheduled` sana “false-positive olabilir” sinyalini verir.

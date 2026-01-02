@@ -14,6 +14,10 @@ Kural:
 - Read API `/v1/fixtures` çıktısı **izlenen liglere göre filtrelenmez**. “İddaa benzeri” bir UI için frontend tarafında **tracked leagues whitelist** kuralı uygulanmalıdır.
 - Frontend **secret tutmaz**: Basic Auth kullanıcı/şifre veya başka gizli değerler repo içine / Docker image içine gömülmez.
 
+Not (ops / data-quality):
+- `/read/fixtures` uçları bazı “operasyonel kalite” alanlarını dönebilir: `verification_state`, `verification_attempt_count` vb.
+- Bu alanlar frontend UI için zorunlu değildir; daha çok ops/debug ve “dataset integrity” kontrolü içindir.
+
 ---
 
 ## 1) Liste ekranları

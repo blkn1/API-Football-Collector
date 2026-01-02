@@ -1238,7 +1238,29 @@ async def read_countries(
     "/read/fixtures",
     dependencies=[
         Depends(require_access),
-        Depends(require_only_query_params({"league_id", "country", "season", "date_from", "date_to", "team_id", "status", "limit", "offset"})),
+        Depends(
+            require_only_query_params(
+                {
+                    "league_id",
+                    "country",
+                    "season",
+                    "date_from",
+                    "date_to",
+                    "team_id",
+                    "status",
+                    "limit",
+                    "offset",
+                    # Data-quality / operational filters (read-only)
+                    "needs_score_verification",
+                    "verification_state",
+                    "min_verification_attempt_count",
+                    "has_events",
+                    "has_lineups",
+                    "has_statistics",
+                    "has_players",
+                }
+            )
+        ),
     ],
 )
 async def read_fixtures(
@@ -1249,6 +1271,13 @@ async def read_fixtures(
     date_to: str | None = None,
     team_id: int | None = None,
     status: str | None = None,
+    needs_score_verification: bool | None = None,
+    verification_state: str | None = None,
+    min_verification_attempt_count: int | None = None,
+    has_events: bool | None = None,
+    has_lineups: bool | None = None,
+    has_statistics: bool | None = None,
+    has_players: bool | None = None,
     limit: int = 200,
     offset: int = 0,
 ) -> dict[str, Any]:
@@ -1291,6 +1320,52 @@ async def read_fixtures(
             raise HTTPException(status_code=400, detail=str(e))
         filters.append("AND DATE(f.date AT TIME ZONE 'UTC') <= %s")
         params.append(d.isoformat())
+
+    # --- Verification / data-quality filters (read-only, optional) ---
+    if needs_score_verification is not None:
+        filters.append("AND f.needs_score_verification = %s")
+        params.append(bool(needs_score_verification))
+
+    if verification_state is not None:
+        vs = str(verification_state).strip().lower()
+        allowed_vs = {"pending", "verified", "not_found", "blocked"}
+        if vs not in allowed_vs:
+            raise HTTPException(status_code=400, detail={"error": "invalid_verification_state", "allowed": sorted(allowed_vs)})
+        filters.append("AND COALESCE(f.verification_state, 'pending') = %s")
+        params.append(vs)
+
+    if min_verification_attempt_count is not None:
+        try:
+            mac = int(min_verification_attempt_count)
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid_min_verification_attempt_count")
+        filters.append("AND COALESCE(f.verification_attempt_count, 0) >= %s")
+        params.append(mac)
+
+    def _exists_filter(*, flag: bool | None, sql_exists: str) -> None:
+        if flag is None:
+            return
+        if bool(flag):
+            filters.append(f"AND EXISTS ({sql_exists})")
+        else:
+            filters.append(f"AND NOT EXISTS ({sql_exists})")
+
+    _exists_filter(
+        flag=has_events,
+        sql_exists="SELECT 1 FROM core.fixture_events e WHERE e.fixture_id = f.id",
+    )
+    _exists_filter(
+        flag=has_lineups,
+        sql_exists="SELECT 1 FROM core.fixture_lineups l WHERE l.fixture_id = f.id",
+    )
+    _exists_filter(
+        flag=has_statistics,
+        sql_exists="SELECT 1 FROM core.fixture_statistics s WHERE s.fixture_id = f.id",
+    )
+    _exists_filter(
+        flag=has_players,
+        sql_exists="SELECT 1 FROM core.fixture_players p WHERE p.fixture_id = f.id",
+    )
 
     sql_text = FIXTURES_READ_SQL.format(filters="\n  ".join(filters))
     params.extend([safe_limit, safe_offset])
