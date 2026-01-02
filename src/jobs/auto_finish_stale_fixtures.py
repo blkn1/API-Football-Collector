@@ -287,6 +287,13 @@ def _auto_finish_fixtures(
         UPDATE core.fixtures
         SET status_short = 'FT',
             status_long = 'Match Finished (Auto-finished)',
+            elapsed = 90,
+            score = jsonb_set(
+              COALESCE(score, '{}'::jsonb),
+              '{fulltime}',
+              jsonb_build_object('home', goals_home, 'away', goals_away),
+              true
+            ),
             needs_score_verification = TRUE,
             updated_at = NOW()
         WHERE id = ANY(%s)

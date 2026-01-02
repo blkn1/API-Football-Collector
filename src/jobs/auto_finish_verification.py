@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any
 
@@ -107,8 +108,13 @@ def _select_verification_fixture_ids(
     tracked_league_ids: set[int],
 ) -> list[int]:
     """
-    Select fixtures that need score verification.
-    These are auto-finished matches that were marked with needs_score_verification = TRUE.
+    Select fixtures that need score verification OR are "broken FT".
+
+    We prioritize two buckets:
+    1) Regular verification backlog: needs_score_verification=TRUE with a 24h cooldown.
+    2) Broken auto-finished FT rows: status is FT but data looks incomplete
+       (elapsed < 90 OR score.fulltime is NULL). These should be fixed ASAP, so we use
+       a short cooldown to avoid tight loops but don't wait 24h.
     
     Includes:
     - Fixtures never attempted (updated_at is old, from auto-finish time)
@@ -121,11 +127,24 @@ def _select_verification_fixture_ids(
     SELECT f.id
     FROM core.fixtures f
     WHERE f.league_id = ANY(%s)
-      AND f.needs_score_verification = TRUE
       AND f.status_short = 'FT'
-      -- Include: never attempted (old updated_at) OR attempted 24+ hours ago
-      -- Exclude: attempted in last 24 hours (cooldown)
-      AND (f.updated_at < NOW() - INTERVAL '24 hours')
+      AND (
+        -- Bucket 1: verification backlog with 24h cooldown
+        (
+          f.needs_score_verification = TRUE
+          AND (f.updated_at < NOW() - INTERVAL '24 hours')
+        )
+        OR
+        -- Bucket 2: broken FT (auto-finished) with short cooldown
+        (
+          f.status_long ILIKE '%Auto-finished%'
+          AND (
+            f.elapsed IS NULL OR f.elapsed < 90
+            OR (f.score IS NULL OR (f.score->'fulltime') IS NULL)
+          )
+          AND (f.updated_at < NOW() - INTERVAL '15 minutes')
+        )
+      )
     ORDER BY f.date DESC
     LIMIT %s
     """

@@ -116,9 +116,16 @@ async def _run(job_id: str) -> None:
         await client.aclose()
         return
 
+    if job_id == "auto_finish_verification":
+        from src.jobs.auto_finish_verification import run_auto_finish_verification
+
+        await run_auto_finish_verification(client=client, limiter=limiter, config_path=cfg)
+        await client.aclose()
+        return
+
     raise SystemExit(
         f"Unsupported job_id: {job_id}. Supported: daily_fixtures_by_date, daily_standings, injuries_hourly, "
-        "top_scorers_daily, team_statistics_refresh"
+        "top_scorers_daily, team_statistics_refresh, auto_finish_verification"
     )
 
 
