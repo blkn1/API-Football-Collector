@@ -137,7 +137,8 @@ def _select_verification_fixture_ids(
         OR
         -- Bucket 2: broken FT (auto-finished) with short cooldown
         (
-          f.status_long ILIKE '%Auto-finished%'
+          -- NOTE: psycopg2 uses % for placeholders; escape literals as %%
+          f.status_long ILIKE '%%Auto-finished%%'
           AND (
             f.elapsed IS NULL OR f.elapsed < 90
             OR (f.score IS NULL OR (f.score->'fulltime') IS NULL)
