@@ -137,8 +137,7 @@ def _select_verification_fixture_ids(
         OR
         -- Bucket 2: broken FT (auto-finished) with short cooldown
         (
-          -- NOTE: psycopg2 uses % for placeholders; escape literals as %%
-          f.status_long ILIKE '%%Auto-finished%%'
+          f.status_long ILIKE %s
           AND (
             f.elapsed IS NULL OR f.elapsed < 90
             OR (f.score IS NULL OR (f.score->'fulltime') IS NULL)
@@ -153,7 +152,7 @@ def _select_verification_fixture_ids(
         with conn.cursor() as cur:
             cur.execute(
                 sql,
-                (sorted(list(tracked_league_ids)), int(limit)),
+                (sorted(list(tracked_league_ids)), "%Auto-finished%", int(limit)),
             )
             rows = cur.fetchall()
             conn.commit()
