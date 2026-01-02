@@ -83,6 +83,34 @@ def _mark_not_found(*, fixture_ids: list[int]) -> None:
         conn.commit()
 
 
+def _reconcile_not_found(*, max_attempts: int) -> int:
+    """
+    Safety net: if any fixtures are stuck in pending with attempt_count >= max_attempts,
+    mark them as not_found. This prevents selector starvation (attempts reached max so it
+    won't be selected again) leaving rows forever pending.
+    """
+    try:
+        with get_transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE core.fixtures
+                    SET verification_state = 'not_found',
+                        needs_score_verification = FALSE
+                    WHERE COALESCE(verification_state, 'pending') = 'pending'
+                      AND needs_score_verification = TRUE
+                      AND COALESCE(verification_attempt_count, 0) >= %s
+                    RETURNING id
+                    """,
+                    (int(max_attempts),),
+                )
+                rows = cur.fetchall()
+            conn.commit()
+        return len(rows or [])
+    except Exception:
+        return 0
+
+
 def _load_daily_tracked_league_ids(cfg: dict[str, Any], *, config_path: Path) -> set[int]:
     tracked_raw = cfg.get("tracked_leagues") or []
     tracked: set[int] = set()
@@ -294,6 +322,16 @@ async def run_auto_finish_verification(
         )
         return
 
+    # Reconcile any pending fixtures that already hit max attempts (prevents stuck pending state)
+    max_attempts = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "3"))
+    reconciled = _reconcile_not_found(max_attempts=max_attempts)
+    if reconciled:
+        logger.info(
+            "auto_finish_verification_reconciled_not_found",
+            reconciled=reconciled,
+            max_attempts=int(max_attempts),
+        )
+
     verification_ids = _select_verification_fixture_ids(
         limit=cfg.max_fixtures_per_run,
         tracked_league_ids=cfg.scoped_league_ids,
@@ -403,7 +441,32 @@ async def run_auto_finish_verification(
                 response_count=len(env.get("response") or []),
             )
             try:
+                max_attempts = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "3"))
                 _record_verification_attempt(fixture_ids=missing_from_response)
+
+                # If missing IDs hit max attempts, mark them not_found (same policy as empty response)
+                with get_transaction() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            SELECT id
+                            FROM core.fixtures
+                            WHERE id = ANY(%s)
+                              AND COALESCE(verification_attempt_count, 0) >= %s
+                              AND COALESCE(verification_state, 'pending') = 'pending'
+                            """,
+                            (missing_from_response, int(max_attempts)),
+                        )
+                        hit = [int(r[0]) for r in cur.fetchall()]
+                    conn.commit()
+                if hit:
+                    _mark_not_found(fixture_ids=hit)
+                    logger.info(
+                        "auto_finish_verification_marked_not_found",
+                        fixture_ids=hit,
+                        reason="missing_from_response_max_attempts",
+                        max_attempts=int(max_attempts),
+                    )
             except Exception as e:
                 logger.error("auto_finish_verification_missing_ids_attempt_track_failed", missing_ids=missing_from_response, err=str(e))
 
