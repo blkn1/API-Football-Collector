@@ -379,7 +379,10 @@ async def _fetch_and_store_fixture_details(*, client: APIClient, limiter: RateLi
         # Empty response guard: if API returned 0 results / empty response, log and retry later
         resp_len = len(env.get("response") or [])
         if int(env.get("results") or 0) == 0 or resp_len == 0:
-            logger.warning(
+            # NOTE: Empty payloads can be normal for players/statistics/lineups (depends on competition/provider).
+            # For events, empties are more suspicious for FT fixtures, so keep it as warning.
+            log_fn = logger.warning if endpoint == "/fixtures/events" else logger.info
+            log_fn(
                 "fixture_detail_empty_response",
                 fixture_id=fixture_id,
                 endpoint=endpoint,

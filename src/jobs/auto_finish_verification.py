@@ -325,6 +325,49 @@ async def run_auto_finish_verification(
 
         fixtures_rows, _ = transform_fixtures(env)
 
+        # Detect IDs that were requested but not returned by the API.
+        # This happens in practice (200 OK but response omits some fixture IDs).
+        try:
+            returned_ids: set[int] = set()
+            for it in env.get("response") or []:
+                fx = (it.get("fixture") or {}) if isinstance(it, dict) else {}
+                fid = fx.get("id")
+                if fid is None:
+                    continue
+                returned_ids.add(int(fid))
+            requested_ids = {int(x) for x in batch}
+            missing_from_response = sorted(requested_ids - returned_ids)
+        except Exception:
+            missing_from_response = []
+
+        if missing_from_response:
+            logger.warning(
+                "auto_finish_verification_missing_ids_in_response",
+                requested_ids=batch,
+                missing_ids=missing_from_response,
+                response_count=len(env.get("response") or []),
+            )
+            # Track attempt for missing IDs so we don't hammer them (cooldown logic).
+            try:
+                with get_transaction() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """
+                            UPDATE core.fixtures
+                            SET updated_at = NOW()
+                            WHERE id = ANY(%s)
+                              AND needs_score_verification = TRUE
+                            """,
+                            (missing_from_response,),
+                        )
+                    conn.commit()
+            except Exception as e:
+                logger.error(
+                    "auto_finish_verification_missing_ids_attempt_track_failed",
+                    missing_ids=missing_from_response,
+                    err=str(e),
+                )
+
         # Handle empty response (fixture not found in API or invalid)
         if not fixtures_rows:
             response_count = len(env.get("response") or [])
