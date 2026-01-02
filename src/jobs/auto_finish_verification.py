@@ -207,6 +207,30 @@ async def run_auto_finish_verification(
 
     # Quota guard: only run when quota is healthy
     quota = limiter.quota
+    if quota.daily_remaining is None:
+        # Prime quota from free /status endpoint (does NOT count toward quota).
+        # This avoids crashing manual runs where limiter hasn't seen any headers yet.
+        try:
+            limiter.acquire_token()
+            status_res = await client.get("/status")
+            limiter.update_from_headers(status_res.headers)
+            quota = limiter.quota
+        except Exception as e:
+            logger.warning(
+                "auto_finish_verification_quota_unknown",
+                err=str(e),
+                min_required=cfg.min_daily_quota,
+            )
+            return
+
+    if quota.daily_remaining is None:
+        logger.info(
+            "auto_finish_verification_quota_unknown",
+            daily_remaining=None,
+            min_required=cfg.min_daily_quota,
+        )
+        return
+
     if quota.daily_remaining < cfg.min_daily_quota:
         logger.info(
             "auto_finish_verification_quota_guard",
