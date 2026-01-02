@@ -55,6 +55,7 @@ def main() -> int:
                 FROM core.fixtures f
                 WHERE f.status_short = 'FT'
                   AND f.date >= NOW() - (%s::text || ' days')::interval
+                  AND COALESCE(f.verification_state, 'pending') <> 'not_found'
                   AND (
                     f.elapsed IS NULL OR f.elapsed < 90
                     OR f.goals_home IS NULL OR f.goals_away IS NULL
@@ -72,6 +73,7 @@ def main() -> int:
                 FROM core.fixtures f
                 WHERE f.status_short = 'FT'
                   AND f.date >= NOW() - (%s::text || ' days')::interval
+                  AND COALESCE(f.verification_state, 'pending') <> 'not_found'
                   AND (
                     f.elapsed IS NULL OR f.elapsed < 90
                     OR f.goals_home IS NULL OR f.goals_away IS NULL
@@ -103,7 +105,8 @@ def main() -> int:
                 """
                 SELECT COUNT(*)::bigint
                 FROM core.fixtures f
-                WHERE f.needs_score_verification = TRUE
+                WHERE COALESCE(f.verification_state, 'pending') = 'pending'
+                  AND f.needs_score_verification = TRUE
                 """,
             )
             out["needs_score_verification_count"] = int(rows[0][0]) if rows else 0
@@ -111,9 +114,11 @@ def main() -> int:
             samples = _q(
                 cur,
                 """
-                SELECT f.id, f.league_id, f.date, f.goals_home, f.goals_away, f.elapsed, f.score, f.updated_at
+                SELECT f.id, f.league_id, f.date, f.goals_home, f.goals_away, f.elapsed, f.score, f.updated_at,
+                       f.verification_attempt_count, f.verification_last_attempt_at
                 FROM core.fixtures f
-                WHERE f.needs_score_verification = TRUE
+                WHERE COALESCE(f.verification_state, 'pending') = 'pending'
+                  AND f.needs_score_verification = TRUE
                 ORDER BY f.updated_at ASC
                 LIMIT 50
                 """,
@@ -127,6 +132,44 @@ def main() -> int:
                     "goals_away": r[4],
                     "elapsed": r[5],
                     "score": r[6],
+                    "updated_at_utc": r[7],
+                    "attempt_count": r[8],
+                    "last_attempt_at_utc": r[9],
+                }
+                for r in samples
+            ]
+
+            # 2.B) Not-found fixtures (explicit state)
+            rows = _q(
+                cur,
+                """
+                SELECT COUNT(*)::bigint
+                FROM core.fixtures f
+                WHERE COALESCE(f.verification_state, '') = 'not_found'
+                """,
+            )
+            out["verification_not_found_count"] = int(rows[0][0]) if rows else 0
+
+            samples = _q(
+                cur,
+                """
+                SELECT f.id, f.league_id, f.date, f.status_short, f.status_long,
+                       f.verification_attempt_count, f.verification_last_attempt_at, f.updated_at
+                FROM core.fixtures f
+                WHERE COALESCE(f.verification_state, '') = 'not_found'
+                ORDER BY f.updated_at DESC
+                LIMIT 50
+                """,
+            )
+            out["verification_not_found_samples"] = [
+                {
+                    "id": int(r[0]),
+                    "league_id": int(r[1]),
+                    "date_utc": r[2],
+                    "status_short": r[3],
+                    "status_long": r[4],
+                    "attempt_count": r[5],
+                    "last_attempt_at_utc": r[6],
                     "updated_at_utc": r[7],
                 }
                 for r in samples

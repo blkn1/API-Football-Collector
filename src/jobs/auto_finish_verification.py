@@ -39,6 +39,50 @@ def _chunk(ids: list[int], *, size: int) -> list[list[int]]:
     return [ids[i : i + size] for i in range(0, len(ids), size)]
 
 
+def _record_verification_attempt(*, fixture_ids: list[int]) -> None:
+    """
+    Record an attempt for pending verification fixtures.
+    Uses dedicated columns (not core.fixtures.updated_at).
+    """
+    if not fixture_ids:
+        return
+    with get_transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE core.fixtures
+                SET verification_last_attempt_at = NOW(),
+                    verification_attempt_count = COALESCE(verification_attempt_count, 0) + 1,
+                    verification_state = COALESCE(verification_state, 'pending')
+                WHERE id = ANY(%s)
+                  AND (COALESCE(verification_state, 'pending') = 'pending' OR needs_score_verification = TRUE)
+                """,
+                (fixture_ids,),
+            )
+        conn.commit()
+
+
+def _mark_not_found(*, fixture_ids: list[int]) -> None:
+    """
+    Mark fixtures as not_found (upstream API consistently returns empty response).
+    This removes them from the verification backlog but keeps an explicit state for reporting.
+    """
+    if not fixture_ids:
+        return
+    with get_transaction() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE core.fixtures
+                SET verification_state = 'not_found',
+                    needs_score_verification = FALSE
+                WHERE id = ANY(%s)
+                """,
+                (fixture_ids,),
+            )
+        conn.commit()
+
+
 def _load_daily_tracked_league_ids(cfg: dict[str, Any], *, config_path: Path) -> set[int]:
     tracked_raw = cfg.get("tracked_leagues") or []
     tracked: set[int] = set()
@@ -123,6 +167,9 @@ def _select_verification_fixture_ids(
     Excludes fixtures attempted in last 24 hours (cooldown period to avoid
     clearing flag too aggressively for temporary API issues).
     """
+    cooldown_hours = int(os.getenv("VERIFICATION_COOLDOWN_HOURS", "24"))
+    max_attempts = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "3"))
+
     sql = """
     SELECT f.id
     FROM core.fixtures f
@@ -131,8 +178,12 @@ def _select_verification_fixture_ids(
       AND (
         -- Bucket 1: verification backlog with 24h cooldown
         (
-          f.needs_score_verification = TRUE
-          AND (f.updated_at < NOW() - INTERVAL '24 hours')
+          (COALESCE(f.verification_state, 'pending') = 'pending' OR f.needs_score_verification = TRUE)
+          AND COALESCE(f.verification_attempt_count, 0) < %s
+          AND (
+            f.verification_last_attempt_at IS NULL
+            OR f.verification_last_attempt_at < NOW() - (%s::text || ' hours')::interval
+          )
         )
         OR
         -- Bucket 2: broken FT (auto-finished) with short cooldown
@@ -142,7 +193,11 @@ def _select_verification_fixture_ids(
             f.elapsed IS NULL OR f.elapsed < 90
             OR (f.score IS NULL OR (f.score->'fulltime') IS NULL)
           )
-          AND (f.updated_at < NOW() - INTERVAL '15 minutes')
+          AND COALESCE(f.verification_state, 'pending') <> 'not_found'
+          AND (
+            f.verification_last_attempt_at IS NULL
+            OR f.verification_last_attempt_at < NOW() - INTERVAL '15 minutes'
+          )
         )
       )
     ORDER BY f.date DESC
@@ -152,7 +207,7 @@ def _select_verification_fixture_ids(
         with conn.cursor() as cur:
             cur.execute(
                 sql,
-                (sorted(list(tracked_league_ids)), "%Auto-finished%", int(limit)),
+                (sorted(list(tracked_league_ids)), int(max_attempts), str(cooldown_hours), "%Auto-finished%", int(limit)),
             )
             rows = cur.fetchall()
             conn.commit()
@@ -347,26 +402,10 @@ async def run_auto_finish_verification(
                 missing_ids=missing_from_response,
                 response_count=len(env.get("response") or []),
             )
-            # Track attempt for missing IDs so we don't hammer them (cooldown logic).
             try:
-                with get_transaction() as conn:
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            """
-                            UPDATE core.fixtures
-                            SET updated_at = NOW()
-                            WHERE id = ANY(%s)
-                              AND needs_score_verification = TRUE
-                            """,
-                            (missing_from_response,),
-                        )
-                    conn.commit()
+                _record_verification_attempt(fixture_ids=missing_from_response)
             except Exception as e:
-                logger.error(
-                    "auto_finish_verification_missing_ids_attempt_track_failed",
-                    missing_ids=missing_from_response,
-                    err=str(e),
-                )
+                logger.error("auto_finish_verification_missing_ids_attempt_track_failed", missing_ids=missing_from_response, err=str(e))
 
         # Handle empty response (fixture not found in API or invalid)
         if not fixtures_rows:
@@ -377,82 +416,42 @@ async def run_auto_finish_verification(
                 response_count=response_count,
                 api_status_code=res.status_code,
             )
-            # Handle empty response with cooldown logic
-            # Strategy:
-            # 1. Get current updated_at to check if this is a retry (24+ hours since last attempt)
-            # 2. Always update updated_at to track this attempt
-            # 3. If this is a retry (24+ hours since last attempt), clear flag
+            # Attempt tracking + not_found transition
             try:
+                max_attempts = int(os.getenv("VERIFICATION_MAX_ATTEMPTS", "3"))
+                _record_verification_attempt(fixture_ids=batch)
+
+                # Check which fixtures have hit max attempts -> mark not_found and clear flag
                 with get_transaction() as conn:
                     with conn.cursor() as cur:
-                        # Get current updated_at for these fixtures to check if this is a retry
                         cur.execute(
                             """
-                            SELECT id, updated_at
+                            SELECT id
                             FROM core.fixtures
                             WHERE id = ANY(%s)
-                              AND needs_score_verification = TRUE
+                              AND COALESCE(verification_attempt_count, 0) >= %s
+                              AND COALESCE(verification_state, 'pending') = 'pending'
                             """,
-                            (batch,),
+                            (batch, int(max_attempts)),
                         )
-                        fixture_states = {int(r[0]): r[1] for r in cur.fetchall()}
-                        
-                        # Check which fixtures were attempted 24+ hours ago (retry after cooldown)
-                        now_utc = datetime.now(timezone.utc)
-                        old_attempts = []
-                        for fid in batch:
-                            if fid in fixture_states:
-                                last_updated = fixture_states[fid]
-                                if isinstance(last_updated, datetime):
-                                    hours_since = (now_utc - last_updated.replace(tzinfo=timezone.utc)).total_seconds() / 3600
-                                else:
-                                    # Handle timezone-aware datetime from DB
-                                    hours_since = (now_utc - last_updated).total_seconds() / 3600
-                                
-                                if hours_since >= 24:
-                                    old_attempts.append(fid)
-                        
-                        # Always update updated_at to track this attempt
-                        cur.execute(
-                            """
-                            UPDATE core.fixtures
-                            SET updated_at = NOW()
-                            WHERE id = ANY(%s)
-                              AND needs_score_verification = TRUE
-                            """,
-                            (batch,),
-                        )
-                        
-                        if old_attempts:
-                            # Clear flag for persistent not-found (24+ hours since last attempt)
-                            cur.execute(
-                                """
-                                UPDATE core.fixtures
-                                SET needs_score_verification = FALSE
-                                WHERE id = ANY(%s)
-                                """,
-                                (old_attempts,),
-                            )
-                            logger.info(
-                                "auto_finish_verification_flag_cleared_not_found",
-                                fixture_ids=old_attempts,
-                                reason="persistent_not_found_after_24h_cooldown",
-                            )
-                        else:
-                            # First attempt or within cooldown - keep flag, just track attempt
-                            logger.info(
-                                "auto_finish_verification_attempt_tracked",
-                                fixture_ids=batch,
-                                reason="empty_response_cooldown_24h",
-                            )
-                        
-                        conn.commit()
+                        hit = [int(r[0]) for r in cur.fetchall()]
+                    conn.commit()
+                if hit:
+                    _mark_not_found(fixture_ids=hit)
+                    logger.info(
+                        "auto_finish_verification_marked_not_found",
+                        fixture_ids=hit,
+                        reason="empty_response_max_attempts",
+                        max_attempts=int(max_attempts),
+                    )
+                else:
+                    logger.info(
+                        "auto_finish_verification_attempt_tracked",
+                        fixture_ids=batch,
+                        reason="empty_response_attempt_recorded",
+                    )
             except Exception as e:
-                logger.error(
-                    "auto_finish_verification_empty_response_handling_failed",
-                    fixture_ids=batch,
-                    err=str(e),
-                )
+                logger.error("auto_finish_verification_empty_response_handling_failed", fixture_ids=batch, err=str(e))
             continue
 
         try:
@@ -486,7 +485,14 @@ async def run_auto_finish_verification(
                 if verified_ids:
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE core.fixtures SET needs_score_verification = FALSE WHERE id = ANY(%s)",
+                            """
+                            UPDATE core.fixtures
+                            SET needs_score_verification = FALSE,
+                                verification_state = 'verified',
+                                verification_attempt_count = 0,
+                                verification_last_attempt_at = NOW()
+                            WHERE id = ANY(%s)
+                            """,
                             (verified_ids,),
                         )
                 conn.commit()

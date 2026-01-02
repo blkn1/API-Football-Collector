@@ -331,6 +331,10 @@ FIXTURE_DETAIL_STATUS_QUERY = """
       f.season,
       f.date AS fixture_date,
       f.status_short,
+      f.needs_score_verification,
+      f.verification_state,
+      f.verification_attempt_count,
+      f.verification_last_attempt_at,
 
       EXISTS (SELECT 1 FROM core.fixture_players p WHERE p.fixture_id = f.id) AS has_players,
       EXISTS (SELECT 1 FROM core.fixture_events e WHERE e.fixture_id = f.id) AS has_events,

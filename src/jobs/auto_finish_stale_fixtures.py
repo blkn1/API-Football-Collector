@@ -270,7 +270,14 @@ def _auto_finish_fixtures(
                     # Set needs_score_verification = FALSE for successfully fetched fixtures
                     with conn.cursor() as cur:
                         cur.execute(
-                            "UPDATE core.fixtures SET needs_score_verification = FALSE WHERE id = %s",
+                            """
+                            UPDATE core.fixtures
+                            SET needs_score_verification = FALSE,
+                                verification_state = 'verified',
+                                verification_attempt_count = 0,
+                                verification_last_attempt_at = NOW()
+                            WHERE id = %s
+                            """,
                             (fixture_id,),
                         )
                     conn.commit()
@@ -295,6 +302,9 @@ def _auto_finish_fixtures(
               true
             ),
             needs_score_verification = TRUE,
+            verification_state = 'pending',
+            verification_attempt_count = 0,
+            verification_last_attempt_at = NULL,
             updated_at = NOW()
         WHERE id = ANY(%s)
         RETURNING id, league_id, season, status_short, date, updated_at

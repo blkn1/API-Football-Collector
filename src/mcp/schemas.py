@@ -315,6 +315,10 @@ class FixtureDetailStatus(MCPModel):
     season: int | None = None
     date_utc: str | None = None
     status_short: str | None = None
+    needs_score_verification: bool | None = None
+    verification_state: str | None = None
+    verification_attempt_count: int | None = None
+    verification_last_attempt_at_utc: str | None = None
     has_players: bool
     has_events: bool
     has_statistics: bool
