@@ -5,7 +5,10 @@ from datetime import date as Date, datetime, timedelta, timezone
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any, AsyncIterator
+
+import yaml
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -171,6 +174,32 @@ def _safe_limit(limit: int, *, cap: int) -> int:
 
 def _safe_offset(offset: int) -> int:
     return max(0, int(offset))
+
+
+def _get_tracked_league_ids() -> set[int]:
+    """
+    Load tracked league IDs from config/jobs/daily.yaml -> tracked_leagues[*].id.
+    Returns empty set if config is missing or invalid.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    cfg_path = Path(os.getenv("API_FOOTBALL_DAILY_CONFIG", str(project_root / "config" / "jobs" / "daily.yaml")))
+    if not cfg_path.exists():
+        return set()
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return set()
+    tracked = cfg.get("tracked_leagues") or []
+    ids: set[int] = set()
+    if isinstance(tracked, list):
+        for x in tracked:
+            if not isinstance(x, dict) or "id" not in x:
+                continue
+            try:
+                ids.add(int(x["id"]))
+            except Exception:
+                continue
+    return ids
 
 
 def _resolve_league_ids(*, league_id: int | None, country: str | None, season: int | None) -> list[int]:
@@ -1136,6 +1165,14 @@ async def read_leagues(
     filters: list[str] = []
     params: list[Any] = []
 
+    # Restrict to tracked leagues only
+    tracked_ids = _get_tracked_league_ids()
+    if not tracked_ids:
+        # If no tracked leagues configured, return empty result
+        return {"ok": True, "items": [], "paging": {"limit": safe_limit, "offset": safe_offset}}
+    filters.append("AND l.id = ANY(%s)")
+    params.append(list(tracked_ids))
+
     c = (country or "").strip()
     if c:
         filters.append("AND (l.country_name ILIKE %s OR l.country_code ILIKE %s)")
@@ -1197,6 +1234,14 @@ async def read_countries(
     safe_offset = _safe_offset(offset)
     filters: list[str] = []
     params: list[Any] = []
+
+    # Restrict to tracked leagues only
+    tracked_ids = _get_tracked_league_ids()
+    if not tracked_ids:
+        # If no tracked leagues configured, return empty result
+        return {"ok": True, "items": [], "paging": {"limit": safe_limit, "offset": safe_offset}}
+    filters.append("AND l.id = ANY(%s)")
+    params.append(list(tracked_ids))
 
     query = (q or "").strip()
     if query:
