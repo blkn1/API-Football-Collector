@@ -268,6 +268,10 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
       calculated_at = NOW()
     """
 
+    flags = coverage_data.get("flags")
+    if isinstance(flags, (dict, list)):
+        flags = psycopg2.extras.Json(flags)
+
     vals = (
         coverage_data.get("league_id"),
         coverage_data.get("season"),
@@ -282,7 +286,7 @@ def upsert_mart_coverage(*, coverage_data: dict[str, Any], conn=None) -> None:
         coverage_data.get("core_count"),
         coverage_data.get("pipeline_coverage"),
         coverage_data.get("overall_coverage"),
-        coverage_data.get("flags"),
+        flags,
     )
 
     if conn is None:
