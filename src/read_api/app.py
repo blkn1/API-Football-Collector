@@ -1948,8 +1948,10 @@ async def read_h2h(
         params.append(safe_offset)
         rows = await _fetchall_async(sql_text, tuple(params))
 
-        # If we have enough results, return them
-        if len(rows) >= safe_limit:
+        # If we have any cached results, return them.
+        # NOTE: H2H is naturally a "small" dataset. Requiring len(rows) >= limit would
+        # unnecessarily force API calls (and DB writes) in typical use and in unit tests.
+        if rows:
             items: list[dict[str, Any]] = []
             played = wins = draws = losses = 0
             gf = ga = 0
