@@ -90,3 +90,19 @@ Lebanon Premier Lig
 İngiltere U21 Premier League Cup (Knockout)
 İngiltere U21 Premier League Cup (Group)
 
+# --- 2025 additions (tracked_leagues) ---
+Brezilya Serie A
+Brezilya Serie B
+Çin Super League
+Danimarka Superliga
+Finlandiya Veikkausliiga
+İrlanda Premier Division
+İsveç Allsvenskan
+İsveç Superettan
+Norveç Eliteserien
+Norveç 1. Division
+Rusya Premier League
+Suudi Arabistan Pro League
+UEFA Champions League
+UEFA Europa League
+

@@ -272,6 +272,12 @@ jobs:
   target_layer: raw
 
 tracked_leagues:
+- id: 2
+  name: UEFA Champions League
+  season: 2025
+- id: 3
+  name: UEFA Europa League
+  season: 2025
 - id: 39
   name: Premier League
   season: 2025
@@ -289,6 +295,12 @@ tracked_leagues:
   season: 2025
 - id: 62
   name: Ligue 2
+  season: 2025
+- id: 71
+  name: Serie A
+  season: 2025
+- id: 72
+  name: Serie B
   season: 2025
 - id: 78
   name: Bundesliga
@@ -308,6 +320,12 @@ tracked_leagues:
 - id: 95
   name: Segunda Liga
   season: 2025
+- id: 103
+  name: Eliteserien
+  season: 2025
+- id: 104
+  name: 1. Division
+  season: 2025
 - id: 106
   name: Ekstraklasa
   season: 2025
@@ -316,6 +334,15 @@ tracked_leagues:
   season: 2025
 - id: 112
   name: Welsh Cup
+  season: 2025
+- id: 113
+  name: Allsvenskan
+  season: 2025
+- id: 114
+  name: Superettan
+  season: 2025
+- id: 119
+  name: Superliga
   season: 2025
 - id: 121
   name: DBU Pokalen
@@ -340,6 +367,9 @@ tracked_leagues:
   season: 2025
 - id: 162
   name: Primera División
+  season: 2025
+- id: 169
+  name: Super League
   season: 2025
 - id: 179
   name: Premiership
@@ -386,11 +416,17 @@ tracked_leagues:
 - id: 219
   name: 3. Liga
   season: 2025
+- id: 235
+  name: Premier League
+  season: 2025
 - id: 241
   name: Copa Colombia
   season: 2025
 - id: 242
   name: Liga Pro
+  season: 2025
+- id: 244
+  name: Veikkausliiga
   season: 2025
 - id: 262
   name: Liga MX
@@ -428,6 +464,9 @@ tracked_leagues:
 - id: 303
   name: Division 1
   season: 2025
+- id: 307
+  name: Pro League
+  season: 2025
 - id: 308
   name: 1a Divisão
   season: 2025
@@ -448,6 +487,9 @@ tracked_leagues:
   season: 2025
 - id: 345
   name: Division di Honor
+  season: 2025
+- id: 357
+  name: Premier Division
   season: 2025
 - id: 370
   name: Football League - Highland League
