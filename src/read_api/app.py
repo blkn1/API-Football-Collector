@@ -351,6 +351,150 @@ async def fixtures(league_id: int | None = None, date: str | None = None, status
 
 
 @app.get(
+    "/v2/fixtures",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"date_from", "date_to"}))],
+)
+async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
+    """
+    v2 fixtures: DB-only, tracked-only, "NS only", grouped by league.
+
+    Rules:
+    - Filter fixtures to status_short == 'NS'
+    - Restrict scope to tracked leagues (config/jobs/daily.yaml -> tracked_leagues)
+    - Per league: select only the earliest kickoff time in [date_from, date_to] window (UTC)
+    - Global: sort leagues by their earliest kickoff time ascending
+    """
+    try:
+        d_from = _parse_ymd(date_from)
+        d_to = _parse_ymd(date_to)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if d_to < d_from:
+        raise HTTPException(status_code=400, detail="date_to_must_be_gte_date_from")
+
+    tracked_ids = _get_tracked_league_ids()
+    if not tracked_ids:
+        # Config-driven: if nothing is tracked, return empty (avoid surprising "all leagues" behavior).
+        now = datetime.now(timezone.utc)
+        return {
+            "ok": True,
+            "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
+            "total_match_count": 0,
+            "leagues": [],
+            "updated_at_utc": now.isoformat(),
+        }
+
+    dt_from = datetime(d_from.year, d_from.month, d_from.day, tzinfo=timezone.utc)
+    dt_to = _utc_end_of_day(d_to)
+
+    # Fetch once (DB does the heavy filter). We still re-check constraints in Python as a safety net.
+    sql_text = """
+    SELECT
+      f.id,
+      f.league_id,
+      l.name AS league_name,
+      l.country_name AS country_name,
+      f.season,
+      f.round,
+      f.date AS date_utc,
+      EXTRACT(EPOCH FROM f.date)::bigint AS timestamp_utc,
+      f.status_short,
+      f.status_long,
+      f.home_team_id,
+      th.name AS home_team_name,
+      f.away_team_id,
+      ta.name AS away_team_name,
+      f.updated_at AS updated_at_utc
+    FROM core.fixtures f
+    JOIN core.leagues l ON l.id = f.league_id
+    JOIN core.teams th ON th.id = f.home_team_id
+    JOIN core.teams ta ON ta.id = f.away_team_id
+    WHERE f.status_short = 'NS'
+      AND f.league_id = ANY(%s)
+      AND f.date >= %s
+      AND f.date <= %s
+    ORDER BY f.league_id ASC, f.date ASC, f.id ASC
+    """
+    rows = await _fetchall_async(sql_text, (sorted(list(tracked_ids)), dt_from, dt_to))
+
+    # Group by league_id
+    by_league: dict[int, list[dict[str, Any]]] = {}
+    league_meta: dict[int, dict[str, Any]] = {}
+    for r in rows:
+        league_id = int(r[1])
+        status_short = str(r[8] or "")
+        if status_short != "NS":
+            continue
+        if league_id not in tracked_ids:
+            continue
+
+        date_utc = r[6]
+        ts_utc = _to_int_or_none(r[7])
+
+        if league_id not in league_meta:
+            league_meta[league_id] = {
+                "league_id": league_id,
+                "league_name": r[2],
+                "country_name": r[3],
+                "season": _to_int_or_none(r[4]),
+            }
+
+        item = {
+            "id": int(r[0]),
+            "round": r[5],
+            "date_utc": _to_iso_or_none(date_utc),
+            "timestamp_utc": ts_utc,
+            "status_short": status_short,
+            "status_long": r[9],
+            "home_team_id": _to_int_or_none(r[10]),
+            "home_team_name": r[11],
+            "away_team_id": _to_int_or_none(r[12]),
+            "away_team_name": r[13],
+            "updated_at_utc": _to_iso_or_none(r[14]),
+        }
+        by_league.setdefault(league_id, []).append(item)
+
+    leagues_out: list[dict[str, Any]] = []
+    for league_id, items in by_league.items():
+        # Earliest kickoff in this league (use ISO UTC string; lexicographic order matches chronological order).
+        dates = [str(x.get("date_utc") or "") for x in items if x.get("date_utc")]
+        if not dates:
+            continue
+        earliest_date = min(dates)
+        matches = [x for x in items if str(x.get("date_utc") or "") == earliest_date]
+        earliest_sort_key = earliest_date
+
+        meta = league_meta.get(league_id) or {"league_id": league_id, "league_name": None, "country_name": None, "season": None}
+        leagues_out.append(
+            {
+                "league_id": int(meta["league_id"]),
+                "league_name": meta.get("league_name"),
+                "country_name": meta.get("country_name"),
+                "season": _to_int_or_none(meta.get("season")),
+                "match_count": int(len(items)),
+                "has_matches": True,
+                "matches": matches,
+                "_sort": earliest_sort_key,
+            }
+        )
+
+    # Global sort by earliest kickoff time
+    leagues_out.sort(key=lambda x: x.get("_sort"))
+    total_match_count = sum(len(l.get("matches") or []) for l in leagues_out)
+    for l in leagues_out:
+        l.pop("_sort", None)
+
+    now = datetime.now(timezone.utc)
+    return {
+        "ok": True,
+        "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
+        "total_match_count": int(total_match_count),
+        "leagues": leagues_out,
+        "updated_at_utc": now.isoformat(),
+    }
+
+
+@app.get(
     "/v1/teams/{team_id}/fixtures",
     dependencies=[Depends(require_access), Depends(require_only_query_params({"from_date", "to_date", "status", "limit"}))],
 )

@@ -208,6 +208,76 @@ curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
 
 ---
 
+### 2.1) v2 fixtures (NS grouped, tracked-only)
+
+#### `GET /v2/fixtures`
+
+Amaç:
+- Seçilen UTC tarih aralığında **başlamamış (NS)** maçları al
+- **Tracked ligler** ile sınırla (kaynak: `config/jobs/daily.yaml -> tracked_leagues`)
+- Her lig için sadece **en erken kickoff** saatindeki maç(lar)ı döndür
+- Ligleri global olarak “en erken kickoff”a göre sırala
+
+Query params:
+- `date_from=YYYY-MM-DD` (zorunlu, UTC)
+- `date_to=YYYY-MM-DD` (zorunlu, UTC; `date_to >= date_from`)
+
+Kurallar:
+- Filtre: `status_short == "NS"` dışındakiler hariç (LIVE/FT/PST/… yok)
+- Scope: sadece tracked league_id’ler (tracked olmayan ligler dönmez)
+- Lig bazında:
+  - `match_count`: o ligde aralık içindeki **toplam** NS maç sayısı
+  - `matches[]`: sadece o ligdeki **en erken `date_utc`** değerine sahip NS maçlar
+  - `has_matches`: her zaman `true` (bu endpoint boş lig döndürmez)
+- `total_match_count`: `leagues[*].matches.length` toplamı
+
+Örnek:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v2/fixtures?date_from=2026-01-05&date_to=2026-01-05"
+```
+
+Örnek response (özet):
+
+```json
+{
+  "ok": true,
+  "date_range": {"from": "2026-01-05", "to": "2026-01-05"},
+  "total_match_count": 3,
+  "leagues": [
+    {
+      "league_id": 95,
+      "league_name": "Segunda Liga",
+      "country_name": "Portugal",
+      "season": 2025,
+      "match_count": 3,
+      "has_matches": true,
+      "matches": [
+        {
+          "id": 1398121,
+          "round": "Regular Season - 17",
+          "date_utc": "2026-01-05T18:00:00+00:00",
+          "timestamp_utc": 1762346400,
+          "status_short": "NS",
+          "status_long": "Not Started",
+          "home_team_id": 229,
+          "home_team_name": "Benfica B",
+          "away_team_id": 243,
+          "away_team_name": "FC Porto B",
+          "updated_at_utc": "2025-12-16T12:29:02.921296+00:00"
+        }
+      ]
+    }
+  ],
+  "updated_at_utc": "2026-01-05T10:00:00+00:00"
+}
+```
+
+Not:
+- Aynı ligde farklı kickoff saatleri varsa: sadece en erken saattekiler döner.
+- Aynı en erken saatte birden fazla maç varsa: hepsi `matches[]` içine girer.
+
 ### 3) v1 team fixtures (takım sayfası için)
 
 #### `GET /v1/teams/{team_id}/fixtures`
