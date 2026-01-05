@@ -223,13 +223,14 @@ Query params:
 - `date_to=YYYY-MM-DD` (zorunlu, UTC; `date_to >= date_from`)
 
 Kurallar:
-- Filtre: `status_short == "NS"` dışındakiler hariç (LIVE/FT/PST/… yok)
-- Scope: sadece tracked league_id’ler (tracked olmayan ligler dönmez)
-- Lig bazında:
-  - `match_count`: o ligde aralık içindeki **toplam** NS maç sayısı
-  - `matches[]`: sadece o ligdeki **en erken `date_utc`** değerine sahip NS maçlar
-  - `has_matches`: her zaman `true` (bu endpoint boş lig döndürmez)
-- `total_match_count`: `leagues[*].matches.length` toplamı
+- Filtre: `status_short == "NS"` dışındakiler hariç (LIVE/FT/PST/… yok)\n
+- Scope: sadece tracked league_id’ler (tracked olmayan ligler dönmez)\n
+- Gruplama: **(league_id + kickoff_time)**\n
+  - Aynı ligde farklı kickoff saatleri varsa `leagues[]` içinde **ayrı kayıt** olur.\n
+  - `match_count`: o kickoff saatindeki maç sayısı (= `matches.length`)\n
+  - `matches[]`: o kickoff saatindeki tüm NS maçlar\n
+  - `has_matches`: her zaman `true` (bu endpoint boş grup döndürmez)\n
+- `total_match_count`: `leagues[*].match_count` toplamı
 
 Örnek:
 
@@ -275,8 +276,8 @@ curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
 ```
 
 Not:
-- Aynı ligde farklı kickoff saatleri varsa: sadece en erken saattekiler döner.
-- Aynı en erken saatte birden fazla maç varsa: hepsi `matches[]` içine girer.
+- Aynı ligde farklı kickoff saatleri varsa: `leagues[]` içinde **farklı satırlar** olarak gelir.\n
+- Aynı kickoff saatinde birden fazla maç varsa: hepsi aynı `matches[]` içinde olur.
 
 ### 3) v1 team fixtures (takım sayfası için)
 

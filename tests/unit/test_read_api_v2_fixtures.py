@@ -28,6 +28,7 @@ def test_v2_fixtures_groups_by_league_selects_earliest_and_sorts(monkeypatch: py
         dt1 = datetime(2026, 1, 5, 18, 0, tzinfo=timezone.utc)
         dt2 = datetime(2026, 1, 5, 19, 45, tzinfo=timezone.utc)
         dt3 = datetime(2026, 1, 5, 20, 15, tzinfo=timezone.utc)
+        dt4 = datetime(2026, 1, 5, 22, 0, tzinfo=timezone.utc)
 
         # Columns (see fixtures_v2 SQL):
         # id, league_id, league_name, country_name, season, round, date_utc, ts, status_short, status_long,
@@ -37,9 +38,9 @@ def test_v2_fixtures_groups_by_league_selects_earliest_and_sorts(monkeypatch: py
             (1398121, 95, "Segunda Liga", "Portugal", 2025, "Regular Season - 17", dt1, int(dt1.timestamp()), "NS", "Not Started", 229, "Benfica B", 243, "FC Porto B", dt1),
             (1398125, 95, "Segunda Liga", "Portugal", 2025, "Regular Season - 17", dt1, int(dt1.timestamp()), "NS", "Not Started", 702, "Feirense", 806, "Leixões", dt1),
             (1398122, 95, "Segunda Liga", "Portugal", 2025, "Regular Season - 17", dt3, int(dt3.timestamp()), "NS", "Not Started", 810, "Vizela", 4799, "Torreense", dt3),
-            # League 39: one earliest (19:45), one later (22:00) -> only earliest should be returned
+            # League 39: two kickoff times (19:45 and 22:00)
             (1489123, 39, "Premier League", "England", 2025, "Regular Season - 20", dt2, int(dt2.timestamp()), "NS", "Not Started", 42, "Liverpool", 33, "Manchester United", dt2),
-            (1489124, 39, "Premier League", "England", 2025, "Regular Season - 20", datetime(2026, 1, 5, 22, 0, tzinfo=timezone.utc), 1762318800, "NS", "Not Started", 40, "Manchester City", 49, "Tottenham", dt2),
+            (1489124, 39, "Premier League", "England", 2025, "Regular Season - 20", dt4, int(dt4.timestamp()), "NS", "Not Started", 40, "Manchester City", 49, "Tottenham", dt2),
             # Non-tracked league: should be dropped even if returned by DB (safety net)
             (999, 9999, "Bangladesh League", "Bangladesh", 2025, "R1", dt1, int(dt1.timestamp()), "NS", "Not Started", 1, "A", 2, "B", dt1),
             # Non-NS status: should be dropped (safety net)
@@ -57,22 +58,34 @@ def test_v2_fixtures_groups_by_league_selects_earliest_and_sorts(monkeypatch: py
     assert payload["date_range"] == {"from": "2026-01-05", "to": "2026-01-05"}
 
     leagues = payload["leagues"]
-    assert [l["league_id"] for l in leagues] == [95, 39]  # sorted by earliest kickoff (18:00 then 19:45)
+    # Grouping is per (league_id, kickoff_time). Same league can appear multiple times.
+    assert [l["league_id"] for l in leagues] == [95, 39, 95, 39]  # sorted by kickoff time
 
-    l95 = leagues[0]
-    assert l95["league_id"] == 95
-    assert l95["match_count"] == 3  # total NS matches for league in window
-    assert l95["has_matches"] is True
-    assert len(l95["matches"]) == 2  # only earliest kickoff time, tie included
-    assert {m["id"] for m in l95["matches"]} == {1398121, 1398125}
+    # 95 @ 18:00 (two matches)
+    l95_early = leagues[0]
+    assert l95_early["league_id"] == 95
+    assert l95_early["match_count"] == 2
+    assert {m["id"] for m in l95_early["matches"]} == {1398121, 1398125}
 
-    l39 = leagues[1]
-    assert l39["league_id"] == 39
-    assert l39["match_count"] == 2
-    assert len(l39["matches"]) == 1
-    assert l39["matches"][0]["id"] == 1489123
+    # 39 @ 19:45 (one match)
+    l39_early = leagues[1]
+    assert l39_early["league_id"] == 39
+    assert l39_early["match_count"] == 1
+    assert l39_early["matches"][0]["id"] == 1489123
 
-    assert payload["total_match_count"] == 3  # sum of matches.length across leagues (2 + 1)
+    # 95 @ 20:15 (one match)
+    l95_late = leagues[2]
+    assert l95_late["league_id"] == 95
+    assert l95_late["match_count"] == 1
+    assert l95_late["matches"][0]["id"] == 1398122
+
+    # 39 @ 22:00 (one match)
+    l39_late = leagues[3]
+    assert l39_late["league_id"] == 39
+    assert l39_late["match_count"] == 1
+    assert l39_late["matches"][0]["id"] == 1489124
+
+    assert payload["total_match_count"] == 5  # total matches returned across all kickoff buckets
     assert payload["updated_at_utc"]  # present
 
 

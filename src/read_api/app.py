@@ -417,9 +417,10 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
     """
     rows = await _fetchall_async(sql_text, (sorted(list(tracked_ids)), dt_from, dt_to))
 
-    # Group by league_id
-    by_league: dict[int, list[dict[str, Any]]] = {}
-    league_meta: dict[int, dict[str, Any]] = {}
+    # Group by (league_id, kickoff date_utc) so the same league can appear multiple times
+    # if it has fixtures at multiple kickoff times within the date range.
+    by_bucket: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    bucket_meta: dict[tuple[int, str], dict[str, Any]] = {}
     for r in rows:
         league_id = int(r[1])
         status_short = str(r[8] or "")
@@ -429,20 +430,26 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
             continue
 
         date_utc = r[6]
+        date_utc_iso = _to_iso_or_none(date_utc)
+        if not date_utc_iso:
+            continue
         ts_utc = _to_int_or_none(r[7])
 
-        if league_id not in league_meta:
-            league_meta[league_id] = {
+        key = (league_id, str(date_utc_iso))
+        if key not in bucket_meta:
+            bucket_meta[key] = {
                 "league_id": league_id,
                 "league_name": r[2],
                 "country_name": r[3],
                 "season": _to_int_or_none(r[4]),
+                "date_utc": str(date_utc_iso),
+                "timestamp_utc": ts_utc,
             }
 
         item = {
             "id": int(r[0]),
             "round": r[5],
-            "date_utc": _to_iso_or_none(date_utc),
+            "date_utc": str(date_utc_iso),
             "timestamp_utc": ts_utc,
             "status_short": status_short,
             "status_long": r[9],
@@ -452,35 +459,37 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
             "away_team_name": r[13],
             "updated_at_utc": _to_iso_or_none(r[14]),
         }
-        by_league.setdefault(league_id, []).append(item)
+        by_bucket.setdefault(key, []).append(item)
 
     leagues_out: list[dict[str, Any]] = []
-    for league_id, items in by_league.items():
-        # Earliest kickoff in this league (use ISO UTC string; lexicographic order matches chronological order).
-        dates = [str(x.get("date_utc") or "") for x in items if x.get("date_utc")]
-        if not dates:
-            continue
-        earliest_date = min(dates)
-        matches = [x for x in items if str(x.get("date_utc") or "") == earliest_date]
-        earliest_sort_key = earliest_date
-
-        meta = league_meta.get(league_id) or {"league_id": league_id, "league_name": None, "country_name": None, "season": None}
+    for key, items in by_bucket.items():
+        league_id, date_utc_iso = key
+        meta = bucket_meta.get(key) or {
+            "league_id": league_id,
+            "league_name": None,
+            "country_name": None,
+            "season": None,
+            "date_utc": date_utc_iso,
+            "timestamp_utc": None,
+        }
+        # Global sort by kickoff time (prefer timestamp, fallback to ISO string)
+        sort_key = meta.get("timestamp_utc") if meta.get("timestamp_utc") is not None else str(meta.get("date_utc") or "")
         leagues_out.append(
             {
                 "league_id": int(meta["league_id"]),
                 "league_name": meta.get("league_name"),
                 "country_name": meta.get("country_name"),
                 "season": _to_int_or_none(meta.get("season")),
-                "match_count": int(len(items)),
+                "match_count": int(len(items)),  # count of matches in THIS kickoff bucket
                 "has_matches": True,
-                "matches": matches,
-                "_sort": earliest_sort_key,
+                "matches": items,
+                "_sort": sort_key,
             }
         )
 
     # Global sort by earliest kickoff time
     leagues_out.sort(key=lambda x: x.get("_sort"))
-    total_match_count = sum(len(l.get("matches") or []) for l in leagues_out)
+    total_match_count = sum(int(l.get("match_count") or 0) for l in leagues_out)
     for l in leagues_out:
         l.pop("_sort", None)
 
