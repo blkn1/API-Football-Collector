@@ -503,6 +503,520 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
     }
 
 
+def _form_points_last5(form: Any) -> int | None:
+    """
+    Convert a form string like 'WWDLW' into points using:
+      W=3, D=1, L=0
+    Uses last 5 chars after sanitization. Returns None if not parseable.
+    """
+    if form is None:
+        return None
+    s = str(form).strip().upper()
+    if not s:
+        return None
+    s = "".join([c for c in s if c in {"W", "D", "L"}])
+    if not s:
+        return None
+    s = s[-5:]
+    pts = 0
+    for c in s:
+        if c == "W":
+            pts += 3
+        elif c == "D":
+            pts += 1
+        else:
+            pts += 0
+    return int(pts)
+
+
+def _score_half_full(score: Any) -> tuple[int | None, int | None, int | None, int | None]:
+    """
+    Extract (ht_home, ht_away, ft_home, ft_away) from core.fixtures.score JSON-like structure.
+    Expected API-Football shape:
+      score: { halftime: {home, away}, fulltime: {home, away}, ... }
+    Returns (None, None, None, None) if not available.
+    """
+    if not isinstance(score, dict):
+        return (None, None, None, None)
+    ht = score.get("halftime") if isinstance(score.get("halftime"), dict) else None
+    ft = score.get("fulltime") if isinstance(score.get("fulltime"), dict) else None
+    ht_home = _to_int_or_none(ht.get("home")) if ht else None
+    ht_away = _to_int_or_none(ht.get("away")) if ht else None
+    ft_home = _to_int_or_none(ft.get("home")) if ft else None
+    ft_away = _to_int_or_none(ft.get("away")) if ft else None
+    return (ht_home, ht_away, ft_home, ft_away)
+
+
+@app.get(
+    "/v2/teams/{team_id}/breakdown",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"last_n", "as_of_date"}))],
+)
+async def team_breakdown(team_id: int, last_n: int = 20, as_of_date: str | None = None) -> dict[str, Any]:
+    """
+    Deterministic aggregate breakdown for a team's last N completed matches across ALL competitions.
+
+    - Scope: fixtures where team participates (home OR away)
+    - Status: FT/AET/PEN only
+    - Half splits:
+      - goals: from fixture.score halftime/fulltime when available, fallback to events timing
+      - cards: from events timing (yellow/red, includes 2nd yellow as both yellow+red)
+    - Totals only (no half split): corners/offsides from fixture_statistics
+    - Opponent strength: opponent form from core.team_statistics.form -> points (W=3,D=1,L=0) last 5
+    """
+    n = max(1, min(int(last_n), 50))
+    if as_of_date is not None:
+        try:
+            d = _parse_ymd(as_of_date)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cutoff = _utc_end_of_day(d)
+    else:
+        cutoff = datetime.now(timezone.utc)
+
+    final_statuses = ("FT", "AET", "PEN")
+
+    fixtures_sql = """
+    SELECT
+      f.id,
+      f.league_id,
+      l.name AS league_name,
+      f.season,
+      f.date,
+      f.status_short,
+      f.home_team_id,
+      th.name AS home_team_name,
+      f.away_team_id,
+      ta.name AS away_team_name,
+      f.goals_home,
+      f.goals_away,
+      f.score,
+      f.updated_at
+    FROM core.fixtures f
+    JOIN core.leagues l ON l.id = f.league_id
+    JOIN core.teams th ON th.id = f.home_team_id
+    JOIN core.teams ta ON ta.id = f.away_team_id
+    WHERE (f.home_team_id = %s OR f.away_team_id = %s)
+      AND f.status_short = ANY(%s)
+      AND f.date <= %s
+    ORDER BY f.date DESC
+    LIMIT %s
+    """
+    fx_rows = await _fetchall_async(fixtures_sql, (int(team_id), int(team_id), list(final_statuses), cutoff, int(n)))
+
+    fixtures: list[dict[str, Any]] = []
+    fixture_ids: list[int] = []
+    opponent_keys: set[tuple[int, int, int]] = set()  # (league_id, season, opponent_team_id)
+    for r in fx_rows:
+        fid = int(r[0])
+        league_id = int(r[1])
+        season = _to_int_or_none(r[3])
+        date_utc = r[4]
+        status_short = str(r[5] or "")
+        home_id = _to_int_or_none(r[6])
+        away_id = _to_int_or_none(r[8])
+        gh = _to_int_or_none(r[10])
+        ga_ = _to_int_or_none(r[11])
+        score = r[12]
+        updated_at = r[13]
+
+        if home_id is None or away_id is None:
+            continue
+        is_home = int(home_id) == int(team_id)
+        is_away = int(away_id) == int(team_id)
+        if not (is_home or is_away):
+            continue
+
+        opp_id = int(away_id) if is_home else int(home_id)
+        if season is not None:
+            opponent_keys.add((league_id, int(season), int(opp_id)))
+
+        fixtures.append(
+            {
+                "id": fid,
+                "league_id": league_id,
+                "league_name": r[2],
+                "season": season,
+                "date_utc": _to_iso_or_none(date_utc),
+                "date_dt": date_utc if isinstance(date_utc, datetime) else None,
+                "status_short": status_short,
+                "home_team_id": int(home_id),
+                "home_team_name": r[7],
+                "away_team_id": int(away_id),
+                "away_team_name": r[9],
+                "goals_home": gh,
+                "goals_away": ga_,
+                "score": score,
+                "updated_at_utc": _to_iso_or_none(updated_at),
+                "is_home": bool(is_home),
+                "opponent_team_id": int(opp_id),
+            }
+        )
+        fixture_ids.append(fid)
+
+    # Batch events (goals + cards)
+    events_by_fixture: dict[int, list[dict[str, Any]]] = {}
+    if fixture_ids:
+        events_sql = """
+        SELECT fixture_id, time_elapsed, team_id, type, detail
+        FROM core.fixture_events
+        WHERE fixture_id = ANY(%s)
+        """
+        ev_rows = await _fetchall_async(events_sql, (fixture_ids,))
+        for fid, elapsed, tid, typ, detail in ev_rows:
+            if fid is None:
+                continue
+            events_by_fixture.setdefault(int(fid), []).append(
+                {
+                    "time_elapsed": _to_int_or_none(elapsed),
+                    "team_id": _to_int_or_none(tid),
+                    "type": (str(typ) if typ is not None else None),
+                    "detail": (str(detail) if detail is not None else None),
+                }
+            )
+
+    # Batch statistics (corners/offsides totals)
+    stats_by_fixture_team: dict[tuple[int, int], dict[str, int | None]] = {}
+    if fixture_ids:
+        stats_sql = """
+        SELECT fixture_id, team_id, statistics
+        FROM core.fixture_statistics
+        WHERE fixture_id = ANY(%s)
+        """
+        st_rows = await _fetchall_async(stats_sql, (fixture_ids,))
+        for fid, tid, stats_json in st_rows:
+            if fid is None or tid is None:
+                continue
+            stats_by_fixture_team[(int(fid), int(tid))] = _extract_team_match_stats(stats_json)
+
+    # Batch opponent form
+    opponent_form: dict[tuple[int, int, int], str | None] = {}
+    if opponent_keys:
+        # Build VALUES table
+        vals = sorted(list(opponent_keys), key=lambda x: (x[0], x[1], x[2]))
+        placeholders = ", ".join(["(%s,%s,%s)"] * len(vals))
+        params: list[Any] = []
+        for league_id, season, tid in vals:
+            params.extend([int(league_id), int(season), int(tid)])
+        form_sql = f"""
+        WITH wanted(league_id, season, team_id) AS (
+          VALUES {placeholders}
+        )
+        SELECT ts.league_id, ts.season, ts.team_id, ts.form
+        FROM core.team_statistics ts
+        JOIN wanted w USING (league_id, season, team_id)
+        """
+        form_rows = await _fetchall_async(form_sql, tuple(params))
+        for lid, season, tid, form in form_rows:
+            if lid is None or season is None or tid is None:
+                continue
+            opponent_form[(int(lid), int(season), int(tid))] = (str(form) if form is not None else None)
+
+    # Aggregation helpers
+    def _empty_segment() -> dict[str, Any]:
+        return {
+            "played": 0,
+            "goals": {"gf": 0, "ga": 0, "total_goals": 0},
+            "goal_thresholds": {"over_1_5": 0, "over_2_5": 0},
+            "goals_1h": {"gf": 0, "ga": 0, "available": 0},
+            "goals_2h": {"gf": 0, "ga": 0, "available": 0},
+            "cards_1h": {"yellow_for": 0, "yellow_against": 0, "red_for": 0, "red_against": 0, "available": 0},
+            "cards_2h": {"yellow_for": 0, "yellow_against": 0, "red_for": 0, "red_against": 0, "available": 0},
+            "corners": {"for": 0, "against": 0, "available": 0},
+            "offsides": {"for": 0, "against": 0, "available": 0},
+            "opponent_form": {
+                "available": 0,
+                "sum_points_last5": 0,
+                "by_outcome": {
+                    "win": {"available": 0, "sum_points_last5": 0},
+                    "draw": {"available": 0, "sum_points_last5": 0},
+                    "loss": {"available": 0, "sum_points_last5": 0},
+                },
+            },
+        }
+
+    def _add_avg_block(sum_val: int, denom: int) -> float | None:
+        if denom <= 0:
+            return None
+        return round(float(sum_val) / float(denom), 4)
+
+    def _outcome(gf: int | None, ga: int | None) -> str | None:
+        if gf is None or ga is None:
+            return None
+        if gf > ga:
+            return "win"
+        if gf < ga:
+            return "loss"
+        return "draw"
+
+    overall = _empty_segment()
+    home = _empty_segment()
+    away = _empty_segment()
+
+    for fx in fixtures:
+        fid = int(fx["id"])
+        is_home = bool(fx["is_home"])
+        league_id = int(fx["league_id"])
+        season = fx.get("season")
+        opp_id = int(fx["opponent_team_id"])
+        gh = fx.get("goals_home")
+        ga_ = fx.get("goals_away")
+
+        gf = int(gh) if is_home else int(ga_) if ga_ is not None else None
+        ga = int(ga_) if is_home else int(gh) if gh is not None else None
+
+        segs = [overall, home if is_home else away]
+        for seg in segs:
+            seg["played"] += 1
+            if gf is not None:
+                seg["goals"]["gf"] += int(gf)
+            if ga is not None:
+                seg["goals"]["ga"] += int(ga)
+            if gf is not None and ga is not None:
+                total_goals = int(gf + ga)
+                seg["goals"]["total_goals"] += total_goals
+                if total_goals >= 2:
+                    seg["goal_thresholds"]["over_1_5"] += 1
+                if total_goals >= 3:
+                    seg["goal_thresholds"]["over_2_5"] += 1
+
+        # Half goals: prefer fixture.score halftime/fulltime
+        ht_home, ht_away, ft_home, ft_away = _score_half_full(fx.get("score"))
+        if ft_home is None:
+            ft_home = gh
+        if ft_away is None:
+            ft_away = ga_
+
+        half_goals_done = False
+        if ht_home is not None and ht_away is not None and ft_home is not None and ft_away is not None:
+            team_ht = int(ht_home) if is_home else int(ht_away)
+            opp_ht = int(ht_away) if is_home else int(ht_home)
+            team_ft = int(ft_home) if is_home else int(ft_away)
+            opp_ft = int(ft_away) if is_home else int(ft_home)
+            if team_ft >= team_ht and opp_ft >= opp_ht:
+                team_2h = team_ft - team_ht
+                opp_2h = opp_ft - opp_ht
+                for seg in segs:
+                    seg["goals_1h"]["gf"] += team_ht
+                    seg["goals_1h"]["ga"] += opp_ht
+                    seg["goals_2h"]["gf"] += team_2h
+                    seg["goals_2h"]["ga"] += opp_2h
+                    seg["goals_1h"]["available"] += 1
+                    seg["goals_2h"]["available"] += 1
+                half_goals_done = True
+
+        if not half_goals_done:
+            # Fallback: events timing (Goal)
+            evs = events_by_fixture.get(fid) or []
+            h1_gf = h1_ga = h2_gf = h2_ga = 0
+            have_goal_ev = False
+            for ev in evs:
+                if str(ev.get("type") or "").lower() != "goal":
+                    continue
+                elapsed = ev.get("time_elapsed")
+                tid = ev.get("team_id")
+                if elapsed is None or tid is None:
+                    continue
+                have_goal_ev = True
+                half = 1 if int(elapsed) <= 45 else 2
+                is_for = int(tid) == int(team_id)
+                if half == 1:
+                    if is_for:
+                        h1_gf += 1
+                    else:
+                        h1_ga += 1
+                else:
+                    if is_for:
+                        h2_gf += 1
+                    else:
+                        h2_ga += 1
+            if have_goal_ev:
+                for seg in segs:
+                    seg["goals_1h"]["gf"] += h1_gf
+                    seg["goals_1h"]["ga"] += h1_ga
+                    seg["goals_2h"]["gf"] += h2_gf
+                    seg["goals_2h"]["ga"] += h2_ga
+                    seg["goals_1h"]["available"] += 1
+                    seg["goals_2h"]["available"] += 1
+
+        # Cards by half: events timing (Card)
+        evs = events_by_fixture.get(fid) or []
+        c1 = {"yellow_for": 0, "yellow_against": 0, "red_for": 0, "red_against": 0}
+        c2 = {"yellow_for": 0, "yellow_against": 0, "red_for": 0, "red_against": 0}
+        have_card_ev = False
+        for ev in evs:
+            if str(ev.get("type") or "").lower() != "card":
+                continue
+            elapsed = ev.get("time_elapsed")
+            tid = ev.get("team_id")
+            detail = str(ev.get("detail") or "").lower()
+            if elapsed is None or tid is None:
+                continue
+            have_card_ev = True
+            half = 1 if int(elapsed) <= 45 else 2
+            is_for = int(tid) == int(team_id)
+
+            is_yellow = "yellow" in detail
+            is_red = ("red" in detail) or ("second yellow" in detail)
+            # Second yellow counts as both yellow and red (deterministic rule).
+            if half == 1:
+                bucket = c1
+            else:
+                bucket = c2
+            if is_yellow:
+                bucket["yellow_for" if is_for else "yellow_against"] += 1
+            if is_red:
+                bucket["red_for" if is_for else "red_against"] += 1
+
+        if have_card_ev:
+            for seg in segs:
+                for k in c1:
+                    seg["cards_1h"][k] += int(c1[k])
+                    seg["cards_2h"][k] += int(c2[k])
+                seg["cards_1h"]["available"] += 1
+                seg["cards_2h"]["available"] += 1
+
+        # Corners / offsides totals (for/against) from statistics
+        team_stats = stats_by_fixture_team.get((fid, int(team_id))) or {}
+        opp_stats = stats_by_fixture_team.get((fid, int(opp_id))) or {}
+        corners_for = team_stats.get("corner_kicks")
+        corners_against = opp_stats.get("corner_kicks")
+        offs_for = team_stats.get("offsides")
+        offs_against = opp_stats.get("offsides")
+
+        if corners_for is not None and corners_against is not None:
+            for seg in segs:
+                seg["corners"]["for"] += int(corners_for)
+                seg["corners"]["against"] += int(corners_against)
+                seg["corners"]["available"] += 1
+        if offs_for is not None and offs_against is not None:
+            for seg in segs:
+                seg["offsides"]["for"] += int(offs_for)
+                seg["offsides"]["against"] += int(offs_against)
+                seg["offsides"]["available"] += 1
+
+        # Opponent form points
+        pts = None
+        if season is not None:
+            form = opponent_form.get((league_id, int(season), int(opp_id)))
+            pts = _form_points_last5(form)
+        oc = _outcome(gf, ga)
+        if pts is not None:
+            for seg in segs:
+                seg["opponent_form"]["available"] += 1
+                seg["opponent_form"]["sum_points_last5"] += int(pts)
+                if oc in {"win", "draw", "loss"}:
+                    seg["opponent_form"]["by_outcome"][oc]["available"] += 1
+                    seg["opponent_form"]["by_outcome"][oc]["sum_points_last5"] += int(pts)
+
+    def _finalize(seg: dict[str, Any]) -> dict[str, Any]:
+        played = int(seg["played"])
+        gf_sum = int(seg["goals"]["gf"])
+        ga_sum = int(seg["goals"]["ga"])
+        tg_sum = int(seg["goals"]["total_goals"])
+        over_15 = int(seg["goal_thresholds"]["over_1_5"])
+        over_25 = int(seg["goal_thresholds"]["over_2_5"])
+
+        goals_1h_av = int(seg["goals_1h"]["available"])
+        goals_2h_av = int(seg["goals_2h"]["available"])
+        cards_1h_av = int(seg["cards_1h"]["available"])
+        cards_2h_av = int(seg["cards_2h"]["available"])
+        corners_av = int(seg["corners"]["available"])
+        offs_av = int(seg["offsides"]["available"])
+        opp_av = int(seg["opponent_form"]["available"])
+
+        def _avg(sum_val: int, denom: int) -> float | None:
+            return _add_avg_block(sum_val, denom)
+
+        out = {
+            "played": played,
+            "goals": {
+                "gf": gf_sum,
+                "ga": ga_sum,
+                "total_goals": tg_sum,
+                "gf_avg": _avg(gf_sum, played),
+                "ga_avg": _avg(ga_sum, played),
+                "total_goals_avg": _avg(tg_sum, played),
+                "over_1_5_rate": _avg(over_15, played),
+                "over_2_5_rate": _avg(over_25, played),
+            },
+            "goals_by_half": {
+                "first_half": {
+                    "gf": int(seg["goals_1h"]["gf"]),
+                    "ga": int(seg["goals_1h"]["ga"]),
+                    "gf_avg": _avg(int(seg["goals_1h"]["gf"]), goals_1h_av),
+                    "ga_avg": _avg(int(seg["goals_1h"]["ga"]), goals_1h_av),
+                    "matches_available": goals_1h_av,
+                },
+                "second_half": {
+                    "gf": int(seg["goals_2h"]["gf"]),
+                    "ga": int(seg["goals_2h"]["ga"]),
+                    "gf_avg": _avg(int(seg["goals_2h"]["gf"]), goals_2h_av),
+                    "ga_avg": _avg(int(seg["goals_2h"]["ga"]), goals_2h_av),
+                    "matches_available": goals_2h_av,
+                },
+            },
+            "cards_by_half": {
+                "first_half": {
+                    "yellow_for": int(seg["cards_1h"]["yellow_for"]),
+                    "yellow_against": int(seg["cards_1h"]["yellow_against"]),
+                    "red_for": int(seg["cards_1h"]["red_for"]),
+                    "red_against": int(seg["cards_1h"]["red_against"]),
+                    "yellow_for_avg": _avg(int(seg["cards_1h"]["yellow_for"]), cards_1h_av),
+                    "yellow_against_avg": _avg(int(seg["cards_1h"]["yellow_against"]), cards_1h_av),
+                    "red_for_avg": _avg(int(seg["cards_1h"]["red_for"]), cards_1h_av),
+                    "red_against_avg": _avg(int(seg["cards_1h"]["red_against"]), cards_1h_av),
+                    "matches_available": cards_1h_av,
+                },
+                "second_half": {
+                    "yellow_for": int(seg["cards_2h"]["yellow_for"]),
+                    "yellow_against": int(seg["cards_2h"]["yellow_against"]),
+                    "red_for": int(seg["cards_2h"]["red_for"]),
+                    "red_against": int(seg["cards_2h"]["red_against"]),
+                    "yellow_for_avg": _avg(int(seg["cards_2h"]["yellow_for"]), cards_2h_av),
+                    "yellow_against_avg": _avg(int(seg["cards_2h"]["yellow_against"]), cards_2h_av),
+                    "red_for_avg": _avg(int(seg["cards_2h"]["red_for"]), cards_2h_av),
+                    "red_against_avg": _avg(int(seg["cards_2h"]["red_against"]), cards_2h_av),
+                    "matches_available": cards_2h_av,
+                },
+            },
+            "corners_totals": {
+                "for": int(seg["corners"]["for"]),
+                "against": int(seg["corners"]["against"]),
+                "for_avg": _avg(int(seg["corners"]["for"]), corners_av),
+                "against_avg": _avg(int(seg["corners"]["against"]), corners_av),
+                "matches_available": corners_av,
+            },
+            "offsides_totals": {
+                "for": int(seg["offsides"]["for"]),
+                "against": int(seg["offsides"]["against"]),
+                "for_avg": _avg(int(seg["offsides"]["for"]), offs_av),
+                "against_avg": _avg(int(seg["offsides"]["against"]), offs_av),
+                "matches_available": offs_av,
+            },
+            "opponent_strength": {
+                "matches_available": opp_av,
+                "avg_points_last5": _avg(int(seg["opponent_form"]["sum_points_last5"]), opp_av),
+                "by_outcome": {
+                    k: {
+                        "matches_available": int(v["available"]),
+                        "avg_points_last5": _avg(int(v["sum_points_last5"]), int(v["available"])),
+                    }
+                    for k, v in (seg["opponent_form"]["by_outcome"] or {}).items()
+                },
+            },
+        }
+        return out
+
+    return {
+        "ok": True,
+        "team_id": int(team_id),
+        "window": {"last_n": int(n), "played": int(overall["played"]), "as_of_utc": _to_iso_or_none(cutoff)},
+        "overall": _finalize(overall),
+        "home": _finalize(home),
+        "away": _finalize(away),
+    }
+
+
 @app.get(
     "/v1/teams/{team_id}/fixtures",
     dependencies=[Depends(require_access), Depends(require_only_query_params({"from_date", "to_date", "status", "limit"}))],

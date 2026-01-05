@@ -279,6 +279,92 @@ Not:
 - Aynı ligde farklı kickoff saatleri varsa: `leagues[]` içinde **farklı satırlar** olarak gelir.\n
 - Aynı kickoff saatinde birden fazla maç varsa: hepsi aynı `matches[]` içinde olur.
 
+---
+
+### 2.2) v2 team breakdown (last N finished matches, all competitions)
+
+#### `GET /v2/teams/{team_id}/breakdown`
+
+Amaç:
+- Bir takımın **tüm turnuvalardaki** son `N` **tamamlanmış** maçından (sadece `FT/AET/PEN`) deterministik özet üretmek
+- 1Y/2Y ayrımı:
+  - **goals**: fixture `score.halftime/fulltime` varsa oradan; yoksa events timing (<=45 / >45)
+  - **cards**: events timing (<=45 / >45)
+- **corners/offsides**: sadece total (half split yok)
+- Ekstra: **home/away split** ve **rakip form gücü** (varsa)
+
+Query params (strict):
+- `last_n` (opsiyonel, default: 20, cap: 50)
+- `as_of_date=YYYY-MM-DD` (opsiyonel; verilirse o günün UTC end-of-day’e kadar olan maçlar)
+
+Önemli notlar:
+- Bu endpoint **DB-only**’dir (quota tüketmez)
+- “Rakip gücü” için `core.team_statistics.form` verisi yoksa ilgili maçlar `opponent_strength.matches_available` sayısına girmez
+- “Corners/offsides” için fixture statistics yoksa ilgili maçlar `matches_available` sayısına girmez
+
+Örnek:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v2/teams/489/breakdown?last_n=20&as_of_date=2026-01-05"
+```
+
+Örnek response (özet):
+
+```json
+{
+  "ok": true,
+  "team_id": 489,
+  "window": {
+    "last_n": 20,
+    "played": 20,
+    "as_of_utc": "2026-01-05T23:59:59+00:00"
+  },
+  "overall": {
+    "played": 20,
+    "goals": {
+      "gf": 31,
+      "ga": 18,
+      "total_goals": 49,
+      "gf_avg": 1.55,
+      "ga_avg": 0.9,
+      "total_goals_avg": 2.45,
+      "over_1_5_rate": 0.7,
+      "over_2_5_rate": 0.45
+    },
+    "goals_by_half": {
+      "first_half": {"gf": 14, "ga": 6, "gf_avg": 0.7, "ga_avg": 0.3, "matches_available": 20},
+      "second_half": {"gf": 17, "ga": 12, "gf_avg": 0.85, "ga_avg": 0.6, "matches_available": 20}
+    },
+    "cards_by_half": {
+      "first_half": {
+        "yellow_for": 11, "yellow_against": 14, "red_for": 0, "red_against": 1,
+        "yellow_for_avg": 0.55, "yellow_against_avg": 0.7, "red_for_avg": 0.0, "red_against_avg": 0.05,
+        "matches_available": 20
+      },
+      "second_half": {
+        "yellow_for": 19, "yellow_against": 17, "red_for": 1, "red_against": 0,
+        "yellow_for_avg": 0.95, "yellow_against_avg": 0.85, "red_for_avg": 0.05, "red_against_avg": 0.0,
+        "matches_available": 20
+      }
+    },
+    "corners_totals": {"for": 106, "against": 92, "for_avg": 5.3, "against_avg": 4.6, "matches_available": 18},
+    "offsides_totals": {"for": 41, "against": 38, "for_avg": 2.2778, "against_avg": 2.1111, "matches_available": 18},
+    "opponent_strength": {
+      "matches_available": 16,
+      "avg_points_last5": 6.125,
+      "by_outcome": {
+        "win": {"matches_available": 10, "avg_points_last5": 6.4},
+        "draw": {"matches_available": 3, "avg_points_last5": 5.6667},
+        "loss": {"matches_available": 3, "avg_points_last5": 5.3333}
+      }
+    }
+  },
+  "home": {"played": 10},
+  "away": {"played": 10}
+}
+```
+
 ### 3) v1 team fixtures (takım sayfası için)
 
 #### `GET /v1/teams/{team_id}/fixtures`
