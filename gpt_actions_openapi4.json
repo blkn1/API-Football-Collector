@@ -1,0 +1,325 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Zinalyze Read API (Stats + Fixtures)",
+    "version": "4.0.0",
+    "description": "Focused OpenAPI spec for stats-only flows and upcoming fixtures. Auth: Basic (READ_API_BASIC_USER / READ_API_BASIC_PASSWORD). Strict query params: unknown query parameters return 400."
+  },
+  "servers": [{ "url": "https://readapi.zinalyze.pro" }],
+  "components": {
+    "securitySchemes": {
+      "basicAuth": { "type": "http", "scheme": "basic" }
+    },
+    "schemas": {
+      "UnknownQueryParamsError": {
+        "type": "object",
+        "description": "Returned when a client sends query parameters that are not supported by the endpoint.",
+        "properties": {
+          "error": { "type": "string", "enum": ["unknown_query_params"] },
+          "unknown": { "type": "array", "items": { "type": "string" } },
+          "allowed": { "type": "array", "items": { "type": "string" } }
+        },
+        "required": ["error", "unknown", "allowed"],
+        "additionalProperties": true
+      },
+      "HTTPExceptionDetailEnvelope": {
+        "type": "object",
+        "description": "FastAPI HTTPException envelope. Many errors are returned as {\"detail\": ...}.",
+        "properties": {
+          "detail": {
+            "anyOf": [{ "type": "string" }, { "$ref": "#/components/schemas/UnknownQueryParamsError" }, { "type": "object" }]
+          }
+        },
+        "required": ["detail"],
+        "additionalProperties": true
+      },
+      "Paging": {
+        "type": "object",
+        "properties": {
+          "limit": { "type": "integer" },
+          "offset": { "type": "integer" },
+          "total": { "type": "integer" },
+          "next_offset": { "type": "integer" }
+        },
+        "additionalProperties": true
+      },
+      "V1Team": {
+        "type": "object",
+        "description": "Team shape returned by GET /v1/teams. Extra fields are allowed.",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "code": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "country": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "founded": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "national": { "anyOf": [{ "type": "boolean" }, { "type": "null" }] },
+          "logo": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "venue_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "required": ["id", "name"],
+        "additionalProperties": true
+      },
+      "V1TeamsArray": { "type": "array", "items": { "$ref": "#/components/schemas/V1Team" } },
+      "TeamMetricsResponse": {
+        "type": "object",
+        "description": "Aggregated per-team features computed from completed fixtures and core.fixture_statistics (includes corner_kicks average when available). Shape is stable but allows extra fields.",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "team_id": { "type": "integer" },
+          "window": { "type": "object" },
+          "results": { "type": "object" },
+          "goals": { "type": "object" },
+          "match_stats_avg": { "type": "object" },
+          "match_stats_sum": { "type": "object" },
+          "match_stats_count": { "type": "object" },
+          "fixtures_sample": { "type": "array", "items": { "type": "object" } }
+        },
+        "required": ["ok", "team_id", "window"],
+        "additionalProperties": true
+      },
+      "TeamStatisticsItem": {
+        "type": "object",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "league_name": { "type": "string" },
+          "season": { "type": "integer" },
+          "team_id": { "type": "integer" },
+          "team_name": { "type": "string" },
+          "form": { "type": "string" },
+          "raw": { "type": "object" },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "required": ["league_id", "league_name", "season", "team_id", "team_name"],
+        "additionalProperties": true
+      },
+      "TeamStatisticsResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "league_id": { "type": "integer" },
+          "season": { "type": "integer" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/TeamStatisticsItem" } },
+          "paging": { "$ref": "#/components/schemas/Paging" }
+        },
+        "required": ["ok", "league_id", "season", "items"],
+        "additionalProperties": true
+      },
+      "V2FixturesMatch": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "round": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "date_utc": { "type": "string", "format": "date-time" },
+          "timestamp_utc": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "status_short": { "type": "string" },
+          "status_long": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "home_team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "home_team_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "away_team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "away_team_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "required": ["id", "date_utc", "status_short"],
+        "additionalProperties": true
+      },
+      "V2FixturesLeagueBucket": {
+        "type": "object",
+        "description": "One bucket per (league_id, kickoff_time). The same league can appear multiple times if kickoff differs.",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "league_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "country_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "season": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "match_count": { "type": "integer" },
+          "has_matches": { "type": "boolean" },
+          "matches": { "type": "array", "items": { "$ref": "#/components/schemas/V2FixturesMatch" } }
+        },
+        "required": ["league_id", "match_count", "has_matches", "matches"],
+        "additionalProperties": true
+      },
+      "V2FixturesResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "date_range": {
+            "type": "object",
+            "properties": {
+              "from": { "type": "string", "format": "date" },
+              "to": { "type": "string", "format": "date" }
+            },
+            "required": ["from", "to"],
+            "additionalProperties": true
+          },
+          "total_match_count": { "type": "integer" },
+          "leagues": { "type": "array", "items": { "$ref": "#/components/schemas/V2FixturesLeagueBucket" } },
+          "updated_at_utc": { "type": "string", "format": "date-time" }
+        },
+        "required": ["ok", "date_range", "total_match_count", "leagues", "updated_at_utc"],
+        "additionalProperties": true
+      },
+      "V2TeamBreakdownResponse": {
+        "type": "object",
+        "description": "Deterministic aggregate breakdown for a team's last N completed matches across ALL competitions. Schema is intentionally flexible (nested metrics objects may grow).",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "team_id": { "type": "integer" },
+          "window": { "type": "object" },
+          "overall": { "type": "object" },
+          "home": { "type": "object" },
+          "away": { "type": "object" },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+        },
+        "required": ["ok", "team_id", "window", "overall", "home", "away"],
+        "additionalProperties": true
+      },
+      "V2MatchupPredictionItem": {
+        "type": "object",
+        "properties": {
+          "home_goals": { "type": "integer" },
+          "away_goals": { "type": "integer" },
+          "probability": { "type": "number" },
+          "label": { "type": "string", "enum": ["most_likely", "alternative", "unexpected"] }
+        },
+        "required": ["home_goals", "away_goals", "probability", "label"],
+        "additionalProperties": true
+      },
+      "V2MatchupPredictResponse": {
+        "type": "object",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "inputs": { "type": "object" },
+          "model": { "type": "object" },
+          "window": { "type": "object" },
+          "predictions": { "type": "array", "items": { "$ref": "#/components/schemas/V2MatchupPredictionItem" } },
+          "evidence": { "type": "object" },
+          "warnings": { "type": "array", "items": { "type": "string" } },
+          "updated_at_utc": { "type": "string", "format": "date-time" }
+        },
+        "required": ["ok", "inputs", "model", "window", "predictions", "updated_at_utc"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "security": [{ "basicAuth": [] }],
+  "paths": {
+    "/v1/teams": {
+      "get": {
+        "summary": "Lookup teams (DB-only) — use to get team_id",
+        "description": "Strict query params: only search, league_id, limit are accepted. Use this only for team_id lookup (no v2 equivalent).",
+        "operationId": "getTeamsLookup",
+        "parameters": [
+          { "name": "search", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "league_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 50, "minimum": 1, "maximum": 200 } }
+        ],
+        "responses": {
+          "200": { "description": "Teams list (array, no envelope)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V1TeamsArray" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v2/teams/{team_id}/breakdown": {
+      "get": {
+        "summary": "Primary stats (v2): last-N deterministic team breakdown",
+        "description": "Strict query params: only last_n, as_of_date are accepted. Completed matches only (FT/AET/PEN).",
+        "operationId": "getTeamBreakdownV2",
+        "parameters": [
+          { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "last_n", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 50 } },
+          { "name": "as_of_date", "in": "query", "required": false, "schema": { "type": "string", "format": "date" }, "description": "Optional UTC cutoff date (YYYY-MM-DD), end-of-day inclusive." }
+        ],
+        "responses": {
+          "200": { "description": "Team breakdown payload (flexible)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2TeamBreakdownResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v1/teams/{team_id}/metrics": {
+      "get": {
+        "summary": "Secondary stats (v1): team metrics / features (use only if breakdown is not enough)",
+        "description": "Strict query params: only last_n, as_of_date are accepted.",
+        "operationId": "getTeamMetricsV1",
+        "parameters": [
+          { "name": "team_id", "in": "path", "required": true, "schema": { "type": "integer" } },
+          { "name": "last_n", "in": "query", "required": false, "schema": { "type": "integer", "default": 20, "minimum": 1, "maximum": 50 } },
+          { "name": "as_of_date", "in": "query", "required": false, "schema": { "type": "string", "format": "date" }, "description": "Optional UTC cutoff date (YYYY-MM-DD), end-of-day inclusive." }
+        ],
+        "responses": {
+          "200": { "description": "Team metrics payload", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamMetricsResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/read/team_statistics": {
+      "get": {
+        "summary": "League-season stats (/read): raw team statistics + form (use only if you need league+season context)",
+        "description": "Strict query params: only league_id, season, team_id, include_raw, limit, offset are accepted.",
+        "operationId": "readTeamStatistics",
+        "parameters": [
+          { "name": "league_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "season", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "team_id", "in": "query", "required": false, "schema": { "type": "integer" } },
+          { "name": "include_raw", "in": "query", "required": false, "schema": { "type": "boolean", "default": true } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "default": 200, "minimum": 1, "maximum": 2000 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "default": 0, "minimum": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Team statistics envelope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TeamStatisticsResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        }
+      }
+    },
+    "/v2/fixtures": {
+      "get": {
+        "summary": "Upcoming fixtures (v2): tracked-only NS fixtures grouped by (league_id, kickoff_time)",
+        "description": "Strict query params: only date_from, date_to are accepted. Returns NS fixtures within UTC date range, restricted to tracked leagues.",
+        "operationId": "getFixturesV2",
+        "parameters": [
+          { "name": "date_from", "in": "query", "required": true, "schema": { "type": "string", "format": "date" } },
+          { "name": "date_to", "in": "query", "required": true, "schema": { "type": "string", "format": "date" } }
+        ],
+        "responses": {
+          "200": { "description": "V2 fixtures response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2FixturesResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters / invalid date range (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v2/matchup/predict": {
+      "get": {
+        "summary": "Matchup scoreline prediction (v2): anomaly-aware, opponent-strength-adjusted, last-N completed matches",
+        "description": "Strict query params: only home_team_id, away_team_id, last_n, as_of_date are accepted. DB-only. Returns 1 most_likely + 2 alternative + 3 unexpected scorelines.",
+        "operationId": "getMatchupPredictV2",
+        "parameters": [
+          { "name": "home_team_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "away_team_id", "in": "query", "required": true, "schema": { "type": "integer" } },
+          { "name": "last_n", "in": "query", "required": false, "schema": { "type": "integer", "default": 5, "minimum": 1, "maximum": 10 } },
+          { "name": "as_of_date", "in": "query", "required": false, "schema": { "type": "string", "format": "date" }, "description": "Optional UTC cutoff date (YYYY-MM-DD), end-of-day inclusive." }
+        ],
+        "responses": {
+          "200": { "description": "Matchup prediction payload", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2MatchupPredictResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters / insufficient history (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    }
+  }
+}
+
+

@@ -215,8 +215,8 @@ curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
 Amaç:
 - Seçilen UTC tarih aralığında **başlamamış (NS)** maçları al
 - **Tracked ligler** ile sınırla (kaynak: `config/jobs/daily.yaml -> tracked_leagues`)
-- Her lig için sadece **en erken kickoff** saatindeki maç(lar)ı döndür
-- Ligleri global olarak “en erken kickoff”a göre sırala
+- Gruplama: **(league_id + kickoff_time)** (aynı lig farklı kickoff saatlerinde tekrar listelenebilir)
+- Global sıralama: kickoff zamanına göre
 
 Query params:
 - `date_from=YYYY-MM-DD` (zorunlu, UTC)
@@ -366,6 +366,65 @@ curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
 ```
 
 ### 3) v1 team fixtures (takım sayfası için)
+
+---
+
+### 2.3) v2 matchup predict (home vs away, last N, anomaly-aware)
+
+#### `GET /v2/matchup/predict`
+
+Amaç:
+- İki takım için (home/away) **son N tamamlanmış maç** üzerinden (FT/AET/PEN) deterministik “maç sonucu skorline” tahmini üretmek
+- **Anomaliyi** (aşırı uç skorlar) tamamen silmeden **ağırlığını düşürerek** hesaba katmak
+- Rakip gücünü (form points) kullanarak “kolay rakip / zor rakip” bias’ını azaltmak
+
+Query params (strict):
+- `home_team_id` (zorunlu)
+- `away_team_id` (zorunlu)
+- `last_n` (opsiyonel; default: 5; cap: config `matchup_model.max_last_n`)
+- `as_of_date=YYYY-MM-DD` (opsiyonel; verilirse o günün UTC end-of-day’e kadar olan maçlar)
+
+Kurallar (özet):
+- Data: **DB-only** (quota tüketmez)
+- Scope: **tüm turnuvalar** (takımın oynadığı tüm league_id’ler; sadece tamamlanmış maçlar)
+- Model:
+  - `expected_goals_home/away` üretir
+  - 0..max_goals grid üzerinde Poisson skorline olasılıkları hesaplar
+  - Çıktı: **1 most_likely + 2 alternative + 3 unexpected** (toplam 6 skorline)
+
+Önemli notlar:
+- `insufficient_history`: takımlardan biri için “tamamlanmış maç” bulunamazsa 400 döner
+- `warnings[]` alanı “düşük örneklem / rakip form eksikliği” gibi durumları bildirir (client confidence için kullan)
+
+Örnek:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v2/matchup/predict?home_team_id=42&away_team_id=40&last_n=5&as_of_date=2026-01-05"
+```
+
+Örnek response (özet):
+
+```json
+{
+  "ok": true,
+  "inputs": {"home_team_id": 42, "away_team_id": 40, "last_n": 5, "as_of_utc": "2026-01-05T23:59:59+00:00"},
+  "model": {
+    "method": "poisson_independent",
+    "expected_goals_home": 1.62,
+    "expected_goals_away": 1.08
+  },
+  "predictions": [
+    {"home_goals": 1, "away_goals": 1, "probability": 0.116, "label": "most_likely"},
+    {"home_goals": 2, "away_goals": 1, "probability": 0.094, "label": "alternative"},
+    {"home_goals": 1, "away_goals": 0, "probability": 0.087, "label": "alternative"},
+    {"home_goals": 0, "away_goals": 3, "probability": 0.026, "label": "unexpected"},
+    {"home_goals": 3, "away_goals": 3, "probability": 0.021, "label": "unexpected"},
+    {"home_goals": 4, "away_goals": 0, "probability": 0.020, "label": "unexpected"}
+  ],
+  "warnings": ["missing_opponent_form_points_for_some_matches"]
+}
+```
 
 #### `GET /v1/teams/{team_id}/fixtures`
 Query params:

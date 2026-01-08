@@ -1,0 +1,40 @@
+version: 1
+
+# Read API v2 behavior knobs. Keep this config-driven so we can tune without code changes.
+matchup_model:
+  # How many completed matches to use (endpoint will clamp to this max)
+  max_last_n: 10
+
+  # Completed fixture statuses to include for history
+  final_statuses: ["FT", "AET", "PEN"]
+
+  # Robust anomaly detection on total goals per match using MAD-based z-score.
+  anomaly_z_threshold: 2.5
+  anomaly_weight_floor: 0.35
+
+  # Recency weighting half-life expressed in "matches" (not days).
+  # Example: half_life_matches=3 => 4th most recent match weight ~= 0.5
+  recency_half_life_matches: 3.0
+
+  # Opponent-strength adjustment baseline.
+  # Opponent strength is derived from last5 form points (W=3,D=1,L=0), range 0..15.
+  opponent_points_baseline: 7.0
+  opponent_factor_min: 0.6
+  opponent_factor_max: 1.6
+
+  # Home advantage multiplier applied to lambda_home
+  home_advantage: 1.10
+
+  # Poisson scoreline enumeration parameters
+  baseline_goals_per_team: 1.35
+  lambda_min: 0.2
+  lambda_max: 4.0
+  max_goals: 6
+
+  # Ensure "unexpected" still has non-trivial probability mass.
+  min_prob_unexpected: 0.02
+
+  # Prefer split rates (home/away) only if enough samples exist in the window.
+  min_matches_for_split: 2
+
+

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import date as Date, datetime, timedelta, timezone
 import json
+import math
 import os
 import re
 from pathlib import Path
@@ -200,6 +201,82 @@ def _get_tracked_league_ids() -> set[int]:
             except Exception:
                 continue
     return ids
+
+
+def _load_read_api_v2_config() -> dict[str, Any]:
+    """
+    Load config/read_api_v2.yaml (repo config) for v2 behavior knobs.
+    Returns {} if config is missing/invalid.
+    """
+    project_root = Path(__file__).resolve().parents[2]
+    cfg_path = Path(os.getenv("READ_API_V2_CONFIG", str(project_root / "config" / "read_api_v2.yaml")))
+    if not cfg_path.exists():
+        return {}
+    try:
+        return yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def _matchup_model_cfg() -> dict[str, Any]:
+    cfg = _load_read_api_v2_config()
+    mm = cfg.get("matchup_model") if isinstance(cfg, dict) else None
+    return mm if isinstance(mm, dict) else {}
+
+
+def _cfg_float(cfg: dict[str, Any], key: str, default: float) -> float:
+    try:
+        v = cfg.get(key, default)
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def _cfg_int(cfg: dict[str, Any], key: str, default: int) -> int:
+    try:
+        v = cfg.get(key, default)
+        return int(v)
+    except Exception:
+        return int(default)
+
+
+def _median(vals: list[float]) -> float:
+    if not vals:
+        return 0.0
+    s = sorted(vals)
+    n = len(s)
+    mid = n // 2
+    if n % 2 == 1:
+        return float(s[mid])
+    return float((s[mid - 1] + s[mid]) / 2.0)
+
+
+def _mad(vals: list[float], *, center: float) -> float:
+    if not vals:
+        return 0.0
+    devs = [abs(float(x) - float(center)) for x in vals]
+    return float(_median(devs))
+
+
+def _robust_z_mad(x: float, *, med: float, mad: float) -> float:
+    # Consistent with normal distribution scaling.
+    if mad <= 0:
+        return 0.0
+    return float(0.6745 * (float(x) - float(med)) / float(mad))
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return float(max(float(lo), min(float(x), float(hi))))
+
+
+def _poisson_p(k: int, lam: float) -> float:
+    lam = float(lam)
+    if lam < 0:
+        return 0.0
+    try:
+        return float(math.exp(-lam) * (lam**int(k)) / math.factorial(int(k)))
+    except Exception:
+        return 0.0
 
 
 def _resolve_league_ids(*, league_id: int | None, country: str | None, season: int | None) -> list[int]:
@@ -500,6 +577,375 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
         "total_match_count": int(total_match_count),
         "leagues": leagues_out,
         "updated_at_utc": now.isoformat(),
+    }
+
+
+async def _fetch_last_n_completed_fixtures_for_team(
+    *,
+    team_id: int,
+    cutoff: datetime,
+    last_n: int,
+    final_statuses: list[str],
+) -> list[tuple[Any, ...]]:
+    sql_text = """
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.home_team_id,
+      f.away_team_id,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    WHERE (f.home_team_id = %s OR f.away_team_id = %s)
+      AND f.status_short = ANY(%s)
+      AND f.date <= %s
+    ORDER BY f.date DESC, f.id DESC
+    LIMIT %s
+    """
+    return await _fetchall_async(sql_text, (int(team_id), int(team_id), list(final_statuses), cutoff, int(last_n)))
+
+
+async def _fetch_forms_for_triples(triples: list[tuple[int, int, int]]) -> dict[tuple[int, int, int], Any]:
+    """
+    Fetch core.team_statistics.form for (league_id, season, team_id) tuples.
+    Returns mapping (league_id, season, team_id) -> form.
+    """
+    if not triples:
+        return {}
+    # Small N: build a compact IN (...) list.
+    placeholders = ",".join(["(%s,%s,%s)"] * len(triples))
+    params: list[Any] = []
+    for league_id, season, team_id in triples:
+        params.extend([int(league_id), int(season), int(team_id)])
+    sql_text = f"""
+    SELECT league_id, season, team_id, form
+    FROM core.team_statistics
+    WHERE (league_id, season, team_id) IN ({placeholders})
+    """
+    rows = await _fetchall_async(sql_text, tuple(params))
+    out: dict[tuple[int, int, int], Any] = {}
+    for r in rows:
+        if not r or len(r) < 4:
+            continue
+        out[(int(r[0]), int(r[1]), int(r[2]))] = r[3]
+    return out
+
+
+def _team_match_history(
+    *,
+    team_id: int,
+    rows: list[tuple[Any, ...]],
+    forms: dict[tuple[int, int, int], Any],
+    cfg: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Convert fixture rows into a normalized history list (most recent first).
+    Applies:
+    - opponent-strength adjustment factor (from opponent form points)
+    - anomaly-aware down-weighting (MAD z-score on total_goals)
+    - recency weighting (half-life in matches)
+    """
+    opp_baseline = _cfg_float(cfg, "opponent_points_baseline", 7.0)
+    opp_min = _cfg_float(cfg, "opponent_factor_min", 0.6)
+    opp_max = _cfg_float(cfg, "opponent_factor_max", 1.6)
+    half_life = _cfg_float(cfg, "recency_half_life_matches", 3.0)
+    z_thr = _cfg_float(cfg, "anomaly_z_threshold", 2.5)
+    w_floor = _cfg_float(cfg, "anomaly_weight_floor", 0.35)
+
+    items: list[dict[str, Any]] = []
+    totals: list[float] = []
+
+    for idx, r in enumerate(rows):
+        # Row shape:
+        # (id, league_id, season, date, home_team_id, away_team_id, goals_home, goals_away, updated_at)
+        fid = int(r[0])
+        league_id = _to_int_or_none(r[1])
+        season = _to_int_or_none(r[2])
+        dt = r[3]
+        home_id = _to_int_or_none(r[4])
+        away_id = _to_int_or_none(r[5])
+        gh = _to_int_or_none(r[6])
+        ga = _to_int_or_none(r[7])
+
+        if league_id is None or season is None or home_id is None or away_id is None:
+            continue
+        if gh is None or ga is None:
+            continue
+        if team_id not in (home_id, away_id):
+            continue
+
+        is_home = bool(home_id == int(team_id))
+        gf = int(gh if is_home else ga)
+        conceded = int(ga if is_home else gh)
+        opp_id = int(away_id if is_home else home_id)
+
+        form = forms.get((int(league_id), int(season), int(opp_id)))
+        opp_pts = _form_points_last5(form)
+        opp_factor = float(opp_pts) / float(opp_baseline) if (opp_pts is not None and opp_baseline > 0) else 1.0
+        opp_factor = _clamp(opp_factor, opp_min, opp_max)
+
+        # Recency weight: idx=0 is most recent.
+        w_rec = float(0.5 ** (float(idx) / float(half_life))) if half_life > 0 else 1.0
+
+        total_goals = float(gf + conceded)
+        totals.append(total_goals)
+
+        items.append(
+            {
+                "fixture_id": fid,
+                "league_id": int(league_id),
+                "season": int(season),
+                "date_utc": _to_iso_or_none(dt),
+                "is_home": bool(is_home),
+                "goals_for": int(gf),
+                "goals_against": int(conceded),
+                "opponent_team_id": int(opp_id),
+                "opponent_form": (str(form) if form is not None else None),
+                "opponent_points_last5": (_to_int_or_none(opp_pts) if opp_pts is not None else None),
+                "opponent_factor": float(opp_factor),
+                "total_goals": float(total_goals),
+                "recency_weight": float(w_rec),
+                # anomaly_* will be filled after we compute MAD stats
+                "anomaly_z": None,
+                "anomaly_weight": None,
+                "weight": None,
+                # adjusted contributions (filled after anomaly)
+                "goals_for_adj": None,
+                "goals_against_adj": None,
+            }
+        )
+
+    med = _median(totals)
+    mad = _mad(totals, center=med)
+
+    for it in items:
+        z = _robust_z_mad(float(it["total_goals"]), med=med, mad=mad)
+        az = abs(float(z))
+        if az <= z_thr:
+            w_anom = 1.0
+        else:
+            # Down-weight outliers but never remove them (deterministic).
+            w_anom = max(float(w_floor), float(z_thr) / float(az)) if az > 0 else 1.0
+
+        w = float(it["recency_weight"]) * float(w_anom)
+
+        gf = float(it["goals_for"])
+        ga = float(it["goals_against"])
+        opp_factor = float(it["opponent_factor"])
+
+        # Opponent-strength adjustment (simple, deterministic):
+        # - scoring vs stronger opponent counts slightly more (multiplier)
+        # - conceding vs stronger opponent counts slightly less (divide)
+        it["anomaly_z"] = float(z)
+        it["anomaly_weight"] = float(w_anom)
+        it["weight"] = float(w)
+        it["goals_for_adj"] = float(gf * opp_factor)
+        it["goals_against_adj"] = float(ga / opp_factor) if opp_factor > 0 else float(ga)
+
+    return items
+
+
+def _weighted_rate(items: list[dict[str, Any]], *, role: str | None) -> dict[str, Any]:
+    sel = items
+    if role == "home":
+        sel = [x for x in items if bool(x.get("is_home"))]
+    elif role == "away":
+        sel = [x for x in items if not bool(x.get("is_home"))]
+
+    w_sum = sum(float(x.get("weight") or 0.0) for x in sel)
+    if w_sum <= 0 or not sel:
+        return {"played": int(len(sel)), "weight_sum": float(w_sum), "gf_avg": None, "ga_avg": None}
+
+    gf_sum = sum(float(x.get("weight") or 0.0) * float(x.get("goals_for_adj") or 0.0) for x in sel)
+    ga_sum = sum(float(x.get("weight") or 0.0) * float(x.get("goals_against_adj") or 0.0) for x in sel)
+
+    return {
+        "played": int(len(sel)),
+        "weight_sum": float(w_sum),
+        "gf_avg": float(gf_sum / w_sum),
+        "ga_avg": float(ga_sum / w_sum),
+    }
+
+
+@app.get(
+    "/v2/matchup/predict",
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"home_team_id", "away_team_id", "last_n", "as_of_date"}))],
+)
+async def matchup_predict_v2(
+    home_team_id: int,
+    away_team_id: int,
+    last_n: int = 5,
+    as_of_date: str | None = None,
+) -> dict[str, Any]:
+    """
+    Deterministic v2 matchup predictions (DB-only).
+
+    - History: last N completed matches (FT/AET/PEN), all competitions (home+away)
+    - Adjustments: opponent-strength (form points last5) + anomaly down-weighting (MAD z-score) + recency weighting
+    - Output: 1 most likely + 2 alternative + 3 unexpected scorelines
+    """
+    if int(home_team_id) == int(away_team_id):
+        raise HTTPException(status_code=400, detail="home_and_away_must_differ")
+
+    cfg = _matchup_model_cfg()
+    max_last_n = _cfg_int(cfg, "max_last_n", 10)
+    n = max(1, min(int(last_n), int(max_last_n)))
+
+    final_statuses_raw = cfg.get("final_statuses")
+    final_statuses = [str(x) for x in final_statuses_raw] if isinstance(final_statuses_raw, list) and final_statuses_raw else ["FT", "AET", "PEN"]
+
+    if as_of_date is not None:
+        try:
+            d = _parse_ymd(as_of_date)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        cutoff = _utc_end_of_day(d)
+    else:
+        cutoff = datetime.now(timezone.utc)
+
+    home_rows = await _fetch_last_n_completed_fixtures_for_team(team_id=int(home_team_id), cutoff=cutoff, last_n=n, final_statuses=final_statuses)
+    away_rows = await _fetch_last_n_completed_fixtures_for_team(team_id=int(away_team_id), cutoff=cutoff, last_n=n, final_statuses=final_statuses)
+
+    if not home_rows or not away_rows:
+        raise HTTPException(status_code=400, detail="insufficient_history")
+
+    # Collect opponent triples for form lookup (league_id, season, opponent_team_id)
+    triples_set: set[tuple[int, int, int]] = set()
+    for team_id, rows in ((int(home_team_id), home_rows), (int(away_team_id), away_rows)):
+        for r in rows:
+            league_id = _to_int_or_none(r[1])
+            season = _to_int_or_none(r[2])
+            home_id = _to_int_or_none(r[4])
+            away_id = _to_int_or_none(r[5])
+            if league_id is None or season is None or home_id is None or away_id is None:
+                continue
+            if team_id not in (home_id, away_id):
+                continue
+            opp_id = int(away_id if home_id == team_id else home_id)
+            triples_set.add((int(league_id), int(season), int(opp_id)))
+
+    forms = await _fetch_forms_for_triples(sorted(list(triples_set)))
+
+    home_hist = _team_match_history(team_id=int(home_team_id), rows=home_rows, forms=forms, cfg=cfg)
+    away_hist = _team_match_history(team_id=int(away_team_id), rows=away_rows, forms=forms, cfg=cfg)
+
+    min_split = _cfg_int(cfg, "min_matches_for_split", 2)
+    home_overall = _weighted_rate(home_hist, role=None)
+    home_home = _weighted_rate(home_hist, role="home")
+    away_overall = _weighted_rate(away_hist, role=None)
+    away_away = _weighted_rate(away_hist, role="away")
+
+    # Select role-aware rates when possible; fallback to overall.
+    home_gf = home_home["gf_avg"] if home_home["played"] >= min_split and home_home["gf_avg"] is not None else home_overall["gf_avg"]
+    home_ga = home_home["ga_avg"] if home_home["played"] >= min_split and home_home["ga_avg"] is not None else home_overall["ga_avg"]
+    away_gf = away_away["gf_avg"] if away_away["played"] >= min_split and away_away["gf_avg"] is not None else away_overall["gf_avg"]
+    away_ga = away_away["ga_avg"] if away_away["played"] >= min_split and away_away["ga_avg"] is not None else away_overall["ga_avg"]
+
+    if home_gf is None or home_ga is None or away_gf is None or away_ga is None:
+        raise HTTPException(status_code=400, detail="insufficient_history")
+
+    baseline = _cfg_float(cfg, "baseline_goals_per_team", 1.35)
+    home_adv = _cfg_float(cfg, "home_advantage", 1.10)
+    lam_min = _cfg_float(cfg, "lambda_min", 0.2)
+    lam_max = _cfg_float(cfg, "lambda_max", 4.0)
+
+    # Dimensionless factors around baseline.
+    lam_home = float(baseline) * (float(home_gf) / float(baseline)) * (float(away_ga) / float(baseline)) * float(home_adv)
+    lam_away = float(baseline) * (float(away_gf) / float(baseline)) * (float(home_ga) / float(baseline))
+    lam_home = _clamp(lam_home, lam_min, lam_max)
+    lam_away = _clamp(lam_away, lam_min, lam_max)
+
+    max_goals = _cfg_int(cfg, "max_goals", 6)
+    min_prob_unexpected = _cfg_float(cfg, "min_prob_unexpected", 0.02)
+
+    # Scoreline grid
+    grid: list[dict[str, Any]] = []
+    total_p = 0.0
+    for hg in range(0, int(max_goals) + 1):
+        ph = _poisson_p(hg, lam_home)
+        for ag in range(0, int(max_goals) + 1):
+            p = float(ph) * float(_poisson_p(ag, lam_away))
+            total_p += p
+            grid.append({"home_goals": int(hg), "away_goals": int(ag), "probability": float(p)})
+
+    if total_p <= 0:
+        raise HTTPException(status_code=400, detail="prediction_failed")
+
+    for x in grid:
+        x["probability"] = float(x["probability"]) / float(total_p)
+
+    grid.sort(key=lambda x: float(x["probability"]), reverse=True)
+
+    top = grid[:3]
+    rest = grid[3:]
+
+    preds: list[dict[str, Any]] = []
+    preds.append({**top[0], "label": "most_likely"})
+    for x in top[1:3]:
+        preds.append({**x, "label": "alternative"})
+
+    unexpected_candidates = [x for x in rest if float(x["probability"]) >= float(min_prob_unexpected)]
+    # “Unexpected”: lowest-probability-but-still-plausible outcomes.
+    unexpected_candidates.sort(key=lambda x: float(x["probability"]))
+    unexpected = unexpected_candidates[:3]
+    if len(unexpected) < 3:
+        # Fallback: take the lowest probability remaining outcomes (still deterministic).
+        rest_sorted_low = sorted(rest, key=lambda x: float(x["probability"]))
+        for x in rest_sorted_low:
+            if x in unexpected:
+                continue
+            unexpected.append(x)
+            if len(unexpected) >= 3:
+                break
+
+    for x in unexpected[:3]:
+        preds.append({**x, "label": "unexpected"})
+
+    warnings: list[str] = []
+    if home_overall["played"] < n:
+        warnings.append("home_sample_smaller_than_requested")
+    if away_overall["played"] < n:
+        warnings.append("away_sample_smaller_than_requested")
+    if any(x.get("opponent_points_last5") is None for x in (home_hist + away_hist)):
+        warnings.append("missing_opponent_form_points_for_some_matches")
+
+    return {
+        "ok": True,
+        "inputs": {
+            "home_team_id": int(home_team_id),
+            "away_team_id": int(away_team_id),
+            "last_n": int(n),
+            "as_of_utc": cutoff.isoformat(),
+        },
+        "model": {
+            "method": "poisson_independent",
+            "expected_goals_home": float(lam_home),
+            "expected_goals_away": float(lam_away),
+            "params_used": {
+                "baseline_goals_per_team": float(baseline),
+                "home_advantage": float(home_adv),
+                "max_goals": int(max_goals),
+                "min_prob_unexpected": float(min_prob_unexpected),
+            },
+        },
+        "window": {
+            "requested_last_n": int(last_n),
+            "used_last_n": int(n),
+            "home_played": int(home_overall["played"]),
+            "away_played": int(away_overall["played"]),
+            "home_split_used": bool(home_home["played"] >= min_split),
+            "away_split_used": bool(away_away["played"] >= min_split),
+        },
+        "predictions": preds,
+        "evidence": {
+            "home_last_matches": home_hist,
+            "away_last_matches": away_hist,
+        },
+        "warnings": warnings,
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
 
 

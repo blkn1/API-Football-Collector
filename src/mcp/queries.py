@@ -91,6 +91,27 @@ TEAM_FIXTURES_QUERY = """
     LIMIT %s
 """
 
+# Matchup debugging: last N completed fixtures for a team (minimal fields).
+MATCHUP_TEAM_LAST_N_COMPLETED_FIXTURES = """
+    SELECT
+      f.id,
+      f.league_id,
+      f.season,
+      f.date,
+      f.status_short,
+      f.home_team_id,
+      f.away_team_id,
+      f.goals_home,
+      f.goals_away,
+      f.updated_at
+    FROM core.fixtures f
+    WHERE (f.home_team_id = %s OR f.away_team_id = %s)
+      AND f.status_short = ANY(%s)
+      AND f.date <= %s
+    ORDER BY f.date DESC, f.id DESC
+    LIMIT %s
+"""
+
 # Head-to-head fixtures (last N meetings). Includes team IDs/names.
 H2H_FIXTURES_QUERY = """
     SELECT
