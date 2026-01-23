@@ -355,3 +355,40 @@ Client-side signal önerisi:
 - `PressureProfile`: `corners.for_avg + 0.5*offsides.for_avg - 0.5*corners.against_avg`.
 
 
+
+---
+
+## v2.4 — `/v2/fixtures/insights` (NS fixtures + league-season ev/deplasman context + normalize skorlar)
+
+Endpoint:
+- `GET /v2/fixtures/insights?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_evidence=false`
+
+Ne sağlar?
+- Seçilen UTC tarih aralığında **başlamamış (NS)** maçları döndürür (**tracked-only**).
+- Her `NS` maç için iki takımın **aynı lig + aynı sezon** bağlamında:
+  - **home_context**: takımın o lig+sezonda evinde oynadığı son `N` tamamlanmış maçlar
+  - **away_context**: takımın o lig+sezonda deplasmanda oynadığı son `N` tamamlanmış maçlar
+  metriklerini üretir.
+- Ek olarak **0–10 normalize skorlar** üretir:
+  - `attack_strength` (atak)
+  - `defensive_solidity` (defans)
+  - `recent_form` (form, last5 ağırlıklı)
+  - `winning_drive` (motivasyon, geç gol + seri + 2Y farkı)
+
+Deterministik kurallar (sözleşme):
+- **DB-only**: quota tüketmez.
+- **Strict query params**: desteklenmeyen param → 400.
+- **No leakage**: history penceresi, ilgili `NS` maç kickoff zamanından **strictly önce** olan `FT/AET/PEN` maçlardan alınır.
+- **Config-driven**: tüm ağırlıklar ve normalize aralıkları `config/read_api_v2.yaml -> fixture_insights` ile kontrol edilir.
+
+`include_evidence` (okunabilirlik / payload kontrolü):
+- Default: `include_evidence=false`
+- Bu durumda payload “UI için gerekli metrik+skor” odaklıdır; **fixtures_sample dönmez**.
+- Sadece kanıt/debug gerektiğinde `include_evidence=true` ver:
+  - context blokları içine `fixtures_sample` eklenir
+  - `fixtures_sample` bilinçli olarak **slim** tutulur (id/date/league/season/opponent/is_home/gf/ga).
+
+Yanılgı/tuzağı:
+- `home_context.last10.played` düşükse skorlar oynaktır → `indices_0_10.warnings` okumadan karar verme.
+- Bazı liglerde `core.fixture_statistics` eksik olabilir → corners/shots gibi alanlar null kalabilir.
+  Bu durum “incident” değildir; MCP’de `get_fixture_insights_prereq_status(...)` ile kanıtlanabilir.

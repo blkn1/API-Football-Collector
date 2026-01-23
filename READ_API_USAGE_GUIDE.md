@@ -437,6 +437,7 @@ Kurallar (deterministik):
 Query params (strict):
 - `date_from=YYYY-MM-DD` (UTC)
 - `date_to=YYYY-MM-DD` (UTC)
+- `include_evidence=true|false` (opsiyonel; default: false)
 
 Örnek:
 
@@ -464,6 +465,7 @@ Response okuma rehberi (özet):
 Notlar:
 - Bazı liglerde `core.fixture_statistics` eksik olabilir; bu durumda corners/shots gibi alanlar `null` kalabilir ve `warnings` çıkabilir.
 - Bu endpoint, veri kalitesi için collector’ın `/fixtures/*` detail job’larına (events/statistics) bağımlıdır.
+- `include_evidence=true` verilmezse payload küçük kalsın diye **fixtures_sample** alanı dönmez. Kanıt/debug gerektiğinde açılır.
 
 Örnek response (özet):
 

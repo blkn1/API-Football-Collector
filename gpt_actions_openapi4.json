@@ -411,11 +411,12 @@
     "/v2/fixtures/insights": {
       "get": {
         "summary": "NS fixtures + league-season insights (v2): home/away context + 0–10 skorlar",
-        "description": "Strict query params: only date_from, date_to are accepted. DB-only. Returns upcoming NS fixtures restricted to tracked leagues and adds per-match insights derived from completed matches (FT/AET/PEN) before kickoff (no leakage).",
+        "description": "Strict query params: only date_from, date_to, include_evidence are accepted. DB-only. Returns upcoming NS fixtures restricted to tracked leagues and adds per-match insights derived from completed matches (FT/AET/PEN) before kickoff (no leakage).",
         "operationId": "getFixturesInsightsV2",
         "parameters": [
           { "name": "date_from", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC tarih başlangıcı (YYYY-MM-DD)." },
-          { "name": "date_to", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC tarih bitişi (YYYY-MM-DD)." }
+          { "name": "date_to", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC tarih bitişi (YYYY-MM-DD)." },
+          { "name": "include_evidence", "in": "query", "required": false, "schema": { "type": "boolean", "default": false }, "description": "true ise context içinde fixtures_sample (kanıt) alanları eklenir. Varsayılan false (payload küçük kalsın diye)." }
         ],
         "responses": {
           "200": { "description": "V2 fixtures insights response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2FixturesInsightsResponse" } } } },

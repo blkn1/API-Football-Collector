@@ -618,9 +618,9 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
 
 @app.get(
     "/v2/fixtures/insights",
-    dependencies=[Depends(require_access), Depends(require_only_query_params({"date_from", "date_to"}))],
+    dependencies=[Depends(require_access), Depends(require_only_query_params({"date_from", "date_to", "include_evidence"}))],
 )
-async def fixtures_insights_v2(date_from: str, date_to: str) -> dict[str, Any]:
+async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: bool = False) -> dict[str, Any]:
     """
     v2 fixture insights (DB-only):
     - Scope: tracked leagues only (config/jobs/daily.yaml -> tracked_leagues)
@@ -961,6 +961,30 @@ async def fixtures_insights_v2(date_from: str, date_to: str) -> dict[str, Any]:
 
     opponent_form = await _fetch_forms_for_triples(sorted(list(opponent_triples)))
 
+    def _slim_fixture_sample(*, subject_team_id: int, fx: dict[str, Any]) -> dict[str, Any]:
+        """
+        Evidence payload should stay small and stable:
+        - no raw score JSON
+        - only fields that explain how aggregates were computed
+        """
+        hid = int(fx["home_team_id"])
+        aid = int(fx["away_team_id"])
+        is_home = int(hid) == int(subject_team_id)
+        gh = int(fx["goals_home"])
+        ga_ = int(fx["goals_away"])
+        team_g = gh if is_home else ga_
+        opp_g = ga_ if is_home else gh
+        return {
+            "id": int(fx["id"]),
+            "date_utc": fx.get("date_utc"),
+            "league_id": int(fx.get("league_id") or 0),
+            "season": int(fx.get("season") or 0),
+            "opponent_team_id": int(fx.get("opponent_team_id") or 0),
+            "is_home": bool(is_home),
+            "gf": int(team_g),
+            "ga": int(opp_g),
+        }
+
     def _compute_metrics_for_fixtures(*, subject_team_id: int, fixtures: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Compute readable metrics for a subject team over a fixture list.
@@ -1165,7 +1189,7 @@ async def fixtures_insights_v2(date_from: str, date_to: str) -> dict[str, Any]:
         # Points (from results_seq)
         points = sum(3 if x == "W" else 1 if x == "D" else 0 for x in results_seq)
 
-        return {
+        out = {
             "played": int(played),
             "results": {"wins": int(wins), "draws": int(draws), "losses": int(losses), "points": int(points)},
             "goals": {
@@ -1220,8 +1244,10 @@ async def fixtures_insights_v2(date_from: str, date_to: str) -> dict[str, Any]:
                 "second_half_goal_diff_per_match": h2_goal_diff_per_match,
                 "form_points_last5": (int(points) if played <= 5 else None),
             },
-            "fixtures_sample": fixtures[: min(len(fixtures), 10)],
         }
+        if bool(include_evidence):
+            out["fixtures_sample"] = [_slim_fixture_sample(subject_team_id=int(subject_team_id), fx=fx) for fx in fixtures[: min(len(fixtures), 10)]]
+        return out
 
     def _compute_indices(*, last10: dict[str, Any], last5: dict[str, Any]) -> dict[str, Any]:
         """

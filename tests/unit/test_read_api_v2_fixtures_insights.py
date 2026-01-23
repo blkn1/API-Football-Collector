@@ -152,6 +152,47 @@ def test_v2_fixtures_insights_happy_path(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "attack_strength" in home_sel
     assert "defensive_solidity" in home_sel
 
+    # Evidence is opt-in; fixtures_sample should NOT exist by default
+    assert "fixtures_sample" not in match["insights"]["home_team"]["home_context"]["last10"]
+
+
+def test_v2_fixtures_insights_include_evidence_adds_fixtures_sample(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(read_api, "_get_tracked_league_ids", lambda: {39})
+    monkeypatch.setattr(read_api, "_fixture_insights_cfg", lambda: {"min_matches_for_scores": 1})
+
+    kickoff = datetime(2026, 1, 6, 20, 0, tzinfo=timezone.utc)
+    updated = datetime(2026, 1, 6, 10, 0, tzinfo=timezone.utc)
+    ns_rows = [
+        (1001, 39, "Premier League", "England", 2025, "R20", kickoff, int(kickoff.timestamp()), "NS", "Not Started", 10, "HomeFC", 20, "AwayFC", updated)
+    ]
+    f1_dt = datetime(2026, 1, 3, 20, 0, tzinfo=timezone.utc)
+    hist_rows = [
+        (1001, 39, 2025, 10, "home", 2001, f1_dt, 10, 30, 1, 0, {"halftime": {"home": 1, "away": 0}, "fulltime": {"home": 1, "away": 0}}, updated, 1),
+    ]
+
+    async def fake_fetchall_async(sql: str, params: tuple):
+        if "WHERE f.status_short = 'NS'" in sql:
+            return ns_rows
+        if "WITH ctx(upcoming_fixture_id" in sql:
+            return hist_rows
+        if "FROM core.fixture_events" in sql:
+            return []
+        if "FROM core.fixture_statistics" in sql:
+            return []
+        if "FROM core.team_statistics" in sql:
+            return []
+        raise AssertionError(f"Unexpected SQL in fake_fetchall_async: {sql}")
+
+    monkeypatch.setattr(read_api, "_fetchall_async", fake_fetchall_async)
+
+    client = TestClient(read_api.app)
+    res = client.get("/v2/fixtures/insights?date_from=2026-01-06&date_to=2026-01-06&include_evidence=true")
+    assert res.status_code == 200
+    match = res.json()["leagues"][0]["matches"][0]
+    sample = match["insights"]["home_team"]["home_context"]["last10"]["fixtures_sample"]
+    assert isinstance(sample, list)
+    assert sample and set(sample[0].keys()) == {"id", "date_utc", "league_id", "season", "opponent_team_id", "is_home", "gf", "ga"}
+
 
 def test_v2_fixtures_insights_strict_query_params(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(read_api, "_get_tracked_league_ids", lambda: {39})
