@@ -467,6 +467,9 @@ Notlar:
 - Bu endpoint, veri kalitesi için collector’ın `/fixtures/*` detail job’larına (events/statistics) bağımlıdır.
 - `include_evidence=true` verilmezse payload küçük kalsın diye **fixtures_sample** alanı dönmez. Kanıt/debug gerektiğinde açılır.
 
+Ek doküman (EN, field-by-field):
+- `READ_API_V2_FIXTURES_INSIGHTS_EN.md`
+
 Örnek response (özet):
 
 ```json

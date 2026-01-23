@@ -392,3 +392,6 @@ Yanılgı/tuzağı:
 - `home_context.last10.played` düşükse skorlar oynaktır → `indices_0_10.warnings` okumadan karar verme.
 - Bazı liglerde `core.fixture_statistics` eksik olabilir → corners/shots gibi alanlar null kalabilir.
   Bu durum “incident” değildir; MCP’de `get_fixture_insights_prereq_status(...)` ile kanıtlanabilir.
+
+Field-by-field (EN):
+- `READ_API_V2_FIXTURES_INSIGHTS_EN.md`
