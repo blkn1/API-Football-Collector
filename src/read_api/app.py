@@ -128,6 +128,17 @@ def _to_int_or_none(x: Any) -> int | None:
         return None
 
 
+def _to_float_or_none(x: Any) -> float | None:
+    """
+    Safe float conversion helper.
+    Used by v2 fixtures insights normalization / trend helpers.
+    """
+    try:
+        return float(x) if x is not None else None
+    except Exception:
+        return None
+
+
 def _to_iso_or_none(dt: Any) -> str | None:
     try:
         return dt.isoformat() if dt is not None else None
