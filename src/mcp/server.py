@@ -677,6 +677,69 @@ async def get_rate_limit_status() -> dict:
 
 
 @app.tool()
+async def get_fixture_insights_prereq_status(
+    league_id: int,
+    season: int,
+    lookback_days: int = 30,
+    final_statuses: list[str] | None = None,
+) -> dict:
+    """
+    Ops tool: Explain why /v2/fixtures/insights may have nulls for some leagues.
+
+    It measures, for completed fixtures in a (league_id, season) lookback window:
+    - how many fixtures exist
+    - how many have core.fixture_events rows
+    - how many have core.fixture_statistics rows
+
+    Args:
+        league_id: League ID.
+        season: Season year.
+        lookback_days: How many days back from NOW() to inspect (default 30).
+        final_statuses: Completed statuses to include (default FT/AET/PEN).
+    """
+    try:
+        days = max(1, min(int(lookback_days), 365))
+        statuses = final_statuses if isinstance(final_statuses, list) and final_statuses else ["FT", "AET", "PEN"]
+        row = await _db_fetchone_async(
+            queries.FIXTURE_INSIGHTS_PREREQ_STATUS_QUERY,
+            (int(league_id), int(season), list(statuses), int(days)),
+        )
+        if not row:
+            return _ok(mcp_schemas.FixtureInsightsPrereqStatus(
+                league_id=int(league_id),
+                season=int(season),
+                lookback_days=int(days),
+                final_statuses=[str(x) for x in statuses],
+                completed_fixtures=0,
+                fixtures_with_events=0,
+                fixtures_with_statistics=0,
+                events_coverage_pct=None,
+                statistics_coverage_pct=None,
+                ts_utc=_utc_now_iso(),
+            ))
+
+        completed = int(row[0] or 0)
+        with_ev = int(row[1] or 0)
+        with_st = int(row[2] or 0)
+        ev_pct = (round((float(with_ev) / float(completed)) * 100.0, 4) if completed > 0 else None)
+        st_pct = (round((float(with_st) / float(completed)) * 100.0, 4) if completed > 0 else None)
+        return _ok(mcp_schemas.FixtureInsightsPrereqStatus(
+            league_id=int(league_id),
+            season=int(season),
+            lookback_days=int(days),
+            final_statuses=[str(x) for x in statuses],
+            completed_fixtures=int(completed),
+            fixtures_with_events=int(with_ev),
+            fixtures_with_statistics=int(with_st),
+            events_coverage_pct=ev_pct,
+            statistics_coverage_pct=st_pct,
+            ts_utc=_utc_now_iso(),
+        ))
+    except Exception as e:
+        return _ok_error("get_fixture_insights_prereq_status_failed", details=str(e))
+
+
+@app.tool()
 async def get_live_loop_status(since_minutes: int = 5) -> dict:
     """
     Report whether live loop is actively polling /fixtures?live=all by inspecting RAW.

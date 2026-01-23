@@ -38,3 +38,67 @@ matchup_model:
   min_matches_for_split: 2
 
 
+fixture_insights:
+  # Windows are expressed in number of completed matches (not days).
+  # last10 is used for more stable indices; last5 is used for recent form/trend.
+  last5_n: 5
+  last10_n: 10
+
+  # Minimum completed matches required to consider indices "stable".
+  # If played < min_matches_for_scores => endpoint returns warnings for that context.
+  min_matches_for_scores: 3
+
+  # Completed fixture statuses to include in history (no leakage: strictly before kickoff).
+  final_statuses: ["FT", "AET", "PEN"]
+
+  # Event time thresholds (minutes, API-Football elapsed):
+  first_half_max_minute: 45
+  late_goal_from_minute: 76
+
+  # Index weights (all config-driven; endpoint will ignore missing components).
+  weights:
+    attack:
+      goals: 0.5          # gf_avg (goals for per match)
+      corners: 0.3        # corner_kicks_avg
+      offsides: 0.2       # offsides_avg
+      shots_on_goal: 0.0  # optional add-on (0 keeps parity with initial formula)
+    defense:
+      ga_avg: 0.45                # lower is better (invert in normalization)
+      clean_sheet_rate_pct: 0.35  # higher is better
+      corners_against_avg: 0.10   # lower is better (invert)
+      yellow_cards_avg: 0.07      # lower is better (invert)
+      red_cards_avg: 0.03         # lower is better (invert)
+    form:
+      form_points: 0.60       # last5 points (W=3,D=1,L=0) => 0..15
+      goal_diff: 0.25         # goal_diff_per_match (cap/normalize)
+      opponent_strength: 0.15 # opponent_strength avg_points_last5 (0..15)
+    winning_drive:
+      late_goal_rate_pct: 0.45      # % of matches with a goal scored from late_goal_from_minute..FT
+      win_streak: 0.35              # consecutive wins from most-recent backwards
+      second_half_goal_diff: 0.20   # second_half_goal_diff_per_match (cap/normalize)
+
+  # Normalization ranges for clamp-linear 0..10 scores.
+  # Each metric defines min/max and optionally invert=true (higher raw => lower score).
+  normalization:
+    # Attack components
+    gf_avg: { min: 0.0, max: 3.0 }
+    corner_kicks_avg: { min: 0.0, max: 8.0 }
+    offsides_avg: { min: 0.0, max: 4.0 }
+    shots_on_goal_avg: { min: 0.0, max: 7.0 }
+
+    # Defense components
+    ga_avg: { min: 0.0, max: 3.5, invert: true }
+    clean_sheet_rate_pct: { min: 0.0, max: 100.0 }
+    corners_against_avg: { min: 0.0, max: 8.0, invert: true }
+    yellow_cards_avg: { min: 0.0, max: 4.0, invert: true }
+    red_cards_avg: { min: 0.0, max: 1.0, invert: true }
+
+    # Form components
+    form_points_last5: { min: 0.0, max: 15.0 }
+    goal_diff_per_match: { min: -2.0, max: 2.0 }
+    opponent_strength_points: { min: 0.0, max: 15.0 }
+
+    # Winning drive components
+    late_goal_rate_pct: { min: 0.0, max: 100.0 }
+    win_streak: { min: 0.0, max: 5.0 }
+    second_half_goal_diff_per_match: { min: -2.0, max: 2.0 }

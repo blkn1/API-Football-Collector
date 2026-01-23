@@ -21,6 +21,17 @@ Odak:
 
 > `/docs` en güncel “şema”yı verir ama **kullanım akışlarını** bu doküman anlatır.
 
+### Start here (AI editör / hızlı akış)
+
+“Hangi endpoint’i ne zaman kullanmalıyım?” ve “v1/v2/read farkı nedir?” sorularının tek cevabı:
+- `en_gerekli_olanlar.md`
+
+Özellikle AI editör/agent ile çalışırken bu dosyayı context’e eklemek, şu hataları ciddi azaltır:
+- yanlış endpoint seçimi (v1 vs v2 vs /read)
+- strict query params kaynaklı 400’ler
+- UTC/local tarih karışıklığı
+- Basic Auth / header karışıklığı
+
 ---
 
 ## Strict query params (katı kurallar)
@@ -402,6 +413,57 @@ Kurallar (özet):
 curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
   "$READ_API_BASE/v2/matchup/predict?home_team_id=42&away_team_id=40&last_n=5&as_of_date=2026-01-05"
 ```
+
+---
+
+### 2.4) v2 fixtures insights (NS maçlar + lig/sezon ev/deplasman istatistik + normalize skorlar)
+
+#### `GET /v2/fixtures/insights`
+
+Amaç:
+- Başlamamış maçlar (`NS`) için **okunabilir bir analiz payload’ı** üretmek
+- Her maçta iki takımın **aynı lig + aynı sezon** bağlamında:
+  - evinde son `N` maç (home_context)
+  - deplasmanda son `N` maç (away_context)
+  metriklerini çıkarıp, ayrıca **0–10 normalize skorlar** üretmek
+
+Kurallar (deterministik):
+- **DB-only**: quota tüketmez (API-Football çağrısı yok)
+- **Tracked-only**: sadece izlenen ligler (config/jobs/daily.yaml -> tracked_leagues)
+- **NS-only**: sadece `status_short='NS'`
+- **No leakage**: geçmiş maçlar, ilgili `NS` maçın kickoff zamanından **strictly önce** olan `FT/AET/PEN` maçlardan alınır
+- Skorlar **config/read_api_v2.yaml -> fixture_insights** ile ayarlanır (pencereler, ağırlıklar, normalize aralıkları)
+
+Query params (strict):
+- `date_from=YYYY-MM-DD` (UTC)
+- `date_to=YYYY-MM-DD` (UTC)
+
+Örnek:
+
+```bash
+curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "$READ_API_BASE/v2/fixtures/insights?date_from=2026-01-05&date_to=2026-01-07"
+```
+
+Response okuma rehberi (özet):
+- `leagues[]`: `/v2/fixtures` ile aynı bucketing (league_id, kickoff_time). Aynı lig, farklı kickoff saatlerinde birden fazla bucket olarak gelebilir.
+- `matches[].insights`:
+  - `home_team` ve `away_team` altında **iki context** vardır:
+    - `home_context`: takımın aynı lig+sezonda evinde oynadığı son maçlar
+    - `away_context`: takımın aynı lig+sezonda deplasmanda oynadığı son maçlar
+  - Bu maç için “doğal” context ayrıca kopyalanır:
+    - ev sahibi: `selected_context="home"` ve `selected_indices_0_10`
+    - deplasman: `selected_context="away"` ve `selected_indices_0_10`
+  - `indices_0_10`:
+    - `attack_strength`: Atak Gücü (0–10)
+    - `defensive_solidity`: Defans Kalitesi (0–10)
+    - `recent_form`: Form (0–10, last5 ağırlıklı)
+    - `winning_drive`: Motivasyon (0–10)
+    - `warnings`: skorların güvenilirliğini etkileyen uyarılar (örn. insufficient history)
+
+Notlar:
+- Bazı liglerde `core.fixture_statistics` eksik olabilir; bu durumda corners/shots gibi alanlar `null` kalabilir ve `warnings` çıkabilir.
+- Bu endpoint, veri kalitesi için collector’ın `/fixtures/*` detail job’larına (events/statistics) bağımlıdır.
 
 Örnek response (özet):
 

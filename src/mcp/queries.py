@@ -237,6 +237,33 @@ LAST_SYNC_FIXTURE_DETAILS_ANY_QUERY = """
     WHERE endpoint = ANY(ARRAY['/fixtures/players','/fixtures/events','/fixtures/statistics','/fixtures/lineups'])
 """
 
+# Fixture insights prerequisites: how complete are events/statistics for completed fixtures
+# in a (league_id, season) window. Used to explain why /v2/fixtures/insights may return nulls.
+FIXTURE_INSIGHTS_PREREQ_STATUS_QUERY = """
+    WITH fx AS (
+      SELECT f.id
+      FROM core.fixtures f
+      WHERE f.league_id = %s
+        AND f.season = %s
+        AND f.status_short = ANY(%s)
+        AND f.date >= NOW() - (%s::text || ' days')::interval
+    ),
+    ev AS (
+      SELECT COUNT(DISTINCT e.fixture_id) AS c
+      FROM core.fixture_events e
+      JOIN fx ON fx.id = e.fixture_id
+    ),
+    st AS (
+      SELECT COUNT(DISTINCT s.fixture_id) AS c
+      FROM core.fixture_statistics s
+      JOIN fx ON fx.id = s.fixture_id
+    )
+    SELECT
+      (SELECT COUNT(*) FROM fx) AS completed_fixtures,
+      (SELECT c FROM ev) AS fixtures_with_events,
+      (SELECT c FROM st) AS fixtures_with_statistics
+"""
+
 STANDINGS_REFRESH_PROGRESS_QUERY = """
     SELECT
       job_id,

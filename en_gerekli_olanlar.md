@@ -9,6 +9,12 @@ Kural:
 
 Bu doküman, `gpt_actions_openapi4.json` ile uyumludur (istatistik + yaklaşan maçlar odaklı).
 
+## Bu dosya neden önemli?
+
+- **Tek doğru “başlangıç noktası”**: Read API’de v1/v2/read endpoint’leri var; bu dosya “hangisini ne zaman kullanmalıyım?” kararını tek yerde toplar.
+- **AI editör için net context**: Bir AI agent’a sadece OpenAPI şeması yetmez; **iş niyeti + akış + tuzaklar** burada. Bu dosyayı context’e eklemek yanlış endpoint seçimini ve query param hatalarını azaltır.
+- **Güvenlik ve determinism**: Basic Auth, strict query params, UTC, DB-only gibi “sessizce bozulabilen” kuralları tek yerde sabitler.
+
 ---
 
 ## 0) Ortak sözleşmeler (client için kritik)
@@ -94,6 +100,37 @@ Client-side okuma kuralı (kritik):
 
 ---
 
+### C) İki rakip için skorline tahmini (v2 — “neden böyle tahmin ediyor?” destekli)
+`GET /v2/matchup/predict?home_team_id=...&away_team_id=...&last_n=5&as_of_date=YYYY-MM-DD`
+
+- **Ne verir?** 6 skorline: **1 most_likely + 2 alternative + 3 unexpected** ve olasılıkları.
+- **Neden önemli?** `evidence` alanı, “model neden böyle düşünüyor?” sorusuna cevap vermek için gerekli ham gerekçeyi taşır.
+
+Örnek:
+
+```bash
+curl -sS -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
+  "https://readapi.zinalyze.pro/v2/matchup/predict?home_team_id=42&away_team_id=40&last_n=5&as_of_date=2026-01-05"
+```
+
+Modelin kısa özeti (deterministik):
+- Her takım için **son N tamamlanmış maç** alınır (FT/AET/PEN, tüm turnuvalar).
+- **Recency weight**: yeni maçlar biraz daha ağır.
+- **Anomali down-weight**: uç skorlar silinmez; MAD z-score ile ağırlığı düşürülür.
+- **Rakip gücü düzeltmesi**: `core.team_statistics.form` → last5 puandan `opponent_factor`.
+- Sonuç: `expected_goals_home/away` çıkar ve Poisson grid’den skorline olasılıkları hesaplanır.
+
+Client önerileri (kaliteyi doğru okumak için):
+- `warnings[]` boş değilse: “confidence” düşür (örn. rakip form eksikliği).
+- `evidence.home_last_matches/away_last_matches` içinde `anomaly_z/anomaly_weight/weight` değerleri, hangi maçların tahmini ittiğini gösterir.
+- `last_n` küçükse (5) oynaklık normaldir; sabitlemek için `as_of_date` ile deterministik pencere kullan.
+
+Kör noktalar (bilerek modellemiyoruz):
+- Momentum (trend yönü), taktik matchup/stil, kadro/sakatlık, yorgunluk yoğun fikstür.
+- Home advantage sabit çarpan: takım bazlı değişken ev etkisini yakalamaz.
+
+---
+
 ## İstatistik için “gerçekten gerekli” endpoint listesi (tekrarsız)
 
 - **(Lookup)** `/v1/teams`: sadece `team_id` bulmak için (v2 karşılığı yok).
@@ -101,6 +138,7 @@ Client-side okuma kuralı (kritik):
 - **(Secondary stats, v1 — sadece ihtiyaç varsa)** `/v1/teams/{team_id}/metrics`: prediction-feature tarzı “daha geniş” sayısal özet (shots, possession vb. gibi alanlar burada olabilir). Breakdown yetmiyorsa kullan.
 - **(League-season stats, /read — sadece ihtiyaç varsa)** `/read/team_statistics`: belirli `league_id + season + team_id` bağlamında raw takım istatistikleri + form (detay ham veri ihtiyacı için).
 - **(Upcoming fixtures, v2)** `/v2/fixtures`: günün/önümüzdeki maçlar (tracked-only, NS-only).
+- **(Matchup predict, v2)** `/v2/matchup/predict`: iki takım için skorline olasılığı (anomaly-aware + opponent-adjusted).
 
 Minimal akış: **2 endpoint** ile biter:
 - `/v1/teams` → `team_id`
@@ -134,6 +172,7 @@ Kullanma:
 - **UTC/Local karışıklığı**: `date_from/date_to/as_of_date` UTC’dir.
 - **Strict query**: Fazladan query param → 400 (client SDK’larında otomatik param ekleyen kodlara dikkat).
 - **/v2/fixtures yorum hatası**: `match_count` lig toplamı değil; aynı lig farklı saatse ayrı bucket gelir.
+- **Endpoint path**: `matchup` endpoint’i `/v2/matchup/predict` (underscore yok).
 
 
 

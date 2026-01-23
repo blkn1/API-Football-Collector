@@ -277,6 +277,23 @@ class DatabaseStats(MCPModel):
     core_fixture_details: int
     core_injuries: int
     core_fixture_players: int
+
+
+class FixtureInsightsPrereqStatus(OkEnvelope):
+    """
+    Explain whether CORE has enough per-fixture detail data (events/statistics)
+    to support rich /v2/fixtures/insights outputs for a given (league_id, season) window.
+    """
+
+    league_id: int
+    season: int
+    lookback_days: int
+    final_statuses: list[str]
+    completed_fixtures: int
+    fixtures_with_events: int
+    fixtures_with_statistics: int
+    events_coverage_pct: float | None = None
+    statistics_coverage_pct: float | None = None
     core_fixture_events: int
     core_fixture_statistics: int
     core_fixture_lineups: int

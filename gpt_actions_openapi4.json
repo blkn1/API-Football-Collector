@@ -198,6 +198,115 @@
         },
         "required": ["ok", "inputs", "model", "window", "predictions", "updated_at_utc"],
         "additionalProperties": true
+      },
+      "V2FixtureInsightsIndices": {
+        "type": "object",
+        "description": "0–10 normalize skorlar. null => yeterli veri yok / ilgili metrik normalize edilemedi. warnings alanı bağlamsal uyarılar verir.",
+        "properties": {
+          "attack_strength": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Atak gücü skoru (0–10). Daha yüksek = daha güçlü hücum." },
+          "defensive_solidity": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Defans sağlamlığı skoru (0–10). Daha yüksek = daha sağlam savunma." },
+          "recent_form": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Son form skoru (0–10). last5 ağırlıklı." },
+          "winning_drive": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Motivasyon / kazanma isteği skoru (0–10). geç goller + seri + 2Y farkı ağırlıklı." },
+          "warnings": { "type": "array", "items": { "type": "string" }, "description": "Skorların güvenilirliğini etkileyen deterministik uyarılar." }
+        },
+        "required": ["attack_strength", "defensive_solidity", "recent_form", "winning_drive", "warnings"],
+        "additionalProperties": true
+      },
+      "V2FixtureInsightsContext": {
+        "type": "object",
+        "description": "Bir takım için belirli bir context (home/away) altında last10/last5 metrikleri + trend + normalize skorlar.",
+        "properties": {
+          "last10": { "type": "object", "description": "Son 10 tamamlanmış maç üzerinden (lig+sezon ve context filtreli) hesaplanan metrikler. İç yapısı genişlemeye açıktır.", "additionalProperties": true },
+          "last5": { "type": "object", "description": "Son 5 tamamlanmış maç üzerinden (lig+sezon ve context filtreli) hesaplanan metrikler. İç yapısı genişlemeye açıktır.", "additionalProperties": true },
+          "trends": { "type": "object", "description": "Eğilim: last5_avg - last10_avg farkları (pozitif => yükseliş).", "additionalProperties": true },
+          "indices_0_10": { "$ref": "#/components/schemas/V2FixtureInsightsIndices" }
+        },
+        "required": ["last10", "last5", "trends", "indices_0_10"],
+        "additionalProperties": true
+      },
+      "V2FixtureInsightsTeamBlock": {
+        "type": "object",
+        "description": "Tek bir takım için (lig+sezon scoped) hem home_context hem away_context metrikleri ve bu maç için seçilen context özetleri.",
+        "properties": {
+          "team_id": { "type": "integer", "description": "Takım ID (core.teams.id)." },
+          "team_name": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Takım adı (core.teams.name)." },
+          "windows": { "type": "object", "description": "Pencere parametreleri (last5_n/last10_n) ve cutoff_utc (kickoff zamanı).", "additionalProperties": true },
+          "home_context": { "$ref": "#/components/schemas/V2FixtureInsightsContext" },
+          "away_context": { "$ref": "#/components/schemas/V2FixtureInsightsContext" },
+          "selected_context": { "type": "string", "enum": ["home", "away"], "description": "Bu fixture için doğal context: ev sahibi için 'home', deplasman için 'away'." },
+          "selected_indices_0_10": { "anyOf": [{ "$ref": "#/components/schemas/V2FixtureInsightsIndices" }, { "type": "null" }], "description": "selected_context içindeki indices_0_10 bloğunun kopyası (frontend kolaylığı için)." }
+        },
+        "required": ["team_id", "windows", "home_context", "away_context", "selected_context"],
+        "additionalProperties": true
+      },
+      "V2FixtureInsightsMatchInsights": {
+        "type": "object",
+        "description": "Maç bazında hesaplanan insights bloğu. league_id+season ve kickoff_utc bilgisi ile iki takımın insight bloklarını taşır.",
+        "properties": {
+          "league_id": { "type": "integer", "description": "Lig ID (core.leagues.id)." },
+          "season": { "type": "integer", "description": "Sezon (örn. 2025)." },
+          "kickoff_utc": { "type": "string", "format": "date-time", "description": "Maç başlangıç zamanı (UTC)." },
+          "home_team": { "$ref": "#/components/schemas/V2FixtureInsightsTeamBlock" },
+          "away_team": { "$ref": "#/components/schemas/V2FixtureInsightsTeamBlock" }
+        },
+        "required": ["league_id", "season", "kickoff_utc", "home_team", "away_team"],
+        "additionalProperties": true
+      },
+      "V2FixturesInsightsMatch": {
+        "type": "object",
+        "description": "V2 fixtures match + insights. insights DB’den türetilir; null olabilir (örn. season/team_id eksik).",
+        "properties": {
+          "id": { "type": "integer", "description": "Fixture ID (core.fixtures.id)." },
+          "round": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Round bilgisi (API-Football round)." },
+          "date_utc": { "type": "string", "format": "date-time", "description": "Kickoff zamanı (UTC)." },
+          "timestamp_utc": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "description": "Kickoff epoch saniye (UTC)." },
+          "status_short": { "type": "string", "description": "Kısa durum kodu. Bu endpoint yalnızca 'NS' döndürür." },
+          "status_long": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Uzun durum açıklaması." },
+          "home_team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "description": "Ev sahibi takım ID." },
+          "home_team_name": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Ev sahibi takım adı." },
+          "away_team_id": { "anyOf": [{ "type": "integer" }, { "type": "null" }], "description": "Deplasman takım ID." },
+          "away_team_name": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Deplasman takım adı." },
+          "updated_at_utc": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }], "description": "Fixture satırının CORE’da son güncellenme zamanı (UTC)." },
+          "insights": { "anyOf": [{ "$ref": "#/components/schemas/V2FixtureInsightsMatchInsights" }, { "type": "null" }], "description": "Maç için hesaplanan istatistik + skor blokları." }
+        },
+        "required": ["id", "date_utc", "status_short"],
+        "additionalProperties": true
+      },
+      "V2FixturesInsightsLeagueBucket": {
+        "type": "object",
+        "description": "V2 fixtures gibi (league_id, kickoff_time) bucket. matches[] içinde insights alanı bulunur.",
+        "properties": {
+          "league_id": { "type": "integer" },
+          "league_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "country_name": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+          "season": { "anyOf": [{ "type": "integer" }, { "type": "null" }] },
+          "match_count": { "type": "integer" },
+          "has_matches": { "type": "boolean" },
+          "matches": { "type": "array", "items": { "$ref": "#/components/schemas/V2FixturesInsightsMatch" } }
+        },
+        "required": ["league_id", "match_count", "has_matches", "matches"],
+        "additionalProperties": true
+      },
+      "V2FixturesInsightsResponse": {
+        "type": "object",
+        "description": "Yaklaşan (NS) maçlar + her maç için league+season scoped insights. DB-only, quota tüketmez.",
+        "properties": {
+          "ok": { "type": "boolean" },
+          "date_range": {
+            "type": "object",
+            "properties": {
+              "from": { "type": "string", "format": "date" },
+              "to": { "type": "string", "format": "date" }
+            },
+            "required": ["from", "to"],
+            "additionalProperties": true
+          },
+          "total_match_count": { "type": "integer", "description": "Tüm bucket’lar toplamında dönen NS maç sayısı." },
+          "leagues": { "type": "array", "items": { "$ref": "#/components/schemas/V2FixturesInsightsLeagueBucket" } },
+          "updated_at_utc": { "type": "string", "format": "date-time" }
+        },
+        "required": ["ok", "date_range", "total_match_count", "leagues", "updated_at_utc"],
+        "additionalProperties": true
       }
     }
   },
@@ -292,6 +401,24 @@
         ],
         "responses": {
           "200": { "description": "V2 fixtures response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2FixturesResponse" } } } },
+          "400": { "description": "Unknown or invalid query parameters / invalid date range (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
+          "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
+        },
+        "security": [{ "basicAuth": [] }]
+      }
+    },
+    "/v2/fixtures/insights": {
+      "get": {
+        "summary": "NS fixtures + league-season insights (v2): home/away context + 0–10 skorlar",
+        "description": "Strict query params: only date_from, date_to are accepted. DB-only. Returns upcoming NS fixtures restricted to tracked leagues and adds per-match insights derived from completed matches (FT/AET/PEN) before kickoff (no leakage).",
+        "operationId": "getFixturesInsightsV2",
+        "parameters": [
+          { "name": "date_from", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC tarih başlangıcı (YYYY-MM-DD)." },
+          { "name": "date_to", "in": "query", "required": true, "schema": { "type": "string", "format": "date" }, "description": "UTC tarih bitişi (YYYY-MM-DD)." }
+        ],
+        "responses": {
+          "200": { "description": "V2 fixtures insights response", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/V2FixturesInsightsResponse" } } } },
           "400": { "description": "Unknown or invalid query parameters / invalid date range (strict mode)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
           "401": { "description": "Unauthorized", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } },
           "403": { "description": "Forbidden", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HTTPExceptionDetailEnvelope" } } } }
