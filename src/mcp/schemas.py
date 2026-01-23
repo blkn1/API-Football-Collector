@@ -294,14 +294,6 @@ class FixtureInsightsPrereqStatus(OkEnvelope):
     fixtures_with_statistics: int
     events_coverage_pct: float | None = None
     statistics_coverage_pct: float | None = None
-    core_fixture_events: int
-    core_fixture_statistics: int
-    core_fixture_lineups: int
-    core_standings: int
-    core_top_scorers: int
-    core_team_statistics: int
-    raw_last_fetched_at_utc: str | None = None
-    core_fixtures_last_updated_at_utc: str | None = None
 
 
 class DatabaseStatsResponse(OkEnvelope):
