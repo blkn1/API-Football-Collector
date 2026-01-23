@@ -618,9 +618,19 @@ async def fixtures_v2(date_from: str, date_to: str) -> dict[str, Any]:
 
 @app.get(
     "/v2/fixtures/insights",
-    dependencies=[Depends(require_access), Depends(require_only_query_params({"date_from", "date_to", "include_evidence"}))],
+    dependencies=[
+        Depends(require_access),
+        Depends(require_only_query_params({"date_from", "date_to", "include_evidence", "league_id", "limit", "offset"})),
+    ],
 )
-async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: bool = False) -> dict[str, Any]:
+async def fixtures_insights_v2(
+    date_from: str,
+    date_to: str,
+    include_evidence: bool = False,
+    league_id: int | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
     """
     v2 fixture insights (DB-only):
     - Scope: tracked leagues only (config/jobs/daily.yaml -> tracked_leagues)
@@ -638,12 +648,41 @@ async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: b
 
     tracked_ids = _get_tracked_league_ids()
     now = datetime.now(timezone.utc)
+    safe_limit = _safe_limit(int(limit), cap=200)
+    safe_offset = _safe_offset(int(offset))
+
+    # League filter is tracked-only: if league_id is provided and not tracked, return empty deterministically.
+    if league_id is not None:
+        if int(league_id) not in tracked_ids:
+            return {
+                "ok": True,
+                "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
+                "total_match_count": 0,
+                "leagues": [],
+                "paging": {
+                    "limit": int(safe_limit),
+                    "offset": int(safe_offset),
+                    "total_buckets": 0,
+                    "returned_buckets": 0,
+                    "returned_match_count": 0,
+                },
+                "updated_at_utc": now.isoformat(),
+            }
+        tracked_ids = {int(league_id)}
+
     if not tracked_ids:
         return {
             "ok": True,
             "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
             "total_match_count": 0,
             "leagues": [],
+            "paging": {
+                "limit": int(safe_limit),
+                "offset": int(safe_offset),
+                "total_buckets": 0,
+                "returned_buckets": 0,
+                "returned_match_count": 0,
+            },
             "updated_at_utc": now.isoformat(),
         }
 
@@ -745,10 +784,9 @@ async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: b
     """
     ns_rows = await _fetchall_async(fixtures_sql, (sorted(list(tracked_ids)), dt_from, dt_to))
 
-    # Prepare buckets + raw list for insight computation
+    # Prepare buckets first; we will paginate by bucket and only compute insights for returned buckets.
     by_bucket: dict[tuple[int, str], list[dict[str, Any]]] = {}
     bucket_meta: dict[tuple[int, str], dict[str, Any]] = {}
-    ns_matches: list[dict[str, Any]] = []
     for r in ns_rows:
         league_id = int(r[1])
         status_short = str(r[8] or "")
@@ -790,29 +828,69 @@ async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: b
             "updated_at_utc": _to_iso_or_none(r[14]),
         }
         by_bucket.setdefault(key, []).append(base_match)
-        ns_matches.append(
-            {
-                "fixture_id": int(r[0]),
-                "league_id": league_id,
-                "season": int(season),
-                "kickoff_dt": date_dt,
-                "kickoff_iso": str(date_iso),
-                "home_team_id": int(home_id),
-                "home_team_name": r[11],
-                "away_team_id": int(away_id),
-                "away_team_name": r[13],
-            }
-        )
 
-    # If no matches, return empty (still OK)
-    if not ns_matches:
+    # Build sorted bucket list (for paging) and compute totals before slicing.
+    bucket_rows: list[tuple[Any, ...]] = []
+    total_match_count_all = 0
+    for key, items in by_bucket.items():
+        meta = bucket_meta.get(key) or {}
+        sort_key = meta.get("timestamp_utc") if meta.get("timestamp_utc") is not None else str(meta.get("date_utc") or "")
+        bucket_rows.append((key, sort_key))
+        total_match_count_all += int(len(items))
+    bucket_rows.sort(key=lambda x: x[1])
+
+    total_buckets = int(len(bucket_rows))
+    sliced = bucket_rows[safe_offset : safe_offset + safe_limit]
+    selected_keys = {k for (k, _sk) in sliced}
+
+    # If no matches or slice empty, return empty.
+    if not selected_keys:
         return {
             "ok": True,
             "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
-            "total_match_count": 0,
+            "total_match_count": int(total_match_count_all),
             "leagues": [],
+            "paging": {
+                "limit": int(safe_limit),
+                "offset": int(safe_offset),
+                "total_buckets": int(total_buckets),
+                "returned_buckets": 0,
+                "returned_match_count": 0,
+            },
             "updated_at_utc": now.isoformat(),
         }
+
+    # Build ns_matches only for selected buckets (reduces work and payload)
+    ns_matches: list[dict[str, Any]] = []
+    for key in selected_keys:
+        items = by_bucket.get(key) or []
+        league_id_k, date_iso = key
+        meta = bucket_meta.get(key) or {}
+        for it in items:
+            try:
+                kickoff_dt = datetime.fromisoformat(str(it.get("date_utc"))).astimezone(timezone.utc)
+            except Exception:
+                kickoff_dt = None
+            if kickoff_dt is None:
+                continue
+            season = _to_int_or_none(meta.get("season"))
+            hid = _to_int_or_none(it.get("home_team_id"))
+            aid = _to_int_or_none(it.get("away_team_id"))
+            if season is None or hid is None or aid is None:
+                continue
+            ns_matches.append(
+                {
+                    "fixture_id": int(it["id"]),
+                    "league_id": int(league_id_k),
+                    "season": int(season),
+                    "kickoff_dt": kickoff_dt,
+                    "kickoff_iso": str(it.get("date_utc")),
+                    "home_team_id": int(hid),
+                    "home_team_name": it.get("home_team_name"),
+                    "away_team_id": int(aid),
+                    "away_team_name": it.get("away_team_name"),
+                }
+            )
 
     # --- 2) Build per-fixture contexts to fetch history in batch ---
     # Context key: (upcoming_fixture_id, league_id, season, team_id, ctx_side, cutoff_utc)
@@ -1410,9 +1488,11 @@ async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: b
             "away_team": away_block,
         }
 
-    # Attach insights into the output bucket structure (same grouping contract as /v2/fixtures)
+    # Attach insights into the output bucket structure (same grouping contract as /v2/fixtures),
+    # but only for selected buckets (pagination).
     leagues_out: list[dict[str, Any]] = []
-    for key, items in by_bucket.items():
+    for key, _sort_key in sliced:
+        items = by_bucket.get(key) or []
         league_id, date_utc_iso = key
         meta = bucket_meta.get(key) or {
             "league_id": league_id,
@@ -1443,15 +1523,23 @@ async def fixtures_insights_v2(date_from: str, date_to: str, include_evidence: b
         )
 
     leagues_out.sort(key=lambda x: x.get("_sort"))
-    total_match_count = sum(int(l.get("match_count") or 0) for l in leagues_out)
+    returned_match_count = sum(int(l.get("match_count") or 0) for l in leagues_out)
     for l in leagues_out:
         l.pop("_sort", None)
 
     return {
         "ok": True,
         "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
-        "total_match_count": int(total_match_count),
+        # Keep total_match_count as the total across ALL buckets in the date window.
+        "total_match_count": int(total_match_count_all),
         "leagues": leagues_out,
+        "paging": {
+            "limit": int(safe_limit),
+            "offset": int(safe_offset),
+            "total_buckets": int(total_buckets),
+            "returned_buckets": int(len(leagues_out)),
+            "returned_match_count": int(returned_match_count),
+        },
         "updated_at_utc": now.isoformat(),
     }
 

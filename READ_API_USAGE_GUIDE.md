@@ -438,6 +438,9 @@ Query params (strict):
 - `date_from=YYYY-MM-DD` (UTC)
 - `date_to=YYYY-MM-DD` (UTC)
 - `include_evidence=true|false` (opsiyonel; default: false)
+- `league_id=<int>` (opsiyonel; sadece tracked lig filtrelemesi)
+- `limit=<int>` (opsiyonel; bucket limit, default 50, max 200)
+- `offset=<int>` (opsiyonel; bucket offset, default 0)
 
 Örnek:
 
@@ -448,6 +451,7 @@ curl -u "$READ_API_BASIC_USER:$READ_API_BASIC_PASSWORD" \
 
 Response okuma rehberi (özet):
 - `leagues[]`: `/v2/fixtures` ile aynı bucketing (league_id, kickoff_time). Aynı lig, farklı kickoff saatlerinde birden fazla bucket olarak gelebilir.
+- `paging`: bucket-bazlı pagination bilgisidir. `total_match_count` her zaman tam aralıktaki toplam match sayısıdır; `paging.returned_*` bu response slice’ını anlatır.
 - `matches[].insights`:
   - `home_team` ve `away_team` altında **iki context** vardır:
     - `home_context`: takımın aynı lig+sezonda evinde oynadığı son maçlar

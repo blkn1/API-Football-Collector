@@ -134,6 +134,9 @@ def test_v2_fixtures_insights_happy_path(monkeypatch: pytest.MonkeyPatch) -> Non
     body = res.json()
     assert body["ok"] is True
     assert body["total_match_count"] == 1
+    assert body["paging"]["total_buckets"] == 1
+    assert body["paging"]["returned_buckets"] == 1
+    assert body["paging"]["returned_match_count"] == 1
     match = body["leagues"][0]["matches"][0]
     assert match["id"] == 1001
     assert match["status_short"] == "NS"
@@ -199,6 +202,55 @@ def test_v2_fixtures_insights_strict_query_params(monkeypatch: pytest.MonkeyPatc
     client = TestClient(read_api.app)
     res = client.get("/v2/fixtures/insights?date_from=2026-01-06&date_to=2026-01-06&extra=1")
     assert res.status_code == 400
+
+
+def test_v2_fixtures_insights_league_id_filter_not_tracked_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(read_api, "_get_tracked_league_ids", lambda: {39})
+    client = TestClient(read_api.app)
+    res = client.get("/v2/fixtures/insights?date_from=2026-01-06&date_to=2026-01-06&league_id=274")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["leagues"] == []
+    assert body["paging"]["total_buckets"] == 0
+
+
+def test_v2_fixtures_insights_bucket_pagination_limit_offset(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 2 kickoff buckets => paging should slice buckets (not matches).
+    monkeypatch.setattr(read_api, "_get_tracked_league_ids", lambda: {39})
+    monkeypatch.setattr(read_api, "_fixture_insights_cfg", lambda: {"min_matches_for_scores": 1})
+
+    dt1 = datetime(2026, 1, 6, 18, 0, tzinfo=timezone.utc)
+    dt2 = datetime(2026, 1, 6, 20, 0, tzinfo=timezone.utc)
+    updated = datetime(2026, 1, 6, 10, 0, tzinfo=timezone.utc)
+    ns_rows = [
+        (1001, 39, "Premier League", "England", 2025, "R20", dt1, int(dt1.timestamp()), "NS", "Not Started", 10, "A", 20, "B", updated),
+        (1002, 39, "Premier League", "England", 2025, "R20", dt2, int(dt2.timestamp()), "NS", "Not Started", 11, "C", 21, "D", updated),
+    ]
+
+    async def fake_fetchall_async(sql: str, params: tuple):
+        if "WHERE f.status_short = 'NS'" in sql:
+            return ns_rows
+        # No history needed for this test: allow insights to exist but be minimal.
+        if "WITH ctx(upcoming_fixture_id" in sql:
+            return []
+        if "FROM core.fixture_events" in sql:
+            return []
+        if "FROM core.fixture_statistics" in sql:
+            return []
+        if "FROM core.team_statistics" in sql:
+            return []
+        raise AssertionError(f"Unexpected SQL in fake_fetchall_async: {sql}")
+
+    monkeypatch.setattr(read_api, "_fetchall_async", fake_fetchall_async)
+
+    client = TestClient(read_api.app)
+    res = client.get("/v2/fixtures/insights?date_from=2026-01-06&date_to=2026-01-06&limit=1&offset=0")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["paging"]["total_buckets"] == 2
+    assert body["paging"]["returned_buckets"] == 1
+
 
 
 def test_v2_fixtures_insights_date_range_validation(monkeypatch: pytest.MonkeyPatch) -> None:

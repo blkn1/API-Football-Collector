@@ -361,7 +361,7 @@ Client-side signal önerisi:
 ## v2.4 — `/v2/fixtures/insights` (NS fixtures + league-season ev/deplasman context + normalize skorlar)
 
 Endpoint:
-- `GET /v2/fixtures/insights?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_evidence=false`
+- `GET /v2/fixtures/insights?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_evidence=false&league_id=<optional>&limit=50&offset=0`
 
 Ne sağlar?
 - Seçilen UTC tarih aralığında **başlamamış (NS)** maçları döndürür (**tracked-only**).
@@ -387,6 +387,18 @@ Deterministik kurallar (sözleşme):
 - Sadece kanıt/debug gerektiğinde `include_evidence=true` ver:
   - context blokları içine `fixtures_sample` eklenir
   - `fixtures_sample` bilinçli olarak **slim** tutulur (id/date/league/season/opponent/is_home/gf/ga).
+
+Bucket pagination (toolargecontent / UI performansı):
+- Pagination **bucket bazlıdır** (leagues[] üzerinden).
+- Parametreler:
+  - `limit`: dönen bucket sayısı (max 200)
+  - `offset`: bucket offset (0-based)
+  - `league_id` (opsiyonel): sadece tek tracked lig için scope daraltma (tracked değilse boş döner)
+- Response’ta `paging` bloğu:
+  - `total_buckets`: aralıktaki toplam bucket
+  - `returned_buckets`: bu response’ta dönen bucket
+  - `returned_match_count`: bu response slice’ındaki match sayısı
+  - `total_match_count`: her zaman tam aralıktaki toplam match sayısı (slice değil)
 
 Yanılgı/tuzağı:
 - `home_context.last10.played` düşükse skorlar oynaktır → `indices_0_10.warnings` okumadan karar verme.
