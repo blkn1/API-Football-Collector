@@ -2,7 +2,7 @@
 
 This document describes **every field** returned by:
 
-`GET /v2/fixtures/insights?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_evidence=false`
+`GET /v2/fixtures/insights?date_from=YYYY-MM-DD&date_to=YYYY-MM-DD&include_evidence=false&league_id=<optional>&limit=50&offset=0`
 
 It is written for client developers (frontend, n8n, dashboards) who want a **readable, deterministic** match preview payload and need to understand:
 - what each field means
@@ -36,6 +36,9 @@ Why: `fixtures_sample` can be large when repeated across multiple contexts, and 
 - `date_from` (required, `YYYY-MM-DD`): UTC date start
 - `date_to` (required, `YYYY-MM-DD`): UTC date end
 - `include_evidence` (optional, boolean, default `false`): whether to include `fixtures_sample`
+- `league_id` (optional, int): restrict scope to a single tracked league. If the league is not tracked, the endpoint returns an empty result deterministically.
+- `limit` (optional, int, default 50, max 200): **bucket limit** (pagination is applied on `leagues[]`, not on flattened matches).
+- `offset` (optional, int, default 0): **bucket offset** (0-based) for `leagues[]`.
 
 If you pass an unknown query param, you get **400**.
 
@@ -49,12 +52,26 @@ If you pass an unknown query param, you get **400**.
 - `to` (date): the UTC end date applied
 
 ### 3.3 `total_match_count` (integer)
-Total number of matches returned across all kickoff buckets.
+Total number of matches across **all kickoff buckets** in the requested date window (and optional league scope).
+
+Important:
+- This is **not** the count of matches in the current paginated slice.
+- For the slice, use `paging.returned_match_count`.
 
 ### 3.4 `leagues` (array)
 List of kickoff buckets. **Important**: a league can appear multiple times if it has multiple kickoff times in the date window.
 
-### 3.5 `updated_at_utc` (date-time)
+### 3.5 `paging` (object)
+Bucket-based pagination info (pagination is applied on `leagues[]`).
+
+Fields:
+- `limit` (int): max buckets returned (cap 200)
+- `offset` (int): bucket offset (0-based)
+- `total_buckets` (int): total bucket count for the scope/date window
+- `returned_buckets` (int): number of buckets returned in this response
+- `returned_match_count` (int): number of matches returned in this response slice (sum of `leagues[*].match_count`)
+
+### 3.6 `updated_at_utc` (date-time)
 When this response was generated (UTC).
 
 ## 4) `leagues[]` kickoff bucket object
