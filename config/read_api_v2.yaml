@@ -102,3 +102,30 @@ fixture_insights:
     late_goal_rate_pct: { min: 0.0, max: 100.0 }
     win_streak: { min: 0.0, max: 5.0 }
     second_half_goal_diff_per_match: { min: -2.0, max: 2.0 }
+
+  # Optional totals model (Over/Under helper) computed from selected contexts only:
+  # - home team uses home_context.last10, away team uses away_context.last10
+  # - Base lambdas:
+  #   λ_home = (home_gf_avg + away_ga_avg) / 2
+  #   λ_away = (away_gf_avg + home_ga_avg) / 2
+  # - Optional strength multipliers from indices_0_10:
+  #   λ_home *= mult( home.attack_strength ) * mult( away.defensive_solidity )
+  #   λ_away *= mult( away.attack_strength ) * mult( home.defensive_solidity )
+  # - Probability:
+  #   P(Over 2.5) = 1 - [P(0)+P(1)+P(2)] where P(k) is Poisson(λ_total)
+  over25_model:
+    enabled: true
+    use_indices: true
+
+    # 0..10 -> multiplier mapping (linear).
+    # With defaults, score=5 => ~1.0, score=0 => 0.85, score=10 => 1.15 for attack.
+    attack_mult_min: 0.85
+    attack_mult_max: 1.15
+
+    # Defensive solidity: higher score means stronger defense => lower opponent λ.
+    # With defaults, score=0 => 1.15 (weak defense => more goals), score=10 => 0.85 (strong defense => fewer goals).
+    defense_mult_min: 1.15
+    defense_mult_max: 0.85
+
+    # Safety cap to avoid extreme λ_total producing near-1 probabilities from bad data.
+    lambda_total_cap: 8.0

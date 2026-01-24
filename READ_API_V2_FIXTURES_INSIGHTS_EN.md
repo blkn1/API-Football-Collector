@@ -112,10 +112,53 @@ Fields:
 - `kickoff_utc` (date-time): kickoff time of the current match
 - `home_team` (object): team insight block for the home team
 - `away_team` (object): team insight block for the away team
+- `totals` (object|null): **Over/Under helper** (expected goals + Over 2.5 probability). Can be `null` if the selected-context inputs are not available.
 
 Important:
 - This block is **not head-to-head**.
 - It is “each team’s recent profile” within the **same league+season**.
+
+### 6.1 `totals` (Over/Under helper)
+
+This is a lightweight, deterministic helper model computed from the **selected contexts only**:
+
+- Home team uses: `home_team.home_context.last10.goals.gf_avg` and `...ga_avg`
+- Away team uses: `away_team.away_context.last10.goals.gf_avg` and `...ga_avg`
+
+#### 6.1.1 Base lambdas (no team-strength adjustment)
+
+\[
+\lambda_{home} = \frac{home\_gf\_avg + away\_ga\_avg}{2}
+\qquad
+\lambda_{away} = \frac{away\_gf\_avg + home\_ga\_avg}{2}
+\qquad
+\lambda_{total} = \lambda_{home} + \lambda_{away}
+\]
+
+#### 6.1.2 Optional “team strength” adjustment (indices)
+
+If `config/read_api_v2.yaml -> fixture_insights.over25_model.use_indices=true`, lambdas are adjusted using normalized indices:
+
+- `attack_strength` increases \(\lambda\) when higher
+- `defensive_solidity` reduces opponent \(\lambda\) when higher (by default via an inverted multiplier range)
+
+All multiplier ranges are config-driven:
+
+- `attack_mult_min/max`
+- `defense_mult_min/max`
+- `lambda_total_cap` (safety cap)
+
+#### 6.1.3 Over 2.5 probability (Poisson total)
+
+Let \(G \sim \text{Poisson}(\lambda_{total})\). Then:
+
+\[
+P(\text{Over 2.5}) = P(G \ge 3) = 1 - \left[P(0) + P(1) + P(2)\right]
+\]
+
+#### 6.1.4 Nullability
+
+`totals` (or specific fields like `lambda_total`) can be `null` when `gf_avg/ga_avg` cannot be computed from the selected contexts (e.g., insufficient completed matches before kickoff in the same league+season).
 
 ## 7) Team insight block (`home_team` / `away_team`)
 

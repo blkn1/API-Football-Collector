@@ -705,6 +705,16 @@ async def fixtures_insights_v2(
     w_def = weights.get("defense") if isinstance(weights.get("defense"), dict) else {}
 
     norm_cfg = ficfg.get("normalization") if isinstance(ficfg.get("normalization"), dict) else {}
+    over25_cfg = ficfg.get("over25_model") if isinstance(ficfg.get("over25_model"), dict) else {}
+    over25_enabled = bool(over25_cfg.get("enabled", True))
+    over25_use_indices = bool(over25_cfg.get("use_indices", True))
+    over25_attack_mult_min = _cfg_float(over25_cfg, "attack_mult_min", 0.85)
+    over25_attack_mult_max = _cfg_float(over25_cfg, "attack_mult_max", 1.15)
+    # Defensive solidity is "higher is better" (stronger defense). To reduce opponent λ when defense is strong,
+    # we default to an inverted multiplier range: weak defense => >1, strong defense => <1.
+    over25_defense_mult_min = _cfg_float(over25_cfg, "defense_mult_min", 1.15)
+    over25_defense_mult_max = _cfg_float(over25_cfg, "defense_mult_max", 0.85)
+    over25_lambda_cap = _cfg_float(over25_cfg, "lambda_total_cap", 8.0)
 
     def _norm(name: str, x: float | None) -> float | None:
         r = norm_cfg.get(name) if isinstance(norm_cfg.get(name), dict) else None
@@ -737,6 +747,27 @@ async def fixtures_insights_v2(
         if d <= 0:
             return None
         return round((float(n) / float(d)) * 100.0, 4)
+
+    def _score_to_multiplier(score_0_10: float | None, *, lo: float, hi: float) -> float:
+        """
+        Convert a 0..10 score to a multiplicative factor in [lo..hi].
+        If score is None => neutral 1.0.
+        """
+        s = _to_float_or_none(score_0_10)
+        if s is None:
+            return 1.0
+        t = _clamp(float(s) / 10.0, 0.0, 1.0)
+        return float(lo + t * (hi - lo))
+
+    def _poisson_over_2_5(lam_total: float | None) -> float | None:
+        if lam_total is None:
+            return None
+        lam = float(lam_total)
+        if lam < 0:
+            return None
+        # P(G>=3) = 1 - [P(0)+P(1)+P(2)]
+        p = 1.0 - float(_poisson_p(0, lam) + _poisson_p(1, lam) + _poisson_p(2, lam))
+        return round(float(_clamp(p, 0.0, 1.0)), 6)
 
     def _outcome(gf: int, ga: int) -> str:
         if gf > ga:
@@ -1480,12 +1511,91 @@ async def fixtures_insights_v2(
         away_block["selected_context"] = "away"
         away_block["selected_indices_0_10"] = (away_block.get("away_context") or {}).get("indices_0_10")
 
+        totals: dict[str, Any] | None = None
+        if over25_enabled:
+            # Build Over/Under signals from the selected contexts only (home@home vs away@away).
+            def _sel_ctx(block: dict[str, Any]) -> dict[str, Any]:
+                ctx_name = str(block.get("selected_context") or "")
+                if ctx_name == "home":
+                    return block.get("home_context") if isinstance(block.get("home_context"), dict) else {}
+                return block.get("away_context") if isinstance(block.get("away_context"), dict) else {}
+
+            hctx = _sel_ctx(home_block)
+            actx = _sel_ctx(away_block)
+            h10 = hctx.get("last10") if isinstance(hctx.get("last10"), dict) else {}
+            a10 = actx.get("last10") if isinstance(actx.get("last10"), dict) else {}
+            hg = h10.get("goals") if isinstance(h10.get("goals"), dict) else {}
+            ag = a10.get("goals") if isinstance(a10.get("goals"), dict) else {}
+
+            h_gf = _to_float_or_none(hg.get("gf_avg"))
+            h_ga = _to_float_or_none(hg.get("ga_avg"))
+            a_gf = _to_float_or_none(ag.get("gf_avg"))
+            a_ga = _to_float_or_none(ag.get("ga_avg"))
+
+            lam_home_base = (round((float(h_gf) + float(a_ga)) / 2.0, 6) if h_gf is not None and a_ga is not None else None)
+            lam_away_base = (round((float(a_gf) + float(h_ga)) / 2.0, 6) if a_gf is not None and h_ga is not None else None)
+
+            # Optional strength adjustment using normalized 0..10 indices
+            mults: dict[str, Any] = {"use_indices": bool(over25_use_indices)}
+            lam_home = lam_home_base
+            lam_away = lam_away_base
+            if over25_use_indices:
+                h_idx = home_block.get("selected_indices_0_10") if isinstance(home_block.get("selected_indices_0_10"), dict) else {}
+                a_idx = away_block.get("selected_indices_0_10") if isinstance(away_block.get("selected_indices_0_10"), dict) else {}
+                h_atk = _to_float_or_none(h_idx.get("attack_strength"))
+                a_atk = _to_float_or_none(a_idx.get("attack_strength"))
+                h_def = _to_float_or_none(h_idx.get("defensive_solidity"))
+                a_def = _to_float_or_none(a_idx.get("defensive_solidity"))
+
+                h_atk_mult = _score_to_multiplier(h_atk, lo=over25_attack_mult_min, hi=over25_attack_mult_max)
+                a_atk_mult = _score_to_multiplier(a_atk, lo=over25_attack_mult_min, hi=over25_attack_mult_max)
+                # Defense multiplier is inverted by default via range config.
+                h_def_mult = _score_to_multiplier(h_def, lo=over25_defense_mult_min, hi=over25_defense_mult_max)
+                a_def_mult = _score_to_multiplier(a_def, lo=over25_defense_mult_min, hi=over25_defense_mult_max)
+
+                mults.update(
+                    {
+                        "home_attack_mult": round(float(h_atk_mult), 6),
+                        "away_attack_mult": round(float(a_atk_mult), 6),
+                        "home_defense_mult": round(float(h_def_mult), 6),
+                        "away_defense_mult": round(float(a_def_mult), 6),
+                    }
+                )
+
+                if lam_home is not None:
+                    lam_home = round(float(lam_home) * float(h_atk_mult) * float(a_def_mult), 6)
+                if lam_away is not None:
+                    lam_away = round(float(lam_away) * float(a_atk_mult) * float(h_def_mult), 6)
+
+            lam_total = (round(float(lam_home) + float(lam_away), 6) if lam_home is not None and lam_away is not None else None)
+            if lam_total is not None:
+                lam_total = round(float(_clamp(float(lam_total), 0.0, float(over25_lambda_cap))), 6)
+            p_over_2_5 = _poisson_over_2_5(lam_total)
+
+            totals = {
+                "model": "poisson_total_v1",
+                "selected_contexts": {"home_team": "home", "away_team": "away"},
+                "inputs_last10_selected": {
+                    "home_team_gf_avg": h_gf,
+                    "home_team_ga_avg": h_ga,
+                    "away_team_gf_avg": a_gf,
+                    "away_team_ga_avg": a_ga,
+                },
+                "lambda_home": lam_home,
+                "lambda_away": lam_away,
+                "lambda_total": lam_total,
+                "p_over_2_5": p_over_2_5,
+                "multipliers": mults,
+                "notes": "λ_home=(home_gf_avg + away_ga_avg)/2; λ_away=(away_gf_avg + home_ga_avg)/2; optional multipliers from indices_0_10; P(Over2.5)=1-[P0+P1+P2] (Poisson).",
+            }
+
         insights_by_fixture[up_id] = {
             "league_id": int(lid),
             "season": int(season),
             "kickoff_utc": kickoff_iso,
             "home_team": home_block,
             "away_team": away_block,
+            "totals": totals,
         }
 
     # Attach insights into the output bucket structure (same grouping contract as /v2/fixtures),

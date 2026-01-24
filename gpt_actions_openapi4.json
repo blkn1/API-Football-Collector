@@ -247,9 +247,27 @@
           "season": { "type": "integer", "description": "Sezon (örn. 2025)." },
           "kickoff_utc": { "type": "string", "format": "date-time", "description": "Maç başlangıç zamanı (UTC)." },
           "home_team": { "$ref": "#/components/schemas/V2FixtureInsightsTeamBlock" },
-          "away_team": { "$ref": "#/components/schemas/V2FixtureInsightsTeamBlock" }
+          "away_team": { "$ref": "#/components/schemas/V2FixtureInsightsTeamBlock" },
+          "totals": { "anyOf": [{ "$ref": "#/components/schemas/V2FixtureInsightsTotals" }, { "type": "null" }], "description": "Toplam gol (O/U) yardımcı modeli: beklenen goller + Over 2.5 olasılığı (Poisson). Yeterli veri yoksa null olabilir." }
         },
         "required": ["league_id", "season", "kickoff_utc", "home_team", "away_team"],
+        "additionalProperties": true
+      },
+      "V2FixtureInsightsTotals": {
+        "type": "object",
+        "description": "Toplam gol yardımcı modeli (Poisson). selected_context (home@home, away@away) last10 gf/ga ortalamalarından λ hesaplar; opsiyonel olarak indices_0_10 ile çarpar; P(Over2.5)=1-(P0+P1+P2).",
+        "properties": {
+          "model": { "type": "string", "description": "Model adı/sürümü (örn. poisson_total_v1)." },
+          "selected_contexts": { "type": "object", "description": "Bu hesapta kullanılan context seçimi. Varsayılan: home_team=home, away_team=away.", "additionalProperties": true },
+          "inputs_last10_selected": { "type": "object", "description": "Seçili context last10 üzerinden ham girişler: gf_avg/ga_avg.", "additionalProperties": true },
+          "lambda_home": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Ev sahibinin beklenen golü (λ_home)." },
+          "lambda_away": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Deplasmanın beklenen golü (λ_away)." },
+          "lambda_total": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Toplam beklenen gol (λ_total=λ_home+λ_away)." },
+          "p_over_2_5": { "anyOf": [{ "type": "number" }, { "type": "null" }], "description": "Over 2.5 olasılığı (0..1). Poisson: 1-[P0+P1+P2]." },
+          "multipliers": { "type": "object", "description": "Güç ayarı multipliers (use_indices vb.).", "additionalProperties": true },
+          "notes": { "anyOf": [{ "type": "string" }, { "type": "null" }], "description": "Formül notu (okunabilirlik için)." }
+        },
+        "required": ["model", "lambda_total", "p_over_2_5"],
         "additionalProperties": true
       },
       "V2FixturesInsightsMatch": {

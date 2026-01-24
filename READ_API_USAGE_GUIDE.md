@@ -465,6 +465,11 @@ Response okuma rehberi (özet):
     - `recent_form`: Form (0–10, last5 ağırlıklı)
     - `winning_drive`: Motivasyon (0–10)
     - `warnings`: skorların güvenilirliğini etkileyen uyarılar (örn. insufficient history)
+  - `totals` (opsiyonel yardımcı model):
+    - `lambda_home`, `lambda_away`, `lambda_total`: seçili context last10 gf/ga ortalamalarından üretilen beklenen gol değerleri
+    - `p_over_2_5`: Poisson toplam yaklaşımı ile **2.5 üst olasılığı** (0..1)
+    - Formül (özet): \(\lambda_{home}=(home\_gf\_avg + away\_ga\_avg)/2\), \(\lambda_{away}=(away\_gf\_avg + home\_ga\_avg)/2\), \(P(\ge3)=1-(P0+P1+P2)\)
+    - “Takım gücü” ayarı açıksa (`fixture_insights.over25_model.use_indices=true`), \(\lambda\) değerleri `indices_0_10.attack_strength` ve `indices_0_10.defensive_solidity` ile çarpılarak ayarlanır.
 
 Notlar:
 - Bazı liglerde `core.fixture_statistics` eksik olabilir; bu durumda corners/shots gibi alanlar `null` kalabilir ve `warnings` çıkabilir.

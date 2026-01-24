@@ -60,6 +60,11 @@ def test_v2_fixtures_insights_happy_path(monkeypatch: pytest.MonkeyPatch) -> Non
                 "win_streak": {"min": 0.0, "max": 5.0},
                 "second_half_goal_diff_per_match": {"min": -2.0, "max": 2.0},
             },
+            "over25_model": {
+                "enabled": True,
+                "use_indices": False,  # keep deterministic: pure gf/ga-based λ
+                "lambda_total_cap": 8.0,
+            },
         },
     )
 
@@ -157,6 +162,13 @@ def test_v2_fixtures_insights_happy_path(monkeypatch: pytest.MonkeyPatch) -> Non
 
     # Evidence is opt-in; fixtures_sample should NOT exist by default
     assert "fixtures_sample" not in match["insights"]["home_team"]["home_context"]["last10"]
+
+    # Totals model should be present and produce a probability in [0,1]
+    totals = match["insights"]["totals"]
+    assert totals is not None
+    assert totals["model"] == "poisson_total_v1"
+    assert totals["lambda_total"] is not None
+    assert 0.0 <= float(totals["p_over_2_5"]) <= 1.0
 
 
 def test_v2_fixtures_insights_include_evidence_adds_fixtures_sample(monkeypatch: pytest.MonkeyPatch) -> None:

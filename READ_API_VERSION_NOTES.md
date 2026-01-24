@@ -374,6 +374,10 @@ Ne sağlar?
   - `defensive_solidity` (defans)
   - `recent_form` (form, last5 ağırlıklı)
   - `winning_drive` (motivasyon, geç gol + seri + 2Y farkı)
+- Opsiyonel olarak `totals` bloğu döner (yardımcı O/U modeli):
+  - `lambda_home`, `lambda_away`, `lambda_total`: seçili context last10 gf/ga ortalamalarından beklenen gol
+  - `p_over_2_5`: Poisson toplam yaklaşımı ile 2.5 üst olasılığı (0..1)
+  - Bu model `config/read_api_v2.yaml -> fixture_insights.over25_model` ile tamamen kontrol edilir (enable/use_indices/multipliers/cap).
 
 Deterministik kurallar (sözleşme):
 - **DB-only**: quota tüketmez.
