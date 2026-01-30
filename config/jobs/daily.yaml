@@ -314,6 +314,9 @@ tracked_leagues:
 - id: 88
   name: Eredivisie
   season: 2025
+- id: 89
+  name: Eerste Divisie
+  season: 2025
 - id: 94
   name: Primeira Liga
   season: 2025

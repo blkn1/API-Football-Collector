@@ -4,6 +4,7 @@ expected_fixtures:
   135: 380  # Serie A
   61: 306   # Ligue 1
   78: 306   # Bundesliga
+  89: 380   # Eerste Divisie (Keuken Kampioen Divisie)
 
 max_lag_minutes:
   daily: 1440   # 24 hours
