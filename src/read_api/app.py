@@ -1077,7 +1077,7 @@ async def fixture_insights_by_id(fixture_id: int) -> dict[str, Any]:
         """,
         (fid,),
     )
-    if not row or len(row) < 10:
+    if not row or len(row) < 9:
         raise HTTPException(status_code=404, detail="fixture_not_found")
     lid = _to_int_or_none(row[1])
     status_short = str(row[4] or "")
