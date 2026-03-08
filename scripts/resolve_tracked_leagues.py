@@ -226,7 +226,9 @@ def _wanted_type(t: Target) -> str | None:
     Infer desired competition type from the query.
     """
     qn = _norm(t.league_query)
-    if any(x in qn for x in ["cup", "kupa", "kupasi", "kupası", "copa", "kupasi"]):
+    if any(x in qn for x in ["cup", "kupa", "kupasi", "kupası", "copa", "kupasi", "trophy"]):
+        return "cup"
+    if any(x in qn for x in ["champions league", "europa league", "conference league", "afc champions"]):
         return "cup"
     return "league"
 

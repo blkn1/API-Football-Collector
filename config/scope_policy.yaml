@@ -42,11 +42,6 @@ by_competition_type:
       - /players/topscorers
 
 # Per league overrides (force enable/disable), applied after type defaults.
-overrides:
-  # Türkiye Kupası (Turkey Cup) — Cup: disable standings (default) and keep baseline endpoints.
-  - league_id: 206
-    season: 2025
-    disabled_endpoints:
-      - /standings
-
+# League 206 (Turkey Cup) removed: no longer in tracked_leagues (67 full-coverage list).
+overrides: []
 

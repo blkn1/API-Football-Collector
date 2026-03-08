@@ -1,108 +1,156 @@
-# Target leagues (TR names). Resolver will:
-# - remove Women/Kadınlar and Amateur/Amatör lines automatically
-# - map country (TR) -> API country (EN)
-# - match league name against /leagues?current=true catalog
-#
-# Format: free-form per line (country + league name)
+# Target leagues: 67 full-coverage only (production). Resolver matches to API-Football catalog.
+# Format: "Country LeagueName" (TR) or "LeagueName" for World/unknown. No women/amateur lines.
 
-Türkiye Süper Lig
-Türkiye 1. Lig
-Türkiye Kupası
-İngiltere Premier Lig
-İtalya Serie A
-İspanya La Liga
-Almanya Bundesliga
-Fransa Ligue 1
-Portekiz Premier Lig
-Hollanda Eredivisie
-Yunanistan Süper Lig
-Belçika Pro Lig
-İngiltere Championship
-Almanya 2. Bundesliga
-Fransa Ligue 2
-İspanya La Liga 2
-Avusturya Bundesliga
-Çekya 1. Lig
-İsviçre Süper Lig
-İskoçya Premiership
-İngiltere 1. Lig
-İngiltere 2. Lig
-Polonya Ekstraklasa
-İtalya Serie B
-İskoçya Lig Kupası
-Cezayir Kupası
-Meksika Primera Ligi (Açılış Playoff)
-Peru Primera Ligi (Büyük Final)
-Almanya 3. Lig
-Hırvatistan 1. HNL
-Nijerya Profesyonel Futbol Ligi
-Avustralya A-Ligi
-Macaristan NB I
-İskoçya 2. Lig
-İskoçya 1. Lig
-Avusturya 2. Lig
-İskoçya Championship
-Endonezya 1. Lig
-Azerbaycan Premier Lig
-Brezilya Kupası
-Danimarka Kupası
-Hong Kong Premier Lig
-Nikaragua Primera Ligi
-Kosta Rika Primera Lig (Açılış)
-İtalya Serie C
-El Salvador 1. Lig (Açılış – Eleme)
-Kuzey İrlanda Premiership
-Kuzey İrlanda Championship
-Portekiz 2. Lig
-Romanya 1. Lig
-Slovakya Superliga
-İsviçre Challenge Ligi
-Ukrayna Premier Lig
-Birleşik Arap Emirlikleri Pro Lig Kupası
-Galler Federasyon Kupası
-Hong Kong 1. Lig
-Tunus 2. Lig (Grup A)
-Gana Premier Lig
-Belçika 2. Lig (İlk Etap)
-FIFA Kıtalararası Kupa
-Malta Premier Lig (Top 6 – İlk Etap)
-Ekvador Serie A
-Kolombiya Kupası
-Katar QSL Cup
-Suudi Arabistan 1. Lig
-Sırbistan Superliga
-İran Pro Ligi
-Bosna Hersek Premijer Ligi
-Bolivya Profesyonel Lig
-Andorra Primera Division
-Kenya Premier Lig
-Tayland 1. Lig
-Galler Championship
-Birleşik Arap Emirlikleri 1. Lig
-Uganda Premier League
-İran Azadegan Ligi
-Portekiz 3. Lig
-İtalya Bahar Şampiyonası
-Hollanda Tweede Divisie
-Bulgaristan Kupası
-Portekiz U23 Championship (1. Phase)
-Lebanon Premier Lig
-İngiltere U21 Premier League Cup (Knockout)
-İngiltere U21 Premier League Cup (Group)
-
-# --- 2025 additions (tracked_leagues) ---
-Brezilya Serie A
-Brezilya Serie B
-Çin Super League
-Danimarka Superliga
-Finlandiya Veikkausliiga
-İrlanda Premier Division
-İsveç Allsvenskan
-İsveç Superettan
-Norveç Eliteserien
-Norveç 1. Division
-Rusya Premier League
-Suudi Arabistan Pro League
+# World / Cup
 UEFA Champions League
 UEFA Europa League
+AFC Champions League
+UEFA Europa Conference League
 
+# England (GB-ENG)
+İngiltere Premier Lig
+İngiltere Championship
+İngiltere 1. Lig
+İngiltere 2. Lig
+İngiltere EFL Trophy
+
+# France
+Fransa Ligue 1
+Fransa Ligue 2
+
+# Brazil
+Brezilya Serie A
+Brezilya Paulista A1
+Brezilya Carioca 1
+
+# Germany
+Almanya Bundesliga
+Almanya 2. Bundesliga
+Almanya 3. Liga
+
+# Italy
+İtalya Serie A
+İtalya Serie B
+
+# Netherlands
+Hollanda Eredivisie
+Hollanda Eerste Divisie
+
+# Portugal
+Portekiz Primeira Liga
+Portekiz Segunda Liga
+
+# Spain
+İspanya La Liga
+İspanya La Liga 2
+
+# Scotland
+İskoçya Premiership
+
+# Qatar
+Katar Stars League
+
+# Belgium
+Belçika Pro Lig
+Belçika 2. Lig
+
+# Ukraine
+Ukrayna Premier Lig
+
+# UAE
+Birleşik Arap Emirlikleri Pro League
+
+# Turkey
+Türkiye Süper Lig
+Türkiye 1. Lig
+
+# Australia
+Avustralya A-Ligi
+
+# Austria
+Avusturya Bundesliga
+Avusturya 2. Lig
+
+# Denmark
+Danimarka Superliga
+
+# Greece
+Yunanistan Süper Lig
+
+# USA
+Major League Soccer
+
+# Switzerland
+İsviçre Süper Lig
+
+# Croatia
+Hırvatistan 1. HNL
+
+# Russia
+Rusya Premier League
+
+# Mexico
+Meksika Liga MX
+
+# Romania
+Romanya Liga I
+
+# South Africa
+Premier Soccer League
+
+# Saudi Arabia
+Suudi Arabistan Pro League
+
+# Israel
+Ligat Ha'al
+
+# Poland
+Polonya Ekstraklasa
+
+# Bulgaria
+First League
+
+# Cyprus
+1. Division
+
+# Slovakia
+Slovakya Super Liga
+
+# Czech Republic
+Çekya 1. Lig
+
+# Argentina
+Liga Profesional Argentina
+
+# Chile
+Primera División
+
+# Colombia
+Kolombiya Primera A
+
+# Ecuador
+Ekvador Liga Pro
+
+# Egypt
+Premier League
+
+# Hungary
+Macaristan NB I
+
+# India
+Indian Super League
+
+# Ireland
+İrlanda Premier Division
+
+# Japan
+J1 League
+
+# Peru
+Peru Primera División
+
+# Serbia
+Sırbistan Superliga
+
+# Thailand
+Tayland 1. Lig

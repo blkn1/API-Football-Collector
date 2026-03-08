@@ -1,0 +1,48 @@
+generated_from: /home/ybc/Desktop/api-football/config/league_targets.txt
+suggestions:
+- source: İngiltere EFL Trophy
+  country: England
+  query: EFL Trophy
+  top_candidates:
+  - league_id: 46
+    name: EFL Trophy
+    country: England
+    type: Cup
+    season: 2025
+    score: 100
+  - league_id: 47
+    name: FA Trophy
+    country: England
+    type: Cup
+    season: 2025
+    score: 35
+  how_to_override:
+    source: İngiltere EFL Trophy
+    league_id: <pick_from_top_candidates>
+    season: <optional>
+- source: Belçika 2. Lig
+  country: Belgium
+  query: 2. Lig
+  top_candidates:
+  - league_id: 145
+    name: Challenger Pro League
+    country: Belgium
+    type: League
+    season: 2025
+    score: 35
+  - league_id: 144
+    name: Jupiler Pro League
+    country: Belgium
+    type: League
+    season: 2025
+    score: 35
+  - league_id: 518
+    name: Reserve Pro League
+    country: Belgium
+    type: League
+    season: 2025
+    score: 35
+  how_to_override:
+    source: Belçika 2. Lig
+    league_id: <pick_from_top_candidates>
+    season: <optional>

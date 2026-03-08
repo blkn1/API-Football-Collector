@@ -1,0 +1,88 @@
+# Ligler
+
+Kaynak: `config/resolved_tracked_leagues.yaml` (resolved listesi)
+
+- `206` - `Cup` - `Turkey` - Türkiye Kupası
+- `141` - `League` - `Spain` - Segunda División
+- `345` - `League` - `Czech-Republic` - Czech Liga
+- `185` - `Cup` - `Scotland` - League Cup
+- `262` - `League` - `Mexico` - Liga MX
+- `281` - `League` - `Peru` - Primera División
+- `210` - `League` - `Croatia` - HNL
+- `399` - `League` - `Nigeria` - NPFL
+- `188` - `League` - `Australia` - A-League
+- `274` - `League` - `Indonesia` - Liga 1
+- `419` - `League` - `Azerbaijan` - Premyer Liqa
+- `121` - `Cup` - `Denmark` - DBU Pokalen
+- `396` - `League` - `Nicaragua` - Primera Division
+- `162` - `League` - `Costa-Rica` - Primera División
+- `370` - `League` - `El-Salvador` - Primera Division
+- `283` - `League` - `Romania` - Liga I
+- `208` - `League` - `Switzerland` - Challenge League
+- `302` - `Cup` - `United-Arab-Emirates` - League Cup
+- `112` - `Cup` - `Wales` - Welsh Cup
+- `381` - `League` - `Hong-Kong` - HKFA 1st Division
+- `828` - `League` - `Tunisia` - Ligue 2
+- `145` - `League` - `Belgium` - Challenger Pro League
+- `242` - `League` - `Ecuador` - Liga Pro
+- `308` - `League` - `Saudi-Arabia` - Division 1
+- `290` - `League` - `Iran` - Persian Gulf Pro League
+- `315` - `League` - `Bosnia` - Premijer Liga
+- `344` - `League` - `Bolivia` - Primera División
+- `312` - `League` - `Andorra` - 1a Divisió
+- `303` - `League` - `United-Arab-Emirates` - Division 1
+- `291` - `League` - `Iran` - Azadegan League
+- `865` - `League` - `Portugal` - Liga 3
+- `705` - `League` - `Italy` - Campionato Primavera - 1
+- `701` - `League` - `Portugal` - Liga Revelação U23
+- `871` - `Cup` - `England` - Premier League Cup
+- `203` - `League` - `Turkey` - Süper Lig
+- `204` - `League` - `Turkey` - 1. Lig
+- `39` - `League` - `England` - Premier League
+- `135` - `League` - `Italy` - Serie A
+- `140` - `League` - `Spain` - La Liga
+- `78` - `League` - `Germany` - Bundesliga
+- `61` - `League` - `France` - Ligue 1
+- `94` - `League` - `Portugal` - Primeira Liga
+- `88` - `League` - `Netherlands` - Eredivisie
+- `89` - `League` - `Netherlands` - Eerste Divisie
+- `197` - `League` - `Greece` - Super League 1
+- `144` - `League` - `Belgium` - Jupiler Pro League
+- `40` - `League` - `England` - Championship
+- `79` - `League` - `Germany` - 2. Bundesliga
+- `62` - `League` - `France` - Ligue 2
+- `218` - `League` - `Austria` - Bundesliga
+- `207` - `League` - `Switzerland` - Super League
+- `179` - `League` - `Scotland` - Premiership
+- `41` - `League` - `England` - League One
+- `42` - `League` - `England` - League Two
+- `106` - `League` - `Poland` - Ekstraklasa
+- `136` - `League` - `Italy` - Serie B
+- `516` - `Cup` - `Algeria` - Super Cup
+- `80` - `League` - `Germany` - 3. Liga
+- `271` - `League` - `Hungary` - NB I
+- `184` - `League` - `Scotland` - League Two
+- `183` - `League` - `Scotland` - League One
+- `219` - `League` - `Austria` - 2. Liga
+- `180` - `League` - `Scotland` - Championship
+- `1059` - `Cup` - `Brazil` - Recopa Catarinense
+- `380` - `League` - `Hong-Kong` - Premier League
+- `976` - `League` - `Italy` - Serie C - Promotion - Play-offs
+- `408` - `League` - `Northern-Ireland` - Premiership
+- `407` - `League` - `Northern-Ireland` - Championship
+- `95` - `League` - `Portugal` - Segunda Liga
+- `332` - `League` - `Slovakia` - Super Liga
+- `333` - `League` - `Ukraine` - Premier League
+- `570` - `League` - `Ghana` - Premier League
+- `1168` - `Cup` - `World` - FIFA Intercontinental Cup
+- `393` - `League` - `Malta` - Premier League
+- `241` - `Cup` - `Colombia` - Copa Colombia
+- `677` - `Cup` - `Qatar` - QSL Cup
+- `286` - `League` - `Serbia` - Super Liga
+- `276` - `League` - `Kenya` - FKF Premier League
+- `296` - `League` - `Thailand` - Thai League 1
+- `111` - `League` - `Wales` - FAW Championship
+- `585` - `League` - `Uganda` - Premier League
+- `492` - `League` - `Netherlands` - Tweede Divisie
+- `967` - `Cup` - `Lebanon` - Cup
+- `390` - `League` - `Lebanon` - Premier League

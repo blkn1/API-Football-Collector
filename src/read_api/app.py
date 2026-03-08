@@ -923,153 +923,363 @@ async def fixtures_insights_v2(
                 }
             )
 
-    # --- 2) Build per-fixture contexts to fetch history in batch ---
-    # Context key: (upcoming_fixture_id, league_id, season, team_id, ctx_side, cutoff_utc)
-    # ctx_side is 'home' or 'away' meaning: where the SUBJECT team played in history.
+    # --- 2) Run shared insights pipeline (contexts, history, metrics, indices, totals) ---
+    insights_by_fixture = await _compute_insights_for_ns_matches(ns_matches, include_evidence=include_evidence)
+
+    # Attach insights into the output bucket structure (same grouping contract as /v2/fixtures),
+    # but only for selected buckets (pagination).
+    leagues_out: list[dict[str, Any]] = []
+    for key, _sort_key in sliced:
+        items = by_bucket.get(key) or []
+        league_id, date_utc_iso = key
+        meta = bucket_meta.get(key) or {
+            "league_id": league_id,
+            "league_name": None,
+            "country_name": None,
+            "season": None,
+            "date_utc": date_utc_iso,
+            "timestamp_utc": None,
+        }
+        sort_key = meta.get("timestamp_utc") if meta.get("timestamp_utc") is not None else str(meta.get("date_utc") or "")
+        matches_out: list[dict[str, Any]] = []
+        for it in items:
+            fid = int(it["id"])
+            matches_out.append({**it, "insights": insights_by_fixture.get(fid)})
+        leagues_out.append(
+            {
+                "league_id": int(meta["league_id"]),
+                "league_name": meta.get("league_name"),
+                "country_name": meta.get("country_name"),
+                "season": _to_int_or_none(meta.get("season")),
+                "match_count": int(len(matches_out)),
+                "has_matches": True,
+                "matches": matches_out,
+                "_sort": sort_key,
+            }
+        )
+    leagues_out.sort(key=lambda x: x.get("_sort"))
+    returned_match_count = sum(int(l.get("match_count") or 0) for l in leagues_out)
+    for l in leagues_out:
+        l.pop("_sort", None)
+    return {
+        "ok": True,
+        "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
+        "total_match_count": int(total_match_count_all),
+        "leagues": leagues_out,
+        "paging": {
+            "limit": int(safe_limit),
+            "offset": int(safe_offset),
+            "total_buckets": int(total_buckets),
+            "returned_buckets": int(len(leagues_out)),
+            "returned_match_count": int(returned_match_count),
+        },
+        "updated_at_utc": now.isoformat(),
+    }
+
+
+def _compact_insight_response(
+    fixture_id: int,
+    home_name: str,
+    away_name: str,
+    full_insight: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Map full insight object (from pipeline) to compact schema for AI consumption.
+    Keeps: indices (attack, defense, form, drive), gf_avg, ga_avg, opponent_avg_pts, over25, warnings.
+    Drops: ids, dates, windows, matches_available, raw counts, evidence.
+    """
+    if not full_insight:
+        return {
+            "ok": True,
+            "fixture_id": int(fixture_id),
+            "home_name": home_name or "",
+            "away_name": away_name or "",
+            "home": {"attack": None, "defense": None, "form": None, "drive": None, "gf_avg": None, "ga_avg": None, "opponent_avg_pts": None},
+            "away": {"attack": None, "defense": None, "form": None, "drive": None, "gf_avg": None, "ga_avg": None, "opponent_avg_pts": None},
+            "over25": None,
+            "warnings": ["no_insight"],
+        }
+    home_block = full_insight.get("home_team") or {}
+    away_block = full_insight.get("away_team") or {}
+    totals = full_insight.get("totals") or {}
+
+    def _team_compact(block: dict[str, Any], ctx_key: str) -> dict[str, Any]:
+        # selected context: home team uses "home", away team uses "away"
+        ctx = block.get(f"{ctx_key}_context") if isinstance(block.get(f"{ctx_key}_context"), dict) else {}
+        last10 = ctx.get("last10") if isinstance(ctx.get("last10"), dict) else {}
+        indices = (block.get("selected_indices_0_10") or block.get(f"{ctx_key}_context", {}).get("indices_0_10")) or {}
+        goals = last10.get("goals") if isinstance(last10.get("goals"), dict) else {}
+        opp_str = last10.get("opponent_strength") if isinstance(last10.get("opponent_strength"), dict) else {}
+        return {
+            "attack": _to_float_or_none(indices.get("attack_strength")),
+            "defense": _to_float_or_none(indices.get("defensive_solidity")),
+            "form": _to_float_or_none(indices.get("recent_form")),
+            "drive": _to_float_or_none(indices.get("winning_drive")),
+            "gf_avg": _to_float_or_none(goals.get("gf_avg")),
+            "ga_avg": _to_float_or_none(goals.get("ga_avg")),
+            "opponent_avg_pts": _to_float_or_none(opp_str.get("avg_points_last5")),
+        }
+
+    home_compact = _team_compact(home_block, "home")
+    away_compact = _team_compact(away_block, "away")
+    warnings_h = (home_block.get("home_context") or {}).get("indices_0_10") or {}
+    warnings_a = (away_block.get("away_context") or {}).get("indices_0_10") or {}
+    if isinstance(warnings_h, dict):
+        warnings_h = warnings_h.get("warnings") or []
+    if isinstance(warnings_a, dict):
+        warnings_a = warnings_a.get("warnings") or []
+    if not isinstance(warnings_h, list):
+        warnings_h = []
+    if not isinstance(warnings_a, list):
+        warnings_a = []
+    warnings_merged = list(dict.fromkeys((warnings_h or []) + (warnings_a or [])))
+    p_over = totals.get("p_over_2_5")
+    return {
+        "ok": True,
+        "fixture_id": int(fixture_id),
+        "home_name": home_name or "",
+        "away_name": away_name or "",
+        "home": home_compact,
+        "away": away_compact,
+        "over25": _to_float_or_none(p_over) if p_over is not None else None,
+        "warnings": warnings_merged,
+    }
+
+
+@app.get(
+    "/v2/fixtures/{fixture_id}/insights",
+    dependencies=[
+        Depends(require_access),
+        Depends(require_only_query_params(set())),
+    ],
+)
+async def fixture_insights_by_id(fixture_id: int) -> dict[str, Any]:
+    """
+    Single-fixture insights (compact). Tracked leagues, NS only.
+    Returns minimal fields for AI: indices, gf/ga averages, opponent_avg_pts, over25, warnings.
+    """
+    fid = int(fixture_id)
+    if fid <= 0:
+        raise HTTPException(status_code=400, detail="invalid_fixture_id")
+    tracked_ids = _get_tracked_league_ids()
+    if not tracked_ids:
+        raise HTTPException(status_code=404, detail="no_tracked_leagues")
+    row = await _fetchone_async(
+        """
+        SELECT f.id, f.league_id, f.season, f.date, f.status_short,
+               f.home_team_id, th.name AS home_team_name,
+               f.away_team_id, ta.name AS away_team_name
+        FROM core.fixtures f
+        JOIN core.leagues l ON l.id = f.league_id
+        JOIN core.teams th ON th.id = f.home_team_id
+        JOIN core.teams ta ON ta.id = f.away_team_id
+        WHERE f.id = %s
+        """,
+        (fid,),
+    )
+    if not row or len(row) < 10:
+        raise HTTPException(status_code=404, detail="fixture_not_found")
+    lid = _to_int_or_none(row[1])
+    status_short = str(row[4] or "")
+    if status_short != "NS" or lid is None or lid not in tracked_ids:
+        raise HTTPException(status_code=404, detail="fixture_not_ns_or_not_tracked")
+    date_dt = row[3]
+    try:
+        kickoff_dt = date_dt.astimezone(timezone.utc) if hasattr(date_dt, "astimezone") else datetime.fromisoformat(str(date_dt)).astimezone(timezone.utc)
+    except Exception:
+        kickoff_dt = date_dt
+    kickoff_iso = _to_iso_or_none(date_dt) or ""
+    home_id = _to_int_or_none(row[5])
+    away_id = _to_int_or_none(row[7])
+    if home_id is None or away_id is None:
+        raise HTTPException(status_code=404, detail="fixture_invalid_teams")
+    ns_matches = [
+        {
+            "fixture_id": fid,
+            "league_id": int(lid),
+            "season": int(row[2] or 0),
+            "kickoff_dt": kickoff_dt,
+            "kickoff_iso": kickoff_iso,
+            "home_team_id": int(home_id),
+            "home_team_name": (row[6] or "").strip() or None,
+            "away_team_id": int(away_id),
+            "away_team_name": (row[8] or "").strip() or None,
+        }
+    ]
+    insights_by_fixture = await _compute_insights_for_ns_matches(ns_matches, include_evidence=False)
+    full_insight = insights_by_fixture.get(fid)
+    return _compact_insight_response(
+        fid,
+        ns_matches[0].get("home_team_name") or "",
+        ns_matches[0].get("away_team_name") or "",
+        full_insight,
+    )
+
+
+async def _compute_insights_for_ns_matches(
+    ns_matches: list[dict[str, Any]],
+    *,
+    include_evidence: bool = False,
+) -> dict[int, dict[str, Any]]:
+    """
+    Run the full insights pipeline for a list of NS matches (contexts, history, metrics, indices, totals).
+    Returns fixture_id -> full insight dict (same shape as fixtures_insights_v2 per-match insights).
+    """
+    if not ns_matches:
+        return {}
+    # Reuse the same pipeline as fixtures_insights_v2: delegate by building date range and calling
+    # the date-range path with fixture_id filter. We inject fixture_id into the request flow by
+    # running the pipeline logic inline for this single batch.
+    # Implementation: run the exact same steps as in fixtures_insights_v2 from contexts to insights_by_fixture.
+    # We load config and run the pipeline here to avoid code duplication.
+    ficfg = _fixture_insights_cfg()
+    last5_n = max(1, min(_cfg_int(ficfg, "last5_n", 5), 10))
+    last10_n = max(last5_n, min(_cfg_int(ficfg, "last10_n", 10), 25))
+    min_matches_for_scores = max(1, min(_cfg_int(ficfg, "min_matches_for_scores", 3), last10_n))
+    final_statuses = ficfg.get("final_statuses") if isinstance(ficfg.get("final_statuses"), list) else ["FT", "AET", "PEN"]
+    first_half_max_minute = max(1, min(_cfg_int(ficfg, "first_half_max_minute", 45), 60))
+    late_goal_from_minute = max(1, min(_cfg_int(ficfg, "late_goal_from_minute", 76), 120))
+    weights = ficfg.get("weights") if isinstance(ficfg.get("weights"), dict) else {}
+    w_attack = weights.get("attack") if isinstance(weights.get("attack"), dict) else {}
+    w_form = weights.get("form") if isinstance(weights.get("form"), dict) else {}
+    w_drive = weights.get("winning_drive") if isinstance(weights.get("winning_drive"), dict) else {}
+    w_def = weights.get("defense") if isinstance(weights.get("defense"), dict) else {}
+    norm_cfg = ficfg.get("normalization") if isinstance(ficfg.get("normalization"), dict) else {}
+    over25_cfg = ficfg.get("over25_model") if isinstance(ficfg.get("over25_model"), dict) else {}
+    over25_enabled = bool(over25_cfg.get("enabled", True))
+    over25_use_indices = bool(over25_cfg.get("use_indices", True))
+    over25_attack_mult_min = _cfg_float(over25_cfg, "attack_mult_min", 0.85)
+    over25_attack_mult_max = _cfg_float(over25_cfg, "attack_mult_max", 1.15)
+    over25_defense_mult_min = _cfg_float(over25_cfg, "defense_mult_min", 1.15)
+    over25_defense_mult_max = _cfg_float(over25_cfg, "defense_mult_max", 0.85)
+    over25_lambda_cap = _cfg_float(over25_cfg, "lambda_total_cap", 8.0)
+
+    def _norm(name: str, x: float | None) -> float | None:
+        r = norm_cfg.get(name) if isinstance(norm_cfg.get(name), dict) else None
+        if not isinstance(r, dict):
+            return None
+        lo, hi = r.get("min"), r.get("max")
+        inv = bool(r.get("invert", False))
+        try:
+            return _norm_0_10(_to_float_or_none(x), lo=float(lo), hi=float(hi), invert=inv)  # type: ignore[arg-type]
+        except Exception:
+            return None
+
+    def _weighted_avg(parts: list[tuple[float | None, float]]) -> float | None:
+        num, den = 0.0, 0.0
+        for v, w in parts:
+            if v is None:
+                continue
+            ww = float(w)
+            if ww <= 0:
+                continue
+            num += float(v) * ww
+            den += ww
+        return round(num / den, 4) if den > 0 else None
+
+    def _pct(n: int, d: int) -> float | None:
+        return round((float(n) / float(d)) * 100.0, 4) if d > 0 else None
+
+    def _score_to_multiplier(score_0_10: float | None, *, lo: float, hi: float) -> float:
+        s = _to_float_or_none(score_0_10)
+        if s is None:
+            return 1.0
+        t = _clamp(float(s) / 10.0, 0.0, 1.0)
+        return float(lo + t * (hi - lo))
+
+    def _poisson_over_2_5(lam_total: float | None) -> float | None:
+        if lam_total is None or float(lam_total) < 0:
+            return None
+        lam = float(lam_total)
+        p = 1.0 - float(_poisson_p(0, lam) + _poisson_p(1, lam) + _poisson_p(2, lam))
+        return round(float(_clamp(p, 0.0, 1.0)), 6)
+
+    def _outcome(gf: int, ga: int) -> str:
+        return "W" if gf > ga else ("L" if gf < ga else "D")
+
+    def _win_streak(results: list[str]) -> int:
+        s = 0
+        for r in results:
+            if r == "W":
+                s += 1
+            else:
+                break
+        return int(s)
+
+    # Build contexts
     contexts: list[tuple[int, int, int, int, str, datetime]] = []
     for m in ns_matches:
-        fid = int(m["fixture_id"])
-        lid = int(m["league_id"])
-        season = int(m["season"])
+        fid, lid, season = int(m["fixture_id"]), int(m["league_id"]), int(m["season"])
         cutoff = m["kickoff_dt"]
-        hid = int(m["home_team_id"])
-        aid = int(m["away_team_id"])
-        # For readability we return both contexts for both teams.
+        hid, aid = int(m["home_team_id"]), int(m["away_team_id"])
         contexts.append((fid, lid, season, hid, "home", cutoff))
         contexts.append((fid, lid, season, hid, "away", cutoff))
         contexts.append((fid, lid, season, aid, "home", cutoff))
         contexts.append((fid, lid, season, aid, "away", cutoff))
-
-    # Batch fetch history fixtures for each context using a window function.
     placeholders = ", ".join(["(%s,%s,%s,%s,%s,%s)"] * len(contexts))
     params: list[Any] = []
     for fid, lid, season, tid, side, cutoff in contexts:
         params.extend([int(fid), int(lid), int(season), int(tid), str(side), cutoff])
-
     hist_sql = f"""
-    WITH ctx(upcoming_fixture_id, league_id, season, team_id, ctx_side, cutoff_utc) AS (
-      VALUES {placeholders}
-    ),
+    WITH ctx(upcoming_fixture_id, league_id, season, team_id, ctx_side, cutoff_utc) AS (VALUES {placeholders}),
     hist AS (
-      SELECT
-        c.upcoming_fixture_id,
-        c.league_id,
-        c.season,
-        c.team_id,
-        c.ctx_side,
-        f.id AS fixture_id,
-        f.date AS date_utc,
-        f.home_team_id,
-        f.away_team_id,
-        f.goals_home,
-        f.goals_away,
-        f.score,
-        f.updated_at,
-        ROW_NUMBER() OVER (
-          PARTITION BY c.upcoming_fixture_id, c.team_id, c.ctx_side
-          ORDER BY f.date DESC, f.id DESC
-        ) AS rn
+      SELECT c.upcoming_fixture_id, c.league_id, c.season, c.team_id, c.ctx_side,
+             f.id AS fixture_id, f.date AS date_utc, f.home_team_id, f.away_team_id,
+             f.goals_home, f.goals_away, f.score, f.updated_at,
+             ROW_NUMBER() OVER (PARTITION BY c.upcoming_fixture_id, c.team_id, c.ctx_side ORDER BY f.date DESC, f.id DESC) AS rn
       FROM ctx c
-      JOIN core.fixtures f
-        ON f.league_id = c.league_id
-       AND f.season = c.season
-       AND f.status_short = ANY(%s)
-       AND f.date < c.cutoff_utc
-       AND (
-         (c.ctx_side = 'home' AND f.home_team_id = c.team_id)
-         OR
-         (c.ctx_side = 'away' AND f.away_team_id = c.team_id)
-       )
+      JOIN core.fixtures f ON f.league_id = c.league_id AND f.season = c.season
+        AND f.status_short = ANY(%s) AND f.date < c.cutoff_utc
+        AND ((c.ctx_side = 'home' AND f.home_team_id = c.team_id) OR (c.ctx_side = 'away' AND f.away_team_id = c.team_id))
     )
-    SELECT
-      upcoming_fixture_id, league_id, season, team_id, ctx_side,
-      fixture_id, date_utc, home_team_id, away_team_id, goals_home, goals_away, score, updated_at, rn
-    FROM hist
-    WHERE rn <= %s
-    ORDER BY upcoming_fixture_id ASC, team_id ASC, ctx_side ASC, rn ASC
+    SELECT upcoming_fixture_id, league_id, season, team_id, ctx_side,
+           fixture_id, date_utc, home_team_id, away_team_id, goals_home, goals_away, score, updated_at, rn
+    FROM hist WHERE rn <= %s
+    ORDER BY upcoming_fixture_id, team_id, ctx_side, rn
     """
-    hist_rows = await _fetchall_async(hist_sql, tuple(params + [list(final_statuses), int(last10_n)]))
-
+    hist_rows = await _fetchall_async(hist_sql, tuple(params) + (list(final_statuses), int(last10_n)))
     history_by_ctx: dict[tuple[int, int, str], list[dict[str, Any]]] = {}
+    opponent_triples: set[tuple[int, int, int]] = set()
     all_hist_fixture_ids: set[int] = set()
-    opponent_triples: set[tuple[int, int, int]] = set()  # (league_id, season, opponent_team_id)
-
     for r in hist_rows:
-        up_fid = int(r[0])
-        lid = int(r[1])
-        season = int(r[2])
-        tid = int(r[3])
+        up_fid, lid, season, tid = int(r[0]), int(r[1]), int(r[2]), int(r[3])
         side = str(r[4])
-        fx_id = int(r[5])
-        dt = r[6] if isinstance(r[6], datetime) else None
-        if dt is None:
-            continue
-        home_id = _to_int_or_none(r[7])
-        away_id = _to_int_or_none(r[8])
-        gh = _to_int_or_none(r[9])
-        ga_ = _to_int_or_none(r[10])
-        score = r[11]
-        if home_id is None or away_id is None or gh is None or ga_ is None:
-            continue
-        if tid not in (home_id, away_id):
+        fx_id, dt = int(r[5]), r[6]
+        home_id, away_id = _to_int_or_none(r[7]), _to_int_or_none(r[8])
+        gh, ga_ = _to_int_or_none(r[9]), _to_int_or_none(r[10])
+        if dt is None or home_id is None or away_id is None or gh is None or ga_ is None:
             continue
         opp_id = int(away_id) if tid == int(home_id) else int(home_id)
         opponent_triples.add((lid, season, opp_id))
         item = {
-            "id": fx_id,
-            "league_id": lid,
-            "season": season,
-            "date_dt": dt,
-            "date_utc": _to_iso_or_none(dt),
-            "home_team_id": int(home_id),
-            "away_team_id": int(away_id),
-            "goals_home": int(gh),
-            "goals_away": int(ga_),
-            "score": score,
-            "opponent_team_id": int(opp_id),
+            "id": fx_id, "league_id": lid, "season": season, "date_dt": dt, "date_utc": _to_iso_or_none(dt),
+            "home_team_id": int(home_id), "away_team_id": int(away_id), "goals_home": int(gh), "goals_away": int(ga_),
+            "score": r[11], "opponent_team_id": opp_id,
         }
         history_by_ctx.setdefault((up_fid, tid, side), []).append(item)
-        all_hist_fixture_ids.add(int(fx_id))
-
-    # --- 3) Batch-load events + statistics for history fixtures ---
+        all_hist_fixture_ids.add(fx_id)
     events_by_fixture: dict[int, list[dict[str, Any]]] = {}
     stats_by_fixture_team: dict[tuple[int, int], dict[str, int | None]] = {}
     if all_hist_fixture_ids:
         ev_rows = await _fetchall_async(
-            """
-            SELECT fixture_id, time_elapsed, team_id, type, detail
-            FROM core.fixture_events
-            WHERE fixture_id = ANY(%s)
-            """,
-            (sorted(list(all_hist_fixture_ids)),),
+            "SELECT fixture_id, time_elapsed, team_id, type, detail FROM core.fixture_events WHERE fixture_id = ANY(%s)",
+            (sorted(all_hist_fixture_ids),),
         )
-        for fid, elapsed, team_id, typ, detail in ev_rows:
-            if fid is None:
+        for ev in ev_rows:
+            if ev[0] is None:
                 continue
-            events_by_fixture.setdefault(int(fid), []).append(
-                {
-                    "time_elapsed": _to_int_or_none(elapsed),
-                    "team_id": _to_int_or_none(team_id),
-                    "type": (str(typ) if typ is not None else None),
-                    "detail": (str(detail) if detail is not None else None),
-                }
-            )
-
+            events_by_fixture.setdefault(int(ev[0]), []).append({
+                "time_elapsed": _to_int_or_none(ev[1]), "team_id": _to_int_or_none(ev[2]),
+                "type": str(ev[3]) if ev[3] else None, "detail": str(ev[4]) if ev[4] else None,
+            })
         st_rows = await _fetchall_async(
-            """
-            SELECT fixture_id, team_id, statistics
-            FROM core.fixture_statistics
-            WHERE fixture_id = ANY(%s)
-            """,
-            (sorted(list(all_hist_fixture_ids)),),
+            "SELECT fixture_id, team_id, statistics FROM core.fixture_statistics WHERE fixture_id = ANY(%s)",
+            (sorted(all_hist_fixture_ids),),
         )
-        for fid, tid, stats_json in st_rows:
-            if fid is None or tid is None:
-                continue
-            stats_by_fixture_team[(int(fid), int(tid))] = _extract_team_match_stats(stats_json)
-
-    opponent_form = await _fetch_forms_for_triples(sorted(list(opponent_triples)))
-
+        for st in st_rows:
+            if st[0] is not None and st[1] is not None:
+                stats_by_fixture_team[(int(st[0]), int(st[1]))] = _extract_team_match_stats(st[2])
+    opponent_form = await _fetch_forms_for_triples(sorted(opponent_triples))
     def _slim_fixture_sample(*, subject_team_id: int, fx: dict[str, Any]) -> dict[str, Any]:
         """
         Evidence payload should stay small and stable:
@@ -1597,61 +1807,7 @@ async def fixtures_insights_v2(
             "away_team": away_block,
             "totals": totals,
         }
-
-    # Attach insights into the output bucket structure (same grouping contract as /v2/fixtures),
-    # but only for selected buckets (pagination).
-    leagues_out: list[dict[str, Any]] = []
-    for key, _sort_key in sliced:
-        items = by_bucket.get(key) or []
-        league_id, date_utc_iso = key
-        meta = bucket_meta.get(key) or {
-            "league_id": league_id,
-            "league_name": None,
-            "country_name": None,
-            "season": None,
-            "date_utc": date_utc_iso,
-            "timestamp_utc": None,
-        }
-        sort_key = meta.get("timestamp_utc") if meta.get("timestamp_utc") is not None else str(meta.get("date_utc") or "")
-
-        matches_out: list[dict[str, Any]] = []
-        for it in items:
-            fid = int(it["id"])
-            matches_out.append({**it, "insights": insights_by_fixture.get(fid)})
-
-        leagues_out.append(
-            {
-                "league_id": int(meta["league_id"]),
-                "league_name": meta.get("league_name"),
-                "country_name": meta.get("country_name"),
-                "season": _to_int_or_none(meta.get("season")),
-                "match_count": int(len(matches_out)),
-                "has_matches": True,
-                "matches": matches_out,
-                "_sort": sort_key,
-            }
-        )
-
-    leagues_out.sort(key=lambda x: x.get("_sort"))
-    returned_match_count = sum(int(l.get("match_count") or 0) for l in leagues_out)
-    for l in leagues_out:
-        l.pop("_sort", None)
-
-    return {
-        "ok": True,
-        "date_range": {"from": d_from.isoformat(), "to": d_to.isoformat()},
-        # Keep total_match_count as the total across ALL buckets in the date window.
-        "total_match_count": int(total_match_count_all),
-        "leagues": leagues_out,
-        "paging": {
-            "limit": int(safe_limit),
-            "offset": int(safe_offset),
-            "total_buckets": int(total_buckets),
-            "returned_buckets": int(len(leagues_out)),
-            "returned_match_count": int(returned_match_count),
-        },
-        "updated_at_utc": now.isoformat(),
-    }
+    return insights_by_fixture
 
 
 async def _fetch_last_n_completed_fixtures_for_team(
