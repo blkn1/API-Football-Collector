@@ -989,13 +989,23 @@ def _compact_insight_response(
     Drops: ids, dates, windows, matches_available, raw counts, evidence.
     """
     if not full_insight:
+        empty_team = {
+            "attack": None, "defense": None, "form": None, "drive": None,
+            "results": {"wins": None, "draws": None, "losses": None, "points": None, "played": None},
+            "goals": {"gf_avg": None, "ga_avg": None, "clean_sheet_pct": None},
+            "first_half_scored_pct": None,
+            "second_half_scored_pct": None,
+            "win_streak": None,
+            "form_points_last5": None,
+            "opponent_avg_pts": None,
+        }
         return {
             "ok": True,
             "fixture_id": int(fixture_id),
             "home_name": home_name or "",
             "away_name": away_name or "",
-            "home": {"attack": None, "defense": None, "form": None, "drive": None, "gf_avg": None, "ga_avg": None, "opponent_avg_pts": None},
-            "away": {"attack": None, "defense": None, "form": None, "drive": None, "gf_avg": None, "ga_avg": None, "opponent_avg_pts": None},
+            "home": empty_team,
+            "away": empty_team,
             "over25": None,
             "warnings": ["no_insight"],
         }
@@ -1004,19 +1014,39 @@ def _compact_insight_response(
     totals = full_insight.get("totals") or {}
 
     def _team_compact(block: dict[str, Any], ctx_key: str) -> dict[str, Any]:
-        # selected context: home team uses "home", away team uses "away"
         ctx = block.get(f"{ctx_key}_context") if isinstance(block.get(f"{ctx_key}_context"), dict) else {}
         last10 = ctx.get("last10") if isinstance(ctx.get("last10"), dict) else {}
-        indices = (block.get("selected_indices_0_10") or block.get(f"{ctx_key}_context", {}).get("indices_0_10")) or {}
+        last5 = ctx.get("last5") if isinstance(ctx.get("last5"), dict) else {}
+        indices = (block.get("selected_indices_0_10") or ctx.get("indices_0_10")) or {}
         goals = last10.get("goals") if isinstance(last10.get("goals"), dict) else {}
+        results = last10.get("results") if isinstance(last10.get("results"), dict) else {}
         opp_str = last10.get("opponent_strength") if isinstance(last10.get("opponent_strength"), dict) else {}
+        derived = last10.get("derived") if isinstance(last10.get("derived"), dict) else {}
+        derived5 = last5.get("derived") if isinstance(last5.get("derived"), dict) else {}
+        goals_by_half = last10.get("goals_by_half") if isinstance(last10.get("goals_by_half"), dict) else {}
+        first_half = goals_by_half.get("first_half") if isinstance(goals_by_half.get("first_half"), dict) else {}
+        second_half = goals_by_half.get("second_half") if isinstance(goals_by_half.get("second_half"), dict) else {}
         return {
             "attack": _to_float_or_none(indices.get("attack_strength")),
             "defense": _to_float_or_none(indices.get("defensive_solidity")),
             "form": _to_float_or_none(indices.get("recent_form")),
             "drive": _to_float_or_none(indices.get("winning_drive")),
-            "gf_avg": _to_float_or_none(goals.get("gf_avg")),
-            "ga_avg": _to_float_or_none(goals.get("ga_avg")),
+            "results": {
+                "wins": _to_int_or_none(results.get("wins")),
+                "draws": _to_int_or_none(results.get("draws")),
+                "losses": _to_int_or_none(results.get("losses")),
+                "points": _to_int_or_none(results.get("points")),
+                "played": _to_int_or_none(last10.get("played")),
+            },
+            "goals": {
+                "gf_avg": _to_float_or_none(goals.get("gf_avg")),
+                "ga_avg": _to_float_or_none(goals.get("ga_avg")),
+                "clean_sheet_pct": _to_float_or_none(goals.get("clean_sheet_rate_pct")),
+            },
+            "first_half_scored_pct": _to_float_or_none(first_half.get("scored_rate_pct")),
+            "second_half_scored_pct": _to_float_or_none(second_half.get("scored_rate_pct")),
+            "win_streak": _to_int_or_none(derived.get("win_streak")),
+            "form_points_last5": _to_int_or_none(derived5.get("form_points_last5")),
             "opponent_avg_pts": _to_float_or_none(opp_str.get("avg_points_last5")),
         }
 
